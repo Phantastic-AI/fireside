@@ -1,122 +1,119 @@
-// The front door. Not a screen of the product — the site that explains it.
+// The front of the site. Not a screen of the product — the page that explains
+// it, in the founder's own structure: the desk first, then the hands, then the
+// day, then the people the day is for.
 //
 // Register law: D-025 (every headline parses cold to a stranger, no self-talk)
-// and D-027 (the product never narrates its own construction, its demo-ness,
-// or any contest — every sentence here is written for a conference organizer
-// evaluating finished software). The single honest disclosure about the
-// example conferences lives in the live section and nowhere else.
+// and D-027 (the product never narrates its own construction — every sentence
+// is written for a conference organizer evaluating finished software). The one
+// honest disclosure about the example conferences lives in the live section
+// and nowhere else. Every claim on this page is true of the running product
+// tonight; anything aspirational was cut at the merge (D-031 era) — the
+// target-state organization board, near-duplicate detection, a bespoke CLI.
 //
 // The whole page is drawn from tokens: no images, no webfonts, no third-party
-// request of any kind. The product vignettes are HTML and CSS.
+// request of any kind. The product vignettes are HTML and CSS, and the
+// concierge vignette is the shipped panel's own face.
+//
+// Numbers here are the seeded world's constants (1,000 proposals; 328 still
+// undecided; 610 letters staged; 60 accepted; 54 speakers; 57 placed
+// sessions). The hourly reseed holds them true.
 import { esc, page, brand, NAME } from '../../lib/html';
 
 /* ------------------------------------------------------------------ *
  * Content. Kept as data so the shape of the page stays readable.
  * ------------------------------------------------------------------ */
 
-const SPINE = ['The call', 'The deciding', 'The telling', 'The build-up', 'The day', 'The after'];
-
-// Product truths, not build notes. When the events become live queries these
-// two counts come from the database with them (L-5); the rest are constants
-// of the software itself.
-const NUMBERS: { n: string; l: string }[] = [
-  { n: '2', l: 'live example conferences' },
-  { n: '1,000', l: 'proposals inside them' },
-  { n: '3', l: 'ways to sign in' },
-  { n: '1', l: 'server to run' },
-  { n: '0', l: 'trackers' },
+const RUNWAY: { t: string; h: string }[] = [
+  { t: '3 months', h: 'Gather proposals around the theme' },
+  { t: '2 months', h: 'Bring independent reviews together' },
+  { t: '1 month', h: 'Place accepted talks in the lineup' },
+  { t: '2 weeks', h: 'Ready speakers and crews' },
+  { t: 'Today', h: 'Keep rooms, decks, and people connected' },
+  { t: 'After', h: 'Make missed talks easy to find' },
 ];
 
-const PAIRS: { x: string; y: string }[] = [
+const ROLES: { who: string; h: string; p: string }[] = [
   {
-    x: 'One green button that decides and tells six hundred people in the same breath.',
-    y: 'Deciding and telling are two separate acts here, with a room between them.',
+    who: 'Editorial lead',
+    h: 'Choose talks that belong together once the doors open.',
+    p: 'A strong submission can still repeat a theme, crowd out a format, or unbalance a track. Read each proposal beside its neighbors and build the lineup on purpose.',
   },
   {
-    x: 'A table that ends at zero rows and leaves you standing there.',
-    y: 'Every empty screen names the next thing to do, and links straight to it.',
+    who: 'Organizing team',
+    h: 'Give every loose end a name and a next move.',
+    p: 'A missing deck, an unfinished review, and an unplaced talk need different follow-up. Each one stays attached to its session or its person, so nobody chases a count through old sheets.',
   },
   {
-    x: 'A review queue that feeds you one proposal at a time, under a counter that says 1,000 when the truth is 40.',
-    y: 'The whole list on one page. The filters are counts, and the counts are true.',
+    who: 'Reviewers',
+    h: 'Score the talks assigned to you, then submit a complete round.',
+    p: 'Reviewers weigh only the proposals assigned to them, with names hidden while they mark. The committee sees the finished round when it is time to shape the lineup.',
   },
   {
-    x: 'Make an account, verify your email, and then you may begin typing your abstract.',
-    y: 'One page, no account until you press send, and a half-written abstract that survives a dead battery.',
+    who: 'Speakers',
+    h: 'Know what is due and when.',
+    p: 'Silence after submit feels like a black hole. The decision, the tasks, the dates, and the next due date live on one page that is the speaker’s own.',
   },
   {
-    x: 'Speaker mail that reads like it was drafted by a compliance department.',
-    y: 'Letters carry the committee’s own sentence, in the committee’s own words.',
+    who: 'Volunteers',
+    h: 'Know who is next and whether the deck is in.',
+    p: 'At 09:12, a runner has one bar and eight minutes. The green room sheet gives them the next face, room, deck status, contact, and one action — on a link, not a login.',
   },
   {
-    x: 'A schedule page that needs four requests and a spinner to say 10:30, Ballroom A.',
-    y: 'Plain pages, no spinner. The agenda opens on one bar of venue wifi.',
-  },
-];
-
-const REST: { h: string; p: string }[] = [
-  {
-    h: 'Review rounds and blind mode',
-    p: 'Assignments per reviewer, names hidden while scoring, and your scores private until you submit them.',
+    who: 'Attendees',
+    h: 'Choose between good sessions without losing the rest of the day.',
+    p: 'Save the talks you want, catch a room conflict before you start walking, and afterwards say you were in the room — the people who said it too appear on your list, and on nobody else’s.',
   },
   {
-    h: 'Decisions and the outbox',
-    p: 'Decide in private, read the letters, then send hundreds in one deliberate act. None twice, none forgotten.',
+    who: 'Public',
+    h: 'Let the agenda show why the trip is worth the time away.',
+    p: 'Session pages, speaker context, themes, and formats show how the program fits together before anyone books.',
   },
   {
-    h: 'The speaker portal',
-    p: 'One page per speaker: the decision, the tasks, the dates, what is still owed. Reminders that read as care.',
-  },
-  {
-    h: 'The agenda builder',
-    p: 'Click to place. A double-booked room, or a speaker in two places at once, surfaces at the moment of placement rather than at print time.',
-  },
-  {
-    h: 'Embeds and calendar files',
-    p: 'Put the agenda, the speaker gallery, or one person’s itinerary on your own site. Every schedule is one calendar file away.',
-  },
-  {
-    h: 'A concierge, and the same doors for your agent',
-    p: 'Ask a question and get working links back rather than paragraphs. The public doors — the program, the speakers, the call itself — are also MCP: point your agent at /mcp.',
+    who: 'Program office',
+    h: 'Remember who made past programs great.',
+    p: 'Starting from a blank speaker sheet every season wastes trust. The people and the history carry into the next conference.',
   },
 ];
 
-const YEAR: { phase: string; line: string; door: string; href: string }[] = [
+const LIFECYCLE: { t: string; h: string; p: string }[] = [
   {
-    phase: 'The call',
-    line: 'Speakers write and nothing is lost. The pile grows in front of you, themed and searchable from the first day.',
-    door: 'Open the form',
-    href: '/aie-nyc/cfp',
+    t: 'Discover',
+    h: 'Decide whether this conference earns the trip.',
+    p: 'The agenda shows the sessions, people, and themes that make the program distinct.',
   },
   {
-    phase: 'The deciding',
-    line: 'Rounds, blind mode, aggregates. Your score stays yours until you submit it; the committee’s becomes a shape you can read.',
-    door: 'Open the pile',
-    href: '/admin/aie-nyc/submissions',
+    t: 'Plan',
+    h: 'Build Friday around the talks you saved.',
+    p: 'Stars, filters, room details, calendar files, and a conflict check that knows how long the walk is.',
   },
   {
-    phase: 'The telling',
-    line: 'Letters stage quietly, get read, and leave in one act — each with the note you wrote for that person.',
-    door: 'Open the outbox',
-    href: '/admin/aie-nyc/outbox',
+    t: 'Meet',
+    h: 'Start with the session you both cared about.',
+    p: 'Say you were in the room. If someone else says it too, you appear on each other’s list — and on nobody else’s.',
   },
   {
-    phase: 'The build-up',
-    line: 'Decks chased, headshots collected, travel times confirmed. Kindly, on a schedule, and not by you.',
-    door: 'Open a speaker’s portal',
-    href: '/aie-nyc/portal',
+    t: 'Return',
+    h: 'Pick up where your schedule left off.',
+    p: 'Recordings land on the sessions themselves, and the schedule stays where it was published. Charlotte, below, is already living its afterlife.',
+  },
+];
+
+const MECHANICS: { h: string; p: string }[] = [
+  {
+    h: 'Move it once',
+    p: 'Change a room, a contact, or a placement. The public agenda and every permitted working view agree on the new plan.',
   },
   {
-    phase: 'The day',
-    line: 'Run of show on every phone with a lanyard behind it, down to the room the next speaker is standing outside.',
-    door: 'Open the green room',
-    href: '/admin/aie-nyc/green-room',
+    h: 'Keep each role in bounds',
+    p: 'Attendees, speakers, reviewers, volunteers, and organizers each see only their part. A reviewer never sees a name while scoring; a runner’s link opens no doors but its own.',
   },
   {
-    phase: 'The after',
-    line: 'Recordings land on the sessions, the schedule stays where you published it, and the people met in corridors survive the week.',
-    door: 'Open Charlotte, 2025',
-    href: '/ddc-clt',
+    h: 'Check consequential actions',
+    p: 'Decisions, letters, and placements go through the same checked writers in the browser and over MCP. There is no back way around a guard.',
+  },
+  {
+    h: 'Ready on one bar',
+    p: 'Pages are server-rendered, small, and readable on phones. The crew carries a link, not an organizer login, and the agenda opens in a basement.',
   },
 ];
 
@@ -124,38 +121,79 @@ const YEAR: { phase: string; line: string; door: string; href: string }[] = [
  * Vignettes — the product sketched in its own materials.
  * ------------------------------------------------------------------ */
 
-function vgPeople(): string {
+/** The organizer's morning, in one card. Counts are the seeded world's. */
+function vgPulse(): string {
   return (
-    '<div class="mkt-vg">' +
-    '<div class="mkt-vg-h">People to find<span class="r">Thursday</span></div>' +
-    '<div class="mkt-prow"><span class="mkt-av">MA</span><div><b>Marisol Adeyemi</b>' +
-    '<i>Coldbrook Systems · “Coffee before the keynote?”</i></div></div>' +
-    '<div class="mkt-prow"><span class="mkt-av">TL</span><div><b>Tomás Lindqvist</b>' +
-    '<i>Name only — the rest kept private</i></div></div>' +
-    '<div class="mkt-prow"><span class="mkt-av">JO</span><div><b>Jun Okafor</b>' +
-    '<i>Northwind Labs · jun@example.org</i></div></div>' +
-    '<div class="mkt-vg-note">You each said you were at <b>The year the tooling caught up</b>. ' +
-    'Nobody else can see that you did.</div>' +
+    '<aside class="mkt-vg mkt-pulse" aria-label="The organizer’s morning at a glance">' +
+    '<div class="mkt-vg-h">Program pulse<span class="r">AI Engineer New York 2026</span></div>' +
+    '<div class="mkt-pr"><span class="l">Proposals</span><span class="v">1,000 in · 328 still undecided</span></div>' +
+    '<div class="mkt-pr"><span class="l">Letters</span><span class="v">610 written · none sent by accident</span></div>' +
+    '<div class="mkt-pr"><span class="l">Program</span><span class="v">57 sessions placed · 54 speakers</span></div>' +
+    '<div class="mkt-pr"><span class="l">Speakers</span><span class="v">Decks and headshots, chased kindly</span></div>' +
+    '<div class="mkt-pulse-watch">● The call is still open — the pile grows while you read this.</div>' +
+    '</aside>'
+  );
+}
+
+/** The editorial desk, as the backstage actually draws it. */
+function vgBoard(): string {
+  const rows: { l: string; v: string; a: string; href: string }[] = [
+    { l: 'The pile', v: '1,000 proposals · 328 still undecided', a: 'Open', href: '/admin/aie-nyc/submissions' },
+    { l: 'Reviews', v: 'Assigned reading, blind, per reviewer', a: 'Progress', href: '/admin/aie-nyc/reviews' },
+    { l: 'Letters', v: '610 staged · they leave in one act', a: 'Outbox', href: '/admin/aie-nyc/outbox' },
+    { l: 'Agenda', v: '57 placed · conflicts argue at placement', a: 'Builder', href: '/admin/aie-nyc/agenda' },
+  ];
+  return (
+    '<div class="mkt-vg mkt-board" aria-label="The editorial desk">' +
+    '<div class="mkt-vg-h">The desk<span class="r">Signed in as the organizer</span></div>' +
+    rows
+      .map(
+        (r) =>
+          `<div class="mkt-pr"><span class="l">${esc(r.l)}</span><span class="v">${esc(r.v)}</span>` +
+          `<a class="link" href="${r.href}">${esc(r.a)} →</a></div>`
+      )
+      .join('') +
+    '<div class="mkt-vg-note">A speaker placed in two rooms at once argues at the moment of placement, not at print time.</div>' +
     '</div>'
   );
 }
 
-function vgDirectory(): string {
-  const years = ['2021', '2022', '2023', '2024', '2025', '2026'];
-  const spoke = new Set(['2022', '2023', '2025', '2026']);
+/** The reviewer's room and the committee's, side by side. */
+function vgReview(): string {
   return (
+    '<div class="mkt-cols">' +
     '<div class="mkt-vg">' +
-    '<div class="mkt-srch"><span class="q">accepted 2025, reliability</span>' +
-    '<span class="c">14 people</span></div>' +
-    '<div class="mkt-prow"><span class="mkt-av">PR</span><div><b>Priya Raghunathan</b>' +
-    '<i>Staff engineer, Foundry · Lisbon</i></div></div>' +
-    '<div class="mkt-years">' +
-    years.map((y) => `<span class="${spoke.has(y) ? 'on' : ''}">${esc(y)}</span>`).join('') +
+    '<div class="mkt-vg-h">Yours to score<span class="r">Names hidden while you mark</span></div>' +
+    '<div class="mkt-prow"><div><b>Reliable agents under messy inputs</b><i>Talk · Platform</i></div></div>' +
+    '<div class="mkt-prow"><div><b>Memory without mystery</b><i>Deep dive · Practice</i></div></div>' +
+    '<div class="mkt-prow"><div><b>Evaluating tool use in production</b><i>Workshop · Platform</i></div></div>' +
+    '<div class="mkt-vg-note">Marks stay yours until you submit the round.</div>' +
     '</div>' +
-    '<div class="mkt-tags"><span class="mkt-tag ok">Four talks</span>' +
-    '<span class="mkt-tag">Reviewed 2024</span>' +
-    '<span class="mkt-tag">Room loved it</span></div>' +
-    '<div class="mkt-vg-note">One person, six years, two conferences — and every word of it hers to correct.</div>' +
+    '<div class="mkt-vg">' +
+    '<div class="mkt-vg-h">The committee’s pile<span class="r">One page, honest counts</span></div>' +
+    '<div class="mkt-pr"><span class="l">Undecided</span><span class="v">328 — the filters are counts, and the counts are true</span></div>' +
+    '<div class="mkt-pr"><span class="l">Accepted</span><span class="v">60 talks · 54 speakers behind them</span></div>' +
+    '<div class="mkt-pr"><span class="l">Staged</span><span class="v">610 letters, each with the committee’s own sentence</span></div>' +
+    '<div class="mkt-vg-note">Decide in private. Tell everyone on purpose.</div>' +
+    '</div>' +
+    '</div>'
+  );
+}
+
+/** The shipped concierge panel's own face, drawn still. */
+function vgConcierge(): string {
+  return (
+    '<div class="mkt-vg mkt-cc" aria-label="The concierge">' +
+    '<div class="mkt-cc-head"><svg width="18" height="18" viewBox="0 0 32 32" aria-hidden="true">' +
+    '<path d="M16 3c1.6 4.2-1.4 6-1.4 8.6 0 1.6 1.2 2.6 2.4 2.6 1.5 0 2.3-1.1 2.2-2.6 2.2 1.9 ' +
+    '3.3 4.2 3.3 6.6 0 3.9-3 6.8-6.5 6.8S9.5 22.1 9.5 18.2C9.5 12.3 14.6 9.6 16 3z" fill="#B14D14"/></svg>' +
+    '<b>The concierge</b></div>' +
+    '<p class="mkt-cc-lead">I know this conference — the program, the call, and where everything is. Ask me anything about it.</p>' +
+    '<div class="mkt-cc-chips"><span>When does the program start?</span><span>Can I still send a talk?</span>' +
+    '<span>What do I owe, and by when?</span></div>' +
+    '<div class="mkt-cc-you">When does the program start?</div>' +
+    '<div class="mkt-cc-ans">The program begins Thursday 3 September at 09:30, at Pier 57 in New York.' +
+    '<i>Read off the program just now.</i></div>' +
     '</div>'
   );
 }
@@ -180,91 +218,95 @@ function vgGreenRoom(): string {
   );
 }
 
-function vgCall(): string {
+/** One speaker's readiness, as the portal and the tracker hold it. */
+function vgReadiness(): string {
   return (
     '<div class="mkt-vg">' +
-    '<div class="mkt-vg-h">Your talk in one paragraph<span class="r">148 / 1200</span></div>' +
-    '<div class="mkt-field">We shipped the rewrite on a Friday and spent the weekend rolling it back. ' +
-    'Here is what the third attempt got right, and the two things we</div>' +
-    '<div class="mkt-eg"><b>For example</b>Name the room you are talking to, the thing that went ' +
-    'wrong, and what was different afterwards.' +
-    '<span class="mkt-egbtn">Use this as a starting point</span></div>' +
-    '<div class="mkt-saved">Saved, a moment ago</div>' +
+    '<div class="mkt-vg-h">Ready for Friday<span class="r">One speaker’s page</span></div>' +
+    '<div class="mkt-pr"><span class="l ok">✓</span><span class="v">Final deck uploaded — received 7 August</span></div>' +
+    '<div class="mkt-pr"><span class="l ok">✓</span><span class="v">Headshot in, print quality</span></div>' +
+    '<div class="mkt-pr"><span class="l">·</span><span class="v">Confirm arrival contact — due tomorrow</span></div>' +
+    '<div class="mkt-vg-note">What is owed is a list with dates, not a feeling. Reminders read as care.</div>' +
+    '</div>'
+  );
+}
+
+function vgSchedule(): string {
+  return (
+    '<div class="mkt-vg">' +
+    '<div class="mkt-vg-h">My schedule<span class="r">Saved on this phone</span></div>' +
+    '<div class="mkt-prow"><span class="mkt-time">09:30</span><div><b>Evaluating agents under load</b><i>Main stage · 25 min</i></div><span class="mkt-star">★</span></div>' +
+    '<div class="mkt-prow"><span class="mkt-time">10:05</span><div><b>Agents in production, honestly</b><i>Studio · 50 min</i></div><span class="mkt-star">★</span></div>' +
+    '<div class="mkt-prow"><span class="mkt-time">11:20</span><div><b>Build with the people who made it</b><i>Workshop room · 90 min</i></div><span class="mkt-star">★</span></div>' +
+    '<div class="mkt-vg-note">You can make all three — Main stage to Studio is a four-minute walk, and the schedule says so before you start.</div>' +
+    '</div>'
+  );
+}
+
+function vgPeople(): string {
+  return (
+    '<div class="mkt-vg">' +
+    '<div class="mkt-vg-h">People to find<span class="r">Thursday</span></div>' +
+    '<div class="mkt-prow"><span class="mkt-av">MA</span><div><b>Marisol Adeyemi</b>' +
+    '<i>Coldbrook Systems · “Coffee before the keynote?”</i></div></div>' +
+    '<div class="mkt-prow"><span class="mkt-av">TL</span><div><b>Tomás Lindqvist</b>' +
+    '<i>Name only — the rest kept private</i></div></div>' +
+    '<div class="mkt-prow"><span class="mkt-av">JO</span><div><b>Jun Okafor</b>' +
+    '<i>Northwind Labs · jun@example.org</i></div></div>' +
+    '<div class="mkt-vg-note">You each said you were at <b>The year the tooling caught up</b>. ' +
+    'Nobody else can see that you did. Your name always; work, links, and email each open only if you open them.</div>' +
     '</div>'
   );
 }
 
 /* ------------------------------------------------------------------ *
- * Sections.
+ * The page.
  * ------------------------------------------------------------------ */
-
-function show(o: {
-  flip?: boolean;
-  kick: string;
-  h: string;
-  body: string[];
-  door?: { label: string; href: string };
-  art: string;
-}): string {
-  return (
-    `<section class="mkt-show${o.flip ? ' mkt-flip' : ''}"><div class="mkt-wrap mkt-show-in">` +
-    '<div class="mkt-show-txt">' +
-    `<p class="mkt-kick">${o.kick}</p>` +
-    `<h2 class="mkt-h">${o.h}</h2>` +
-    o.body.map((p) => `<p class="mkt-p">${p}</p>`).join('') +
-    (o.door ? `<a class="mkt-door" href="${o.door.href}">${o.door.label} →</a>` : '') +
-    '</div>' +
-    `<div class="mkt-show-art">${o.art}</div>` +
-    '</div></section>'
-  );
-}
 
 export function homePage(signedIn = false): string {
   const nav =
-    '<a href="#product">The product</a>' +
-    '<a href="#year">The year</a>' +
+    '<a href="#program">Program</a>' +
+    '<a href="#team">Team</a>' +
+    '<a href="#attendees">Attendees</a>' +
+    '<a href="#mechanics">How it works</a>' +
     '<a href="#live">Walk one</a>' +
-    '<a href="#open">Open source</a>' +
     (signedIn
       ? '<a href="/admin">Backstage</a><a href="/sign-out">Sign out</a>'
       : '<a href="/sign-in">Sign in</a>');
 
   const hero =
     '<section class="mkt-hero"><div class="mkt-wrap">' +
-    '<p class="mkt-kick">Open source · Apache-2.0 · One Worker</p>' +
-    '<h1>One place for speakers, sessions, and <em>the day of the show.</em></h1>' +
-    '<p class="mkt-lede">Fireside runs the call, the committee, the decisions, the agenda ' +
-    'and the green room — organizers get a pile that finally moves, speakers get one page ' +
-    'that tells them exactly what is still due, and attendees find the people who were in ' +
-    'the room with them.</p>' +
+    '<div class="mkt-hero-grid">' +
+    '<div>' +
+    '<p class="mkt-kick">Conference program software · for editorial teams</p>' +
+    '<h1>Keep your whole conference <em>humming in sync.</em></h1>' +
+    '<p class="mkt-lede">Months before the doors open, follow the proposals, reviews, placements, ' +
+    'and speaker obligations that still need a decision. By show day, reviewers can finish their ' +
+    'assigned proposals, speakers can check what is due, volunteers can run the next room, and ' +
+    'attendees can use the agenda.</p>' +
     '<div class="mkt-cta">' +
     '<a class="btn btn-primary btn-lg" href="#live">Walk a live conference →</a>' +
-    (signedIn
-      ? '<a class="btn btn-lg" href="/admin">Your backstage →</a>'
-      : '<a class="btn btn-lg" href="/sign-in">Sign in</a>') +
+    '<a class="btn btn-lg" href="#program">See the program desk</a>' +
+    (signedIn ? '<a class="btn btn-lg" href="/admin">Your backstage</a>' : '') +
     '</div>' +
-    `<div class="mkt-spine">${SPINE.map((s) => `<span>${esc(s)}</span>`).join('')}</div>` +
+    '</div>' +
+    vgPulse() +
+    '</div>' +
+    `<div class="mkt-run">${RUNWAY.map(
+      (s) => `<div class="mkt-run-s"><span>${esc(s.t)}</span><h3>${esc(s.h)}</h3></div>`
+    ).join('')}</div>` +
     '</div></section>';
 
-  const numbers =
-    '<div class="mkt-wrap"><div class="mkt-nums">' +
-    NUMBERS.map((s) => `<div class="mkt-num"><div class="n">${esc(s.n)}</div><div class="l">${esc(s.l)}</div></div>`).join('') +
-    '</div></div>';
-
-  const pain =
-    '<section class="mkt-sec mkt-deep"><div class="mkt-wrap">' +
-    '<p class="mkt-kick">Why it exists</p>' +
-    '<h2 class="mkt-h">Everything we hate about call-for-speakers tools.</h2>' +
-    '<p class="mkt-lede">This is not market research. It is a grudge, itemized, with what ' +
-    'we did about each line of it.</p>' +
-    '<div class="mkt-pairs">' +
-    PAIRS.map(
-      (p) => `<div class="mkt-pair"><p class="x">${esc(p.x)}</p><p class="y">${esc(p.y)}</p></div>`
-    ).join('') +
+  const program =
+    '<section class="mkt-sec mkt-deep" id="program"><div class="mkt-wrap mkt-cols">' +
+    '<div>' +
+    '<p class="mkt-kick">The editorial desk</p>' +
+    '<h2 class="mkt-h">Six hundred proposals make it inordinately hard to curate a program that matches the theme and wows the audience.</h2>' +
+    '<p class="mkt-p">The program chair is weighing the theme, the audience, the formats, and the ' +
+    'people behind every promising talk. Fireside keeps the proposals, the review marks, and the ' +
+    'placement questions together while those choices are still open.</p>' +
     '</div>' +
-    '<p class="mkt-confess">Exhibit A of our desperation: three spreadsheets, a shared inbox, ' +
-    'a Trello board nobody archived, and one organizer who has personally typed 610 rejection ' +
-    'emails.</p>' +
+    vgBoard() +
     '</div></section>';
 
   const turn =
@@ -274,88 +316,93 @@ export function homePage(signedIn = false): string {
     '<b>Who has been told is never a guess.</b></p>' +
     '</div></section>';
 
-  const product =
-    '<div id="product">' +
-    show({
-      kick: 'The attendee layer',
-      h: 'The people who sat through the same talk can find each other.',
-      body: [
-        'Star a session, and afterwards you can say you were there. If someone else in that ' +
-          'room says it too, the two of you appear on each other’s list, and on nobody else’s.',
-        'Your name always. Where you work, your links, your email — each one opens only if you ' +
-          'open it. No messages to moderate, no follower graph, no notification you did not ask ' +
-          'for. Fireside shows the door and then gets out of the way.',
-      ],
-      door: { label: 'See a conference that already happened', href: '/ddc-clt' },
-      art: vgPeople(),
-    }) +
-    show({
-      flip: true,
-      kick: 'People, not rows',
-      h: 'A speaker is a person with a history, not a row behind a talk.',
-      body: [
-        'Fireside keeps people across years and across events. “Accepted in 2025, and the room ' +
-          'loved it” is a query, not something one committee member half-remembers on a call.',
-        'Next year’s program starts from the people you already trust — who spoke, who ' +
-          'reviewed, who you turned down kindly and should ask again.',
-      ],
-      door: { label: 'Open a speaker’s own page', href: '/aie-nyc/portal' },
-      art: vgDirectory(),
-    }) +
-    show({
-      kick: 'The day of the show',
-      h: 'The day of the show, on a volunteer’s phone.',
-      body: [
-        'Who is next, what they look like, whether their slides are in, and one number to tap ' +
-          'when they are not in the room.',
-        'The green room sheet is a link you hand to a runner. Read-only, no account needed, ' +
-          'and none of your own sign-in ends up in somebody else’s pocket. It opens in a ' +
-          'basement on one bar of signal, because that is where it gets used.',
-      ],
-      door: { label: 'Open the green room', href: '/admin/aie-nyc/green-room' },
-      art: vgGreenRoom(),
-    }) +
-    show({
-      flip: true,
-      kick: 'The call for speakers',
-      h: 'A form that teaches by example and never loses a keystroke.',
-      body: [
-        'Every field can carry a real example of a good answer, written by you, one tap away. ' +
-          'Speakers stop guessing what you want and start writing it.',
-        'Every keystroke saves as it is typed, so a closed laptop costs nothing. Ask your own ' +
-          'questions, reorder them, and show one only when an earlier answer calls for it — no ' +
-          'separate form builder, no export, no second tool to keep in step.',
-      ],
-      door: { label: 'Open the call', href: '/aie-nyc/cfp' },
-      art: vgCall(),
-    }) +
-    '</div>';
-
-  const rest =
-    '<section class="mkt-sec mkt-deep mkt-top"><div class="mkt-wrap">' +
-    '<p class="mkt-kick">The rest of the job</p>' +
-    '<h2 class="mkt-h">And everything else a conference actually needs.</h2>' +
+  const team =
+    '<section class="mkt-sec" id="team"><div class="mkt-wrap">' +
+    '<p class="mkt-kick">One program · many hands</p>' +
+    '<h2 class="mkt-h">Each person sees the work they carry.</h2>' +
+    '<p class="mkt-lede">The editorial lead shapes the lineup. Organizers follow open obligations, ' +
+    'reviewers finish their rounds, speakers see what is due, volunteers run the next room, and ' +
+    'attendees use the day. Each gets the context for their part without inheriting the whole ' +
+    'control room.</p>' +
     '<div class="mkt-grid">' +
-    REST.map((r) => `<div class="mkt-cell"><h3>${esc(r.h)}</h3><p>${esc(r.p)}</p></div>`).join('') +
-    '<div class="mkt-cell mkt-ways"><b>Three ways to sign in:</b> a password, a link in your ' +
-    'email, or Google. Attendees need none of them until they want their starred sessions to ' +
-    'follow them to another device.</div>' +
-    '</div></div></section>';
-
-  const year =
-    '<section class="mkt-sec" id="year"><div class="mkt-wrap">' +
-    '<p class="mkt-kick">The shape of the thing</p>' +
-    '<h2 class="mkt-h">A conference is a year, not a day.</h2>' +
-    '<p class="mkt-lede">Fireside is built along it. Each door below opens at that exact ' +
-    'moment of the year.</p>' +
-    '<div class="mkt-year">' +
-    YEAR.map(
-      (w) =>
-        `<div class="mkt-step"><div class="ph">${esc(w.phase)}</div>` +
-        `<div class="bd"><p>${esc(w.line)}</p>` +
-        `<a class="link" href="${w.href}">${esc(w.door)} →</a></div></div>`
+    ROLES.map(
+      (r) =>
+        `<div class="mkt-cell"><p class="mkt-role">${esc(r.who)}</p><h3>${esc(r.h)}</h3><p>${esc(r.p)}</p></div>`
     ).join('') +
     '</div></div></section>';
+
+  const proof =
+    '<section class="mkt-proof"><div class="mkt-wrap">' +
+    '<p class="q">Save the stress for <b>choosing the talks.</b></p>' +
+    '<p class="s">That is the work only the program team can do. They should not spend Friday ' +
+    'rechecking counts, searching inboxes for a deck, or discovering that a speaker never got ' +
+    'the reminder.</p>' +
+    '</div></section>';
+
+  const review =
+    '<section class="mkt-sec" id="review"><div class="mkt-wrap">' +
+    '<p class="mkt-kick">Collaborative review</p>' +
+    '<h2 class="mkt-h">Let reviewers think alone, then let the committee see together.</h2>' +
+    '<p class="mkt-lede">A reviewer who sees the wrong name cannot unsee it. A half-submitted round ' +
+    'leaves the committee guessing. Reviewers assess what is assigned to them; the committee reads ' +
+    'finished rounds when it is time to shape the lineup.</p>' +
+    vgReview() +
+    '</div></section>';
+
+  const concierge =
+    '<section class="mkt-sec mkt-deep" id="concierge"><div class="mkt-wrap mkt-cols">' +
+    '<div>' +
+    '<p class="mkt-kick">The concierge</p>' +
+    '<h2 class="mkt-h">Ask the program a question, get the page you were after.</h2>' +
+    '<p class="mkt-p">On every page of an event there is a corner to ask in. Six questions are ' +
+    'answered straight off the database — no model in the path, no wait — and the concierge knows ' +
+    'who is asking: an organizer asks after the pile, a speaker after what is owed. A question ' +
+    'nobody could answer lands with the organizers, so the next person gets a better one.</p>' +
+    '<p class="mkt-p">It extends the same courtesy to your agent. Fireside speaks MCP: the public ' +
+    'program as tools for anyone, and a printed connect command for the signed-in — so a reviewer ' +
+    'can hand their queue to Claude and file every review without leaving the terminal.</p>' +
+    '<a class="mkt-door" href="/agents">Connect your agent →</a>' +
+    '<a class="mkt-door" href="/aie-nyc/ask" style="margin-left:18px">Ask it anything →</a>' +
+    '</div>' +
+    vgConcierge() +
+    '</div></section>';
+
+  const showday =
+    '<section class="mkt-sec" id="showday"><div class="mkt-wrap">' +
+    '<p class="mkt-kick">Final weeks · show day</p>' +
+    '<h2 class="mkt-h">Every promise lands with the person carrying it.</h2>' +
+    '<p class="mkt-lede">A forgotten deck or arrival contact becomes a Friday emergency. On show ' +
+    'day, a volunteer with one bar still knows the next face, the room, the slide status, and the ' +
+    'one number to tap. The private detail stays in the organizer and runner views that need it.</p>' +
+    `<div class="mkt-cols">${vgReadiness()}${vgGreenRoom()}</div>` +
+    '</div></section>';
+
+  const attendees =
+    '<section class="mkt-sec mkt-deep" id="attendees"><div class="mkt-wrap">' +
+    '<p class="mkt-kick">The attendee experience</p>' +
+    '<h2 class="mkt-h">A full program needs a workable day.</h2>' +
+    '<p class="mkt-lede">The smorgasbord is the point. With one phone and one day, an attendee can ' +
+    'save sessions, catch conflicts before the walk, find the room, and return to what they ' +
+    'missed. And the hallway track is real: say you were in the room, and find the people who ' +
+    'said it too.</p>' +
+    `<div class="mkt-cols">${vgSchedule()}${vgPeople()}</div>` +
+    '</div></section>';
+
+  const lifecycle =
+    '<section class="mkt-sec"><div class="mkt-wrap mkt-cols">' +
+    '<div>' +
+    '<p class="mkt-kick">Public, during, after</p>' +
+    '<h2 class="mkt-h">The agenda helps people decide, use the day, and come back to it.</h2>' +
+    '<p class="mkt-p">Before the trip, people need to know why these talks belong together. During ' +
+    'the conference, they need a schedule that works where the wifi does not. Afterward, they need ' +
+    'a direct route to what they missed.</p>' +
+    '</div>' +
+    `<div class="mkt-year">${LIFECYCLE.map(
+      (w) =>
+        `<div class="mkt-step"><div class="ph">${esc(w.t)}</div>` +
+        `<div class="bd"><h3 style="margin:0 0 4px;font-size:16px">${esc(w.h)}</h3><p>${esc(w.p)}</p></div></div>`
+    ).join('')}</div>` +
+    '</div></section>';
 
   const live =
     '<section class="mkt-sec mkt-top" id="live"><div class="mkt-wrap">' +
@@ -374,6 +421,9 @@ export function homePage(signedIn = false): string {
     '<a class="link" href="/admin/aie-nyc/outbox">The outbox</a>' +
     '<a class="link" href="/aie-nyc/portal">A speaker’s portal</a>' +
     '<a class="link" href="/admin/aie-nyc/green-room">The green room</a></div>' +
+    '<p class="ln" style="margin-top:10px">The organizer sign-in is published in the repository’s ' +
+    'README. Sign in with it, decide things, send the letters, and move a session into a room ' +
+    'that is already busy — watch it argue.</p>' +
     '<div class="go"><a class="btn btn-primary btn-lg" href="/aie-nyc/cfp">Open the call →</a>' +
     '<a class="btn btn-lg" href="/aie-nyc/ask">Ask it anything →</a></div>' +
     '</div>' +
@@ -386,61 +436,85 @@ export function homePage(signedIn = false): string {
     '<div class="more mkt-more-txt"><strong>Open to anyone</strong>The program, the speakers, ' +
     'the recordings and the people, with no sign-in at all.</div>' +
     '<div class="go"><a class="btn btn-lg" href="/ddc-clt">See the program →</a>' +
-    '<a class="btn" href="/ddc-clt/ask">Ask it anything →</a></div>' +
+    '<a class="btn" href="/ddc-clt/ask">Ask it anything →</a>' +
+    '</div>' +
     '</div>' +
     '</div>' +
     '<p class="mkt-note">These are demonstration conferences with invented people. Everything ' +
     'resets on a schedule.</p>' +
     '</div></section>';
 
-  const close =
-    '<section class="mkt-sec mkt-deep mkt-top" id="open"><div class="mkt-wrap">' +
-    '<p class="mkt-kick">Open source</p>' +
-    '<h2 class="mkt-h">Yours, all the way down.</h2>' +
-    '<p class="mkt-lede">Fireside is Apache-2.0. It runs as one Cloudflare Worker over one ' +
-    'SQLite database — no fleet to operate, no queue to babysit, and no vendor sitting inside ' +
-    'your speakers’ personal data. Clone it, put your own name on it, and have your own call ' +
-    'open by the end of an afternoon.</p>' +
-    '<div class="mkt-facts"><span>Apache-2.0</span><span>One Worker, one database</span>' +
+  const mechanics =
+    '<section class="mkt-sec" id="mechanics"><div class="mkt-wrap mkt-cols">' +
+    '<div>' +
+    '<p class="mkt-kick">How it works</p>' +
+    '<h2 class="mkt-h">A new room or speaker detail reaches the people acting on it.</h2>' +
+    '<p class="mkt-p">The organizer, the speaker, the volunteer, and the attendee do not work ' +
+    'from separate versions of the program. Their permitted views agree the moment a session, a ' +
+    'contact, or a placement changes.</p>' +
+    '<div class="mkt-facts" style="margin-top:18px"><span>Apache-2.0</span><span>One Worker, one database</span>' +
     '<span>Your speaker data, in your account</span><span>No trackers, no cookie wall</span></div>' +
-    '<div class="mkt-try"><h3>Try it as the organizer</h3>' +
-    '<p>The organizer sign-in for the two conferences above is published in the ' +
-    '<span class="mkt-code">README</span> of the repository. Sign in with it, decide things, ' +
-    'send the letters, move a session into a room that is already busy and watch it argue.</p>' +
-    '<div class="btnrow" style="margin-top:18px">' +
-    '<a class="btn btn-primary" href="https://github.com/Phantastic-AI/fireside">The repository →</a>' +
-    '<a class="btn" href="#live">Walk a conference</a>' +
-    '</div></div>' +
+    '<p class="mkt-p" style="margin-top:16px">Fireside is open source, and it runs in your own ' +
+    'Cloudflare account — no fleet to operate, no vendor sitting inside your speakers’ personal ' +
+    'data. Clone it, put your own name on it, and have your own call open by the end of an ' +
+    'afternoon.</p>' +
+    '<a class="mkt-door" href="https://github.com/Phantastic-AI/fireside">Read the source →</a>' +
+    '</div>' +
+    `<div class="mkt-grid mkt-grid-1">${MECHANICS.map(
+      (m) => `<div class="mkt-cell"><h3>${esc(m.h)}</h3><p>${esc(m.p)}</p></div>`
+    ).join('')}</div>` +
     '</div></section>';
 
-  // No script on this page, deliberately. The one entrance is CSS, above the
-  // fold, so nothing is ever hidden from a reader, a crawler or a printer.
+  const founder =
+    '<section class="mkt-sec mkt-deep"><div class="mkt-wrap mkt-founder">' +
+    '<p class="mkt-kick">Why this matters to me</p>' +
+    '<blockquote>I love conferences where 25 minutes can crystallize the field, 50 can open it ' +
+    'up, and a workshop lets you learn from the people who made the thing. Fireside is for the ' +
+    'program teams who create those days and for everyone trying to get more from them.</blockquote>' +
+    '<p class="mkt-sig">Aditya, founder of Fireside</p>' +
+    '</div></section>';
+
+  const closing =
+    '<section class="mkt-proof mkt-top"><div class="mkt-wrap">' +
+    '<p class="q">Bring us the conference <b>you are already planning.</b></p>' +
+    '<p class="s">Bring the talks still competing for a place, the speakers who need an answer, ' +
+    'and the Friday details that cannot be lost in an inbox. Carry them through the agenda, the ' +
+    'green room, and the sessions people return to afterward.</p>' +
+    '<a class="mkt-door" href="#live">Walk your conference through Fireside →</a>' +
+    '</div></section>';
+
   const body =
     '<div class="stage onstage">' +
     `<header class="mast mkt-mast"><div class="wrap mast-in">${brand()}<nav>${nav}</nav></div></header>` +
     '<main class="mkt-main">' +
     hero +
-    numbers +
-    pain +
+    program +
     turn +
-    product +
-    rest +
-    year +
+    team +
+    proof +
+    review +
+    concierge +
+    showday +
+    attendees +
+    lifecycle +
     live +
-    close +
+    mechanics +
+    founder +
+    closing +
     '</main>' +
     '<footer class="foot mkt-foot"><div class="wrap foot-in">' +
     `<span class="fname">${NAME}</span>` +
-    '<span>An open-source call for speakers — and everything after.</span>' +
+    '<span>Conference program software, open source.</span>' +
     '<span style="margin-left:auto"><a class="link" href="https://github.com/Phantastic-AI/fireside">GitHub</a></span>' +
     '</div></footer></div>';
 
   return page({
-    title: 'Fireside — one place for speakers, sessions, and the day of the show',
+    title: 'Fireside — keep your whole conference humming in sync',
     description:
-      'Open-source conference software: the call for speakers, review rounds, decisions and ' +
-      'letters, the agenda, the speaker portal, the green room, and an attendee layer that lets ' +
-      'the people who saw the same talk find each other.',
+      'Open-source conference program software: the call for speakers, blind review rounds, ' +
+      'decisions and letters, the agenda, the speaker portal, the green room, a role-aware ' +
+      'concierge, MCP for agents, and an attendee layer where the people who saw the same talk ' +
+      'find each other.',
     register: 'onstage',
     body,
   });

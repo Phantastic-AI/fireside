@@ -242,6 +242,84 @@
 .mkt-try .mkt-code{font-family:var(--mono);font-size:13.5px;background:var(--paper-deep);
   border:1px solid var(--line);border-radius:6px;padding:2px 7px;white-space:nowrap}
 
+/* ============================================================
+   The founder's structure (2026-08-12 merge): pulse, runway,
+   desk, roles, proof, concierge, lifecycle. Same house rules —
+   tokens only, nothing under 13px, the one ink band stays the
+   thesis and nothing else.
+   ============================================================ */
+
+/* the hero splits: words left, the organizer's morning right */
+.mkt-hero-grid{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,.88fr);
+  gap:clamp(30px,4.4vw,64px);align-items:center}
+.mkt-pulse{justify-self:end;max-width:420px}
+.mkt-pr{display:flex;gap:10px;align-items:baseline;padding:9px 0;
+  border-top:1px solid var(--line-soft);font-size:14px;line-height:1.45}
+.mkt-vg-h+.mkt-pr{border-top:0;padding-top:0}
+.mkt-pr .l{flex:none;width:78px;font-size:13px;font-weight:700;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--muted-2)}
+.mkt-pr .l.ok{color:var(--go)}
+.mkt-pr .v{color:var(--ink-soft);min-width:0}
+.mkt-pr .link{margin-left:auto;font-size:13.5px;white-space:nowrap}
+.mkt-pulse-watch{margin-top:12px;padding:9px 12px;background:var(--ember-wash);
+  border:1px solid var(--ember-line);border-radius:9px;font-size:13.5px;
+  line-height:1.5;color:#7A3A0E}
+
+/* the runway: the year in six breaths under the hero */
+.mkt-run{display:grid;grid-template-columns:repeat(6,1fr);gap:0 18px;
+  border-top:1px solid var(--line);margin-top:clamp(34px,4.6vw,58px)}
+.mkt-run-s{padding:16px 6px 6px 0}
+.mkt-run-s span{font-size:13px;font-weight:700;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ember)}
+.mkt-run-s h3{font-family:var(--serif);font-size:16px;font-weight:600;line-height:1.3;
+  margin:7px 0 0;letter-spacing:0}
+
+/* two columns that become one on a phone */
+.mkt-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:clamp(28px,4.6vw,64px);align-items:center}
+.mkt-cols .mkt-vg{justify-self:center}
+
+/* the role a cell speaks for */
+.mkt-role{font-size:13px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ember);margin:0 0 7px}
+.mkt-grid-1{grid-template-columns:1fr}
+
+/* the concierge vignette: the shipped panel's face, drawn still */
+.mkt-cc-head{display:flex;align-items:center;gap:8px;font-family:var(--serif);
+  font-size:16px;font-weight:600}
+.mkt-cc-lead{background:var(--paper);border:1px solid var(--line);border-radius:12px;
+  padding:10px 13px;font-size:14px;line-height:1.5;color:var(--ink-soft);margin:13px 0 0}
+.mkt-cc-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px}
+.mkt-cc-chips span{border:1px solid var(--ember-line);background:var(--card);
+  color:var(--ember);border-radius:99px;padding:4px 11px;font-size:13px;font-weight:620}
+.mkt-cc-you{margin:13px 0 0 auto;width:fit-content;max-width:85%;background:var(--ember-btn);
+  color:#fff;border-radius:12px 12px 3px 12px;padding:8px 12px;font-size:14px;line-height:1.45}
+.mkt-cc-ans{margin-top:10px;background:var(--paper);border:1px solid var(--line);
+  border-radius:12px 12px 12px 3px;padding:10px 13px;font-size:14px;line-height:1.5;
+  color:var(--ink-soft)}
+.mkt-cc-ans i{display:block;font-style:normal;font-size:13px;color:var(--muted);margin-top:7px}
+
+/* my-schedule rows */
+.mkt-time{flex:none;width:46px;font-size:13.5px;font-weight:650;color:var(--muted-2);
+  font-variant-numeric:tabular-nums}
+.mkt-star{margin-left:auto;color:var(--ember);font-size:16px}
+
+/* the light callouts: the proof and the closing, serif and centered,
+   so the thesis band stays the only dark thing on the page */
+.mkt-proof{padding:clamp(48px,6.2vw,88px) 0;text-align:center;border-top:1px solid var(--line)}
+.mkt-proof .q{font-family:var(--serif);font-weight:400;letter-spacing:-.018em;
+  font-size:clamp(24px,3.6vw,40px);line-height:1.2;margin:0 auto;max-width:18em}
+.mkt-proof .q b{font-weight:600;color:var(--ember)}
+.mkt-proof .s{margin:16px auto 0;max-width:37em;font-size:16.5px;line-height:1.6;
+  color:var(--muted)}
+.mkt-proof .mkt-door{margin-top:26px}
+
+/* the founder's note */
+.mkt-founder{max-width:46em;margin:0 auto;text-align:center}
+.mkt-founder blockquote{font-family:var(--serif);font-weight:400;letter-spacing:-.012em;
+  font-size:clamp(19px,2.5vw,27px);line-height:1.45;margin:18px 0 0}
+.mkt-sig{margin:16px 0 0;font-size:14.5px;font-weight:650;color:var(--muted)}
+
 /* ---------- motion: two gestures, no JavaScript ----------
    The page carries no script at all, so the entrance is CSS and plays
    above the fold where it cannot hide anything from a reader, a crawler
@@ -266,6 +344,10 @@
   .mkt-show.mkt-flip .mkt-show-txt{order:0}
   .mkt-show-art{justify-content:flex-start}
   .mkt-doors{grid-template-columns:1fr}
+  .mkt-hero-grid,.mkt-cols{grid-template-columns:1fr;gap:34px}
+  .mkt-pulse{justify-self:stretch;max-width:none}
+  .mkt-cols .mkt-vg{justify-self:start}
+  .mkt-run{grid-template-columns:repeat(3,1fr)}
 }
 @media (max-width:720px){
   .mkt-wrap,.mkt-mast>.wrap,.mkt-foot>.wrap{padding:0 18px}
@@ -294,4 +376,6 @@
      reach once they overflow. On a page with five of them, start left and let
      the rail scroll. */
   .mkt-mast nav{justify-content:flex-start}
+  .mkt-run{grid-template-columns:repeat(2,1fr);gap:0 14px}
+  .mkt-cols .mkt-vg{justify-self:stretch}
 }
