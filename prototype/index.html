@@ -820,7 +820,7 @@ var EVENTS = {
     where: 'New York',
     venue: 'Pier 57, New York',
     dates: 'Thu 3 – Fri 4 September 2026',
-    days: [{ k: 'thu', label: 'Thu 3 Sep', long: 'THU 3 SEP' }, { k: 'fri', label: 'Fri 4 Sep', long: 'FRI 4 SEP' }],
+    days: [{ k: 'thu', label: 'Thu 3 Sep', long: 'THU 3 SEP', d: D(2026,9,3) }, { k: 'fri', label: 'Fri 4 Sep', long: 'FRI 4 SEP', d: D(2026,9,4) }],
     rooms: ['Ballroom A', 'Ballroom B', 'Studio', 'Loft'],
     roomSeats: { 'Ballroom A': 420, 'Ballroom B': 260, 'Studio': 140, 'Loft': 90 },
     tracks: ['platform', 'practice', 'leadership'],
@@ -836,22 +836,23 @@ var EVENTS = {
   },
   'ddc-clt': {
     slug: 'ddc-clt',
-    name: 'DevOps Days Charlotte 2026',
+    name: 'DevOps Days Charlotte 2025',
     where: 'Charlotte',
     venue: 'The Foundry, Charlotte',
-    dates: 'Tue 3 November 2026',
-    days: [{ k: 'tue', label: 'Tue 3 Nov', long: 'TUE 3 NOV' }],
+    dates: 'Thu 6 – Fri 7 November 2025',
+    ends: D(2025,11,7,23,59),   /* already happened — drives the landing card's "Happened · recordings up" */
+    days: [{ k: 'thu', label: 'Thu 6 Nov', long: 'THU 6 NOV', d: D(2025,11,6) }, { k: 'fri', label: 'Fri 7 Nov', long: 'FRI 7 NOV', d: D(2025,11,7) }],
     rooms: ['Main hall', 'Workshop room'],
     roomSeats: { 'Main hall': 300, 'Workshop room': 60 },
     tracks: ['delivery', 'reliability'],
-    slots: { tue: ['09:30','10:30','11:30','14:00','15:00'] },
-    call: 'closed', opens: D(2026,5,15), closes: D(2026,8,1,23,59), decideBy: D(2026,8,18),
+    slots: { thu: ['09:30','10:30','11:30','14:00','15:00'], fri: ['09:30','10:30','11:30','14:00','15:00'] },
+    call: 'closed', opens: D(2025,5,15), closes: D(2025,8,1,23,59), decideBy: D(2025,8,18),
     tz: 'All times ET',
     organizer: 'Marcus Delacroix',
     email: 'marcus@example.org',
-    intro: 'One day, two rooms, no keynote. Charlotte has run this for eleven years on volunteer time and a spreadsheet. Talks about the boring parts are the most welcome ones.',
-    published: false,
-    slidesDue: D(2026,10,25),
+    intro: 'Two days, two rooms, no keynote. Charlotte has run this for eleven years on volunteer time and a spreadsheet. Talks about the boring parts are the most welcome ones.',
+    published: true,
+    slidesDue: D(2025,10,31),
     cap: 2
   }
 };
@@ -1055,41 +1056,58 @@ var DEC1  = D(2026,8,4,14,2);
 S({ id:'draft-1', title:'', sp:['jonah-wexler'], track:'platform', fmt:'Talk', mins:30, state:'draft',
     abs:'', sent:null, started: D(2026,8,8,21,14), decided:null, told:null, tasks:[] });
 
-/* --- DevOps Days Charlotte 2026: 14 accepted, all told 6 Aug --- */
-var TOLD2 = D(2026,8,6,12,0);
+/* --- DevOps Days Charlotte 2025: past edition (6–7 Nov 2025) — 14 accepted,
+       all told 6 Aug 2025, agenda published, recordings up on a few --- */
+var TOLD2 = D(2025,8,6,12,0);
 [
+ /* id, title, speaker, track, fmt, mins, abstract, day, time, room, recording */
  ['c-pipeline','Fifteen years of one deployment pipeline','greta-lindholm','delivery','Talk',30,
-  'Piedmont\'s pipeline predates most of the team. We did not replace it. We wrote down what it actually does, deleted the four steps nobody could explain, and made it survivable for the next hire.'],
+  'Piedmont\'s pipeline predates most of the team. We did not replace it. We wrote down what it actually does, deleted the four steps nobody could explain, and made it survivable for the next hire.',
+  'thu','09:30','Main hall','https://videos.example.org/ddc-clt-2025/fifteen-years-one-pipeline'],
  ['c-alerts','Cutting alerts at a utility without cutting the lights','omar-siddiqui','reliability','Talk',30,
-  'A utility cannot simply page less. We removed 60% of alerts and added two, and the argument about which two took four months.'],
+  'A utility cannot simply page less. We removed 60% of alerts and added two, and the argument about which two took four months.',
+  'thu','10:30','Main hall'],
  ['c-firstship','Ninety minutes to first deploy','bea-thornton','delivery','Talk',30,
-  'A new hire\'s first deploy took nine days when I started measuring it. Six changes later it takes ninety minutes and none of them were tooling purchases.'],
+  'A new hire\'s first deploy took nine days when I started measuring it. Six changes later it takes ninety minutes and none of them were tooling purchases.',
+  'thu','11:30','Workshop room'],
  ['c-mainframe','The twelve services that stayed','luis-moreira','delivery','Talk',45,
-  'We moved 400 services off the mainframe. Twelve stayed on purpose. The case for leaving them is the most useful part of the project.'],
+  'We moved 400 services off the mainframe. Twelve stayed on purpose. The case for leaving them is the most useful part of the project.',
+  'thu','11:30','Main hall'],
  ['c-postmortem','Postmortems for the engineer who hits it next','anouk-devries','reliability','Talk',30,
-  'We rewrote our incident format for a different reader and the write-ups got shorter, later and far more used.'],
+  'We rewrote our incident format for a different reader and the write-ups got shorter, later and far more used.',
+  'thu','14:00','Main hall','https://videos.example.org/ddc-clt-2025/postmortems-for-the-next-engineer'],
  ['c-regulated','The same migration in three regulated industries','samir-haddad','delivery','Talk',30,
-  'Banking, healthcare, energy. Same architecture, three completely different approval paths, and one lesson that transferred.'],
+  'Banking, healthcare, energy. Same architecture, three completely different approval paths, and one lesson that transferred.',
+  'fri','09:30','Main hall'],
  ['c-stopwatch','Deployment as a stopwatch','freya-lindgren','delivery','Lightning talk',15,
-  'We timed every step between merge and production. Fifteen minutes on the three approvals we could not justify and removed.'],
+  'We timed every step between merge and production. Fifteen minutes on the three approvals we could not justify and removed.',
+  'thu','14:00','Workshop room'],
  ['c-chaos','Thursday afternoon chaos','theo-vandermeer','reliability','Talk',30,
-  'Trident runs chaos tests in production every Thursday. Four years of data on whether the complaints or the results are right.'],
+  'Trident runs chaos tests in production every Thursday. Four years of data on whether the complaints or the results are right.',
+  'thu','15:00','Main hall'],
  ['c-hospital','Quarterly to daily in a hospital system','imani-clarke','delivery','Talk',45,
-  'Regulated, risk-averse, and now deploying every day. The compliance conversation, in full, including the parts where I was wrong.'],
+  'Regulated, risk-averse, and now deploying every day. The compliance conversation, in full, including the parts where I was wrong.',
+  'fri','10:30','Main hall','https://videos.example.org/ddc-clt-2025/quarterly-to-daily'],
  ['c-k8s','Kubernetes before it was reasonable','viktor-novak','reliability','Talk',30,
-  'Nine years of running it in an energy company. What I would keep, what I would never do again, and the two versions that cost me a summer.'],
+  'Nine years of running it in an energy company. What I would keep, what I would never do again, and the two versions that cost me a summer.',
+  'fri','11:30','Main hall'],
  ['c-audit','What the auditors taught us about logging','anya-kowalczyk','reliability','Talk',30,
-  'Our audit trail was built for engineers and useless to auditors. Rebuilding it for them made it better for us.'],
+  'Our audit trail was built for engineers and useless to auditors. Rebuilding it for them made it better for us.',
+  'fri','10:30','Workshop room'],
  ['c-transit','Publishing uncertainty','desmond-oyelaran','reliability','Lightning talk',15,
-  'A transit feed that says a bus is coming when it is not is worse than no feed. What we changed about how we publish confidence.'],
+  'A transit feed that says a bus is coming when it is not is worse than no feed. What we changed about how we publish confidence.',
+  'thu','15:00','Workshop room'],
  ['c-paging','Paging is a product decision','ben-halloran','reliability','Talk',30,
-  'Every alert is a promise that someone will do something. We audited 1,100 alerts against that test and deleted 700.'],
+  'Every alert is a promise that someone will do something. We audited 1,100 alerts against that test and deleted 700.',
+  'fri','14:00','Main hall'],
  ['c-docs','Docs as the first agent surface','nia-fitzgerald','delivery','Workshop',90,
-  'A working session on restructuring documentation so a machine can act on it without guessing. Bring a page of your own.']
+  'A working session on restructuring documentation so a machine can act on it without guessing. Bring a page of your own.',
+  'thu','09:30','Workshop room']
 ].forEach(function(r){
   S({ id: r[0], ev: 'ddc-clt', title: r[1], sp: [r[2]], track: r[3], fmt: r[4], mins: r[5], abs: r[6],
-      state: 'accepted', sent: D(2026,7,10 + hash(r[0]) % 20, 11, hash(r[0]) % 60),
-      decided: D(2026,8,6,10,30), told: TOLD2, score: 7 + hash(r[0]) % 3, tasks: [] });
+      day: r[7], time: r[8], room: r[9], recording: r[10] || null,
+      state: 'accepted', sent: D(2025,7,10 + hash(r[0]) % 20, 11, hash(r[0]) % 60),
+      decided: D(2025,8,6,10,30), told: TOLD2, score: 7 + hash(r[0]) % 3, tasks: [] });
 });
 
 /* ============================================================
@@ -1172,7 +1190,7 @@ function fill(ev, plan, opts){
 }
 fill('aie-nyc', { waitlisted: 36, rejected: 560, submitted: 340, draft: 11, withdrawn: 7 },
      { decided: D(2026,8,11,9,0), told: null });
-fill('ddc-clt', { waitlisted: 3, rejected: 47, submitted: 20 }, { decided: D(2026,8,6,10,30), told: TOLD2 });
+fill('ddc-clt', { waitlisted: 3, rejected: 47, submitted: 20 }, { decided: D(2025,8,6,10,30), told: TOLD2 });
 
 /* ============================================================
    Derived: indexes and the counts every label is allowed to use.
@@ -1245,6 +1263,7 @@ function orgLine(s){
   return '';
 }
 function dayLabel(ev, k){ var d = EVENTS[ev].days.filter(function(x){ return x.k === k; })[0]; return d ? d.label : k; }
+function dayDate(ev, k){ var d = EVENTS[ev].days.filter(function(x){ return x.k === k; })[0]; return (d && d.d) || TODAY; }
 function whenLine(s){ return dayLabel(s.ev, s.day) + ', ' + s.time + ', ' + s.room; }
 
 /* ---------- file / task language ---------- */
@@ -1394,11 +1413,11 @@ var MIRROR = [
 ];
 function screenLanding(){
   var evs = Object.keys(EVENTS).map(function(k){
-    var E = EVENTS[k], open = E.call === 'open', c = counts(k);
+    var E = EVENTS[k], open = E.call === 'open', past = !!(E.ends && E.ends < TODAY), c = counts(k);
     return '<a class="card evcard" href="' + url(open ? k + '/cfp' : k + '/agenda') + '">' +
       '<h3>' + h(E.name) + '</h3>' +
       '<div class="when">' + h(E.dates) + ' · ' + h(E.where) + '</div>' +
-      '<div class="state"><span class="dot' + (open ? '' : ' closed') + '"></span>' + h(callState(E, 'org')) + '</div>' +
+      '<div class="state"><span class="dot' + (open ? '' : ' closed') + '"></span>' + h(past ? 'Happened · recordings up' : callState(E, 'org')) + '</div>' +
       '<div class="sub">' + n(c.all) + ' proposals · ' + n(c.accepted) + ' accepted · ' + plural(evSpeakers(k, true).length, 'speaker confirmed', 'speakers confirmed') + '</div>' +
       '<div class="cta"><span class="btn btn-primary">' + (open ? 'Open the call' : 'See the program →') + '</span></div>' +
     '</a>';
@@ -1633,7 +1652,7 @@ function screenPortal(ev){
     if (s.state === 'accepted'){
       head = '<p style="margin:0;color:var(--go);font-weight:640">You are on the program.</p>' +
         '<h3>' + h(s.title) + '</h3>' +
-        (s.day ? '<p class="bigwhen">' + h(dDayLong(s.day === 'fri' ? D(2026,9,4) : s.day === 'thu' ? D(2026,9,3) : D(2026,11,3))) + ', ' + h(s.time) + ', ' + h(s.room) + '</p>' +
+        (s.day ? '<p class="bigwhen">' + h(dDayLong(dayDate(s.ev, s.day))) + ', ' + h(s.time) + ', ' + h(s.room) + '</p>' +
                  '<p class="sub" style="margin-top:4px">' + h(s.fmt) + ' · ' + mins(s.mins) + ' · ' + h(TRACKS[s.track].name) + (E.published ? '' : ' — not public yet') + '</p>'
                 : '<p class="sub" style="margin-top:8px">Your time and room are still being worked out. We will write when they are set.</p>');
       bot = (E.published && s.day ? '<a class="btn" href="' + url(ev + '/s/' + s.id) + '">See it on the agenda →</a>' : '') +
@@ -1805,7 +1824,7 @@ function screenSession(ev, id){
         '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">' + tkChip(s.track) +
           '<span class="sub">' + h(s.fmt) + ' · ' + mins(s.mins) + '</span></div>' +
         '<h1 class="display" style="font-size:clamp(27px,4.4vw,40px)">' + h(s.title) + '</h1>' +
-        '<p style="margin-top:14px;font-size:19px;font-weight:600">' + h(dDayLong(s.day === 'fri' ? D(2026,9,4) : s.day === 'tue' ? D(2026,11,3) : D(2026,9,3))) + ', ' + h(s.time) + ' · ' + h(s.room) + '</p>' +
+        '<p style="margin-top:14px;font-size:19px;font-weight:600">' + h(dDayLong(dayDate(ev, s.day))) + ', ' + h(s.time) + ' · ' + h(s.room) + '</p>' +
         '<p class="sub">' + h(E.tz) + '</p>' +
       '</div>' +
       '<div class="card card-pad" style="min-width:210px;display:flex;flex-direction:column;gap:10px">' +
@@ -2541,7 +2560,7 @@ function screenOutbox(ev){
     '<p class="counts">' + (staged.length ? '<b>Ready to send · ' + n(staged.length) + '</b><span class="sep">·</span>' +
       n(c.notToldAccepted) + ' accepted, ' + n(c.notToldMaybe) + ' maybe, ' + n(c.notToldDeclined) + ' declined'
       : '<b>Nothing to send</b>') + '<span class="sep">·</span>' + h(E.tz) + '</p></div>' +
-    '<div class="sec standing">Messages land in each speaker’s portal. This build does not send real email.</div>';
+    '<div class="sec standing">Messages land in each speaker’s portal. Real addresses get real email too.</div>';
 
   if (!staged.length){
     return backstage(ev, '/outbox', head + '<div class="sec state-out"><h2>Nothing to send.</h2>' +
@@ -2595,7 +2614,7 @@ function wireOutbox(ev){
     var c = counts(ev), staged = evSubs(ev).filter(function(s){ return s.decided && !s.told; });
     dialog('Send ' + n(staged.length) + ' decisions?',
       n(c.notToldAccepted) + ' accepted, ' + n(c.notToldMaybe) + ' maybe, ' + n(c.notToldDeclined) + ' declined. Each one gets your note. ' +
-      'They land in each speaker’s portal — this build does not send real email.',
+      'They land in each speaker’s portal — real addresses get real email too.',
       [{ label: 'Send ' + n(staged.length) + ' decisions', primary: true, run: function(){
           staged.forEach(function(s){ s.told = TODAY; });
           toast('Sent. ' + plural(staged.length, 'speaker has', 'speakers have') + ' been told.');
@@ -2738,7 +2757,7 @@ function ccAnswer(scope, q){
     var me = portalPerson(ev), mine = subsOfPerson(me.id, ev);
     return ccLead('Three proposals, three different answers.') +
       mine.map(function(s){
-        var line = s.state === 'accepted' ? (s.day ? dDayLong(D(2026, 9, s.day === 'fri' ? 4 : 3)) + ', ' + s.time + ', ' + s.room : 'Time and room to come')
+        var line = s.state === 'accepted' ? (s.day ? dDayLong(dayDate(s.ev, s.day)) + ', ' + s.time + ', ' + s.room : 'Time and room to come')
           : s.state === 'submitted' ? 'Decisions go out by ' + dLong(E.decideBy)
           : 'The committee did not choose this one for the 2026 program';
         return '<div class="cc-row"><span class="n">' + h(s.title) + '</span>' +
