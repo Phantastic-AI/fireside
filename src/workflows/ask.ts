@@ -884,12 +884,22 @@ function instantly(say: (string | null)[], doors: (Door | null | undefined)[]): 
 /** Somebody asking how to bring their agent is asking for steps, not for the
  *  program — so the steps are a template, the same for everyone, with the one
  *  page that has their command on it. 'house' rather than 'instant': nothing
- *  here was read off the program, and the provenance line should not claim so. */
-const AGENT_ASK =
-  /\bmcp\b|\bclaude\b|\bcursor\b|\bcopilot\b|\bjson-?rpc\b|\bapi\b|\bagents?\b|\bai assistant\b/i;
+ *  here was read off the program, and the provenance line should not claim so.
+ *
+ *  This is an AI Engineer conference: "agents", "api", "claude", "cursor" are
+ *  session subjects, not connection requests. So the trigger is intent, not
+ *  vocabulary — the protocol named outright (mcp / json-rpc), or a possessive
+ *  agent ("my agent"), or a connect verb aimed at one. "Which sessions are
+ *  about agents" reads the program, the way it should. */
+function wantsToConnect(q: string): boolean {
+  if (/\bmcp\b|\bjson-?rpc\b/i.test(q)) return true;
+  if (/\b(my|your|our|own)\s+(ai\s+|coding\s+)?agents?\b/i.test(q)) return true;
+  if (/\b(connect|hook\s*up|point|wire|plug|bring|attach)\b[^.?!]{0,32}\bagent/i.test(q)) return true;
+  return false;
+}
 
 export function agentHandshake(question: string, signedIn: boolean): AskResult | null {
-  if (!AGENT_ASK.test(question)) return null;
+  if (!wantsToConnect(question)) return null;
   const say = signedIn
     ? [
         'Your agent can act here as you.',

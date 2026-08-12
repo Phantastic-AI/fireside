@@ -36,7 +36,7 @@ const RUNWAY: { t: string; h: string }[] = [
 const ROLES: { who: string; h: string; p: string }[] = [
   {
     who: 'Editorial lead',
-    h: 'Choose talks that belong together once the doors open.',
+    h: 'Choose talks that belong together once the audience is in the room.',
     p: 'A strong submission can still repeat a theme, crowd out a format, or unbalance a track. Read each proposal beside its neighbors and build the lineup on purpose.',
   },
   {
@@ -106,7 +106,7 @@ const MECHANICS: { h: string; p: string }[] = [
   },
   {
     h: 'Keep each role in bounds',
-    p: 'Attendees, speakers, reviewers, volunteers, and organizers each see only their part. A reviewer never sees a name while scoring; a runner’s link opens no doors but its own.',
+    p: 'Attendees, speakers, reviewers, volunteers, and organizers each see only their part. A reviewer never sees a name while scoring; a runner’s link reaches its own event and nothing else, and carries no sign-in.',
   },
   {
     h: 'Check consequential actions',
@@ -409,7 +409,7 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     '<div>' +
     '<p class="mkt-kick">Conference program software · for editorial teams</p>' +
     '<h1>Keep your whole conference <em>humming in sync.</em></h1>' +
-    '<p class="mkt-lede">Months before the doors open, follow the proposals, reviews, placements, ' +
+    '<p class="mkt-lede">Months before the audience arrives, follow the proposals, reviews, placements, ' +
     'and speaker obligations that still need a decision. By show day, reviewers can finish their ' +
     'assigned proposals, speakers can check what is due, volunteers can run the next room, and ' +
     'attendees can use the agenda.</p>' +
@@ -430,7 +430,7 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     '<section class="mkt-sec mkt-deep" id="program"><div class="mkt-wrap mkt-cols">' +
     '<div>' +
     '<p class="mkt-kick">The editorial desk</p>' +
-    '<h2 class="mkt-h">Six hundred proposals make it inordinately hard to curate a program that matches the theme and wows the audience.</h2>' +
+    '<h2 class="mkt-h">A thousand proposals make it inordinately hard to curate a program that matches the theme and wows the audience.</h2>' +
     '<p class="mkt-p">The program chair is weighing the theme, the audience, the formats, and the ' +
     'people behind every promising talk. Fireside keeps the proposals, the review marks, and the ' +
     'placement questions together while those choices are still open.</p>' +

@@ -348,6 +348,11 @@
   .mkt-pulse{justify-self:stretch;max-width:none}
   .mkt-cols .mkt-vg{justify-self:start}
   .mkt-run{grid-template-columns:repeat(3,1fr)}
+  /* The pulse rows stack their label over their value on a narrow card, so a
+     long label like "Proposals" never runs into the number beside it. */
+  .mkt-pr{flex-direction:column;gap:2px}
+  .mkt-pr .l{width:auto}
+  .mkt-pr .link{margin-left:0}
 }
 @media (max-width:720px){
   .mkt-wrap,.mkt-mast>.wrap,.mkt-foot>.wrap{padding:0 18px}
