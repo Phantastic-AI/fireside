@@ -1,0 +1,677 @@
+// S-5 — the speaker portal. Priya's screen: eleven minutes on a sofa, on a
+// phone, at 21:40, asking one question — "where do things stand with my talk?"
+// Every lane answers it in the first line, with a date rather than a status.
+//
+// Two register laws hold every sentence here:
+//   D-025 — every heading parses cold to a stranger.
+//   D-027 — the product never narrates its own construction. Nothing on this
+//           page knows it is new.
+//
+// The read is queries/portal.ts and nothing else. That query owns the not-told
+// invariant (a decision that has been made but not sent is invisible here), so
+// this file never re-derives it: it renders view.submissions[].state as given.
+// The writes are workflows/portal-actions.ts, which return an outcome word;
+// the sentences for those outcomes live here, because they are the screen's.
+
+import type { Hono } from 'hono';
+import type { Env } from '../../index';
+import { esc, page, eventNav, onstageShell } from '../../lib/html';
+import { label, type LabelKey } from '../../lib/labels';
+import { eventBySlug, type EventHome } from '../../queries/public';
+import {
+  portalView,
+  type PortalMessage,
+  type PortalSubmission,
+  type PortalTask,
+  type PortalView,
+} from '../../queries/portal';
+import { principalFromCookie } from '../../workflows/account';
+import { completeTask, withdrawProposal, type WriteOutcome } from '../../workflows/portal-actions';
+
+/* ------------------------------------------------------------------ *
+ * Words
+ * ------------------------------------------------------------------ */
+
+/**
+ * A label that may be missing. Formats and levels arrive from the database as
+ * stored values, and a value with no row in 02 §6 must not print raw and must
+ * not take the page down with it — it simply says nothing.
+ */
+function word(key: string): string {
+  try {
+    return label(key as LabelKey, 'onstage');
+  } catch {
+    return '';
+  }
+}
+
+// Stored value → label key. The words still live in one place; this only says
+// which row to read. (The seeded world stores formats as 'Talk' / 'Workshop' /
+// 'Lightning talk' and levels as 'intro' / 'practitioner' / 'deep'.)
+const FORMAT_KEYS: Record<string, string> = {
+  talk: 'format.talk',
+  workshop: 'format.workshop',
+  panel: 'format.panel',
+  lightning: 'format.lightning',
+  'lightning talk': 'format.lightning',
+};
+const formatWord = (v: string): string => word(FORMAT_KEYS[v.trim().toLowerCase()] ?? '');
+
+/** Fill a label's {tokens}. Values arrive already escaped; the replacer is a
+ *  function so a '$' inside a room name stays a '$'. */
+function fill(template: string, values: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (_m, k: string) => values[k] ?? '');
+}
+
+/* ------------------------------------------------------------------ *
+ * Dates and durations — the portal's whole vocabulary of reassurance
+ * ------------------------------------------------------------------ */
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+  'September', 'October', 'November', 'December'];
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct',
+  'Nov', 'Dec'];
+
+type Parts = { y: number; m: number; d: number; hh: number; mi: number; dow: number };
+
+/** An instant, read on the event's own clock. Intl supplies the numbers and
+ *  the month names come from the arrays above, so the words are the
+ *  prototype's exactly and cannot drift with a runtime's locale tables. */
+function partsOf(ms: number, tz: string): Parts {
+  const f = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(ms));
+  const n = (t: string) => Number(f.find((p) => p.type === t)?.value ?? '0');
+  const y = n('year');
+  const m = n('month');
+  const d = n('day');
+  return { y, m, d, hh: n('hour') % 24, mi: n('minute'), dow: new Date(Date.UTC(y, m - 1, d)).getUTCDay() };
+}
+
+/** A calendar day ('2026-08-28') is a date, not an instant: no timezone applies. */
+function partsOfIso(iso: string): Parts {
+  const y = Number(iso.slice(0, 4));
+  const m = Number(iso.slice(5, 7));
+  const d = Number(iso.slice(8, 10));
+  return { y, m, d, hh: 0, mi: 0, dow: new Date(Date.UTC(y, m - 1, d)).getUTCDay() };
+}
+
+const pad = (n: number): string => (n < 10 ? `0${n}` : String(n));
+
+/** "20 August" */
+const long = (p: Parts): string => `${p.d} ${MONTHS[p.m - 1]}`;
+/** "4 Aug" */
+const short = (p: Parts): string => `${p.d} ${MONTHS_SHORT[p.m - 1]}`;
+/** "Friday 4 Sep" */
+const dayLong = (p: Parts): string => `${DAYS[p.dow]} ${p.d} ${MONTHS_SHORT[p.m - 1]}`;
+/** "10:30", on the event's own clock. */
+const clock = (p: Parts): string => `${pad(p.hh)}:${pad(p.mi)}`;
+
+const dLong = (ms: number, tz: string): string => long(partsOf(ms, tz));
+const dShort = (ms: number, tz: string): string => short(partsOf(ms, tz));
+const dDayLong = (ms: number, tz: string): string => dayLong(partsOf(ms, tz));
+const dTime = (ms: number, tz: string): string => clock(partsOf(ms, tz));
+const isoLong = (iso: string): string => long(partsOfIso(iso));
+const isoDayLong = (iso: string): string => dayLong(partsOfIso(iso));
+
+/** The prototype's own rendering of a length. */
+const mins = (m: number): string => (m >= 90 && m % 60 === 0 ? `${m / 60} hr` : `${m} min`);
+
+/* ------------------------------------------------------------------ *
+ * Small pieces of markup
+ * ------------------------------------------------------------------ */
+
+const AVPAL: [string, string][] = [
+  ['#F3DDC6', '#8A4E1C'],
+  ['#DDE8E4', '#1F5B4E'],
+  ['#EEDCE4', '#7B3352'],
+  ['#E3E1EF', '#3F3A72'],
+  ['#EFE6C9', '#6B5A15'],
+  ['#E0EAEF', '#1E5468'],
+  ['#F0DFD8', '#8C3B2B'],
+  ['#DFE9D6', '#3E5C26'],
+];
+
+function hashOf(s: string): number {
+  let x = 0;
+  for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) >>> 0;
+  return x;
+}
+
+/** The prototype's generated portrait: tinted ground, one warm light, initials
+ *  in the serif face. No image request leaves the page. */
+function avatar(name: string, initials: string, size: number): string {
+  const pair = AVPAL[hashOf(name) % AVPAL.length] ?? AVPAL[0]!;
+  const seed = hashOf(`${name}·`);
+  const ax = (26 + (seed % 9)) / 40;
+  const ay = (8 + ((seed >> 3) % 9)) / 40;
+  return (
+    `<svg class="av" width="${size}" height="${size}" viewBox="0 0 40 40" role="img" aria-label="${esc(name)}">` +
+    `<defs><radialGradient id="g${seed}" cx="${ax}" cy="${ay}" r="1">` +
+    `<stop offset="0" stop-color="#fff" stop-opacity=".72"/>` +
+    `<stop offset=".55" stop-color="${pair[0]}" stop-opacity="0"/></radialGradient></defs>` +
+    `<circle cx="20" cy="20" r="20" fill="${pair[0]}"/>` +
+    `<circle cx="20" cy="20" r="20" fill="url(#g${seed})"/>` +
+    `<text x="20" y="21" text-anchor="middle" dominant-baseline="central" ` +
+    `font-family="Iowan Old Style,Palatino,Georgia,serif" font-size="15" font-weight="600" ` +
+    `fill="${pair[1]}">${esc(initials)}</text>` +
+    `<circle cx="20" cy="20" r="19.4" fill="none" stroke="rgba(34,30,23,.12)" stroke-width="1.2"/></svg>`
+  );
+}
+
+/** The committee's own words, kept in their own box and never paraphrased. */
+function committeeNote(text: string): string {
+  return (
+    '<div class="notebox" style="margin-top:12px">' +
+    '<b style="font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">From the committee</b>' +
+    `<p style="margin:6px 0 0" class="serif">${esc(text)}</p></div>`
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * What just happened. One closed set of codes in the URL, one sentence
+ * each here — no free text ever travels through a query string.
+ * ------------------------------------------------------------------ */
+
+const NOTES: Record<string, string> = {
+  withdrawn: 'That one is withdrawn. It has left the committee’s list.',
+  'task-done': 'Marked done. Your list is one shorter.',
+  moved: 'That had already moved before this page opened. What you see now is where it stands.',
+  refused: 'The committee has moved this one on, so it can no longer be withdrawn here.',
+  trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
+};
+
+function noteLine(code: string | undefined): string {
+  const text = code ? NOTES[code] : undefined;
+  if (!text) return '';
+  return (
+    '<div class="notebox" style="margin-top:18px" role="status">' +
+    `<p style="margin:0" class="serif">${esc(text)}</p></div>`
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * The signed-out door
+ * ------------------------------------------------------------------ */
+
+function signedOutPage(ev: EventHome): string {
+  const body =
+    '<div class="wrap" style="padding-top:44px">' +
+    `<h1 class="display">${esc(ev.name)}</h1>` +
+    '<div class="sec state-out" style="max-width:40em">' +
+    '<h2>Sign in to see where your talk stands.</h2>' +
+    '<p>Every letter we send you carries a link straight back into this portal — the one that ' +
+    'says we have your proposal, the decision, every reminder after it. Open the most recent one, ' +
+    'or sign in with the address you sent your proposal from and we will send a fresh link.</p>' +
+    '<div class="btnrow">' +
+    `<a class="btn btn-primary btn-lg" href="/sign-in">${esc(label('auth.sign_in', 'onstage'))}</a>` +
+    (ev.lifecycle === 'open'
+      ? `<a class="btn btn-lg" href="/${esc(ev.slug)}/cfp">Send a proposal</a>`
+      : `<a class="btn btn-lg" href="/${esc(ev.slug)}/agenda">See the program</a>`) +
+    '</div>' +
+    '<p class="aside">A portal belongs to one speaker. Nothing in it is public.</p>' +
+    '</div></div>';
+
+  return page({
+    title: `Your portal · ${ev.name}`,
+    register: 'onstage',
+    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body),
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * One proposal, one card
+ * ------------------------------------------------------------------ */
+
+type Lane = { cls: string; colour: string; head: string; body: string; bot: string };
+
+/** May this speaker still pull it back? Mirrors WITHDRAWABLE in
+ *  workflows/portal-actions.ts: with the committee, a maybe, or an acceptance
+ *  the public has not been shown. `placement` is non-null only once told and
+ *  published, so its absence is exactly "not on a public agenda". */
+const withdrawable = (s: PortalSubmission): boolean =>
+  s.state === 'submitted' || s.state === 'waitlisted' || (s.state === 'accepted' && !s.placement);
+
+function withdrawBlock(slug: string, s: PortalSubmission): string {
+  return (
+    `<details class="task" style="flex:1 1 100%;margin-bottom:0">` +
+    '<summary><span class="tname">Withdraw this proposal</span></summary>' +
+    '<div class="tbody">' +
+    '<p>The committee sees that you have pulled it and it leaves their list. This page cannot ' +
+    'put it back afterwards.</p>' +
+    `<form method="post" action="/${esc(slug)}/portal/withdraw" style="margin-top:10px">` +
+    `<input type="hidden" name="proposal" value="${esc(s.id)}">` +
+    '<button class="btn btn-danger btn-sm" type="submit">Withdraw it</button>' +
+    '</form></div></details>'
+  );
+}
+
+function whenLine(s: PortalSubmission, tz: string): string {
+  if (!s.placement) return '';
+  const shape = label('placement.published', 'onstage');
+  const trimmed = s.placement.roomName ? shape : shape.replace(/,?\s*\{room\}/, '');
+  return `<p class="bigwhen">${fill(trimmed, {
+    day: esc(dDayLong(s.placement.startsAt, tz)),
+    time: esc(dTime(s.placement.startsAt, tz)),
+    room: esc(s.placement.roomName ?? ''),
+  })}</p>`;
+}
+
+function metaLine(s: PortalSubmission, tzLabel: string | null): string {
+  // The zone rides along with the hour: a speaker reading 10:30 on a phone in
+  // another country should not have to work out whose morning that is.
+  const bits = [formatWord(s.format), mins(s.minutes), s.track ? s.track.name : '', tzLabel ?? '']
+    .filter((b) => b !== '')
+    .map((b) => esc(b));
+  return bits.length ? `<p class="sub" style="margin-top:4px">${bits.join(' · ')}</p>` : '';
+}
+
+function laneOf(view: PortalView, s: PortalSubmission): Lane {
+  const ev = view.event;
+  const tz = ev.timezone;
+  const title = `<h3>${esc(s.title)}</h3>`;
+  const note = s.decision?.note ? committeeNote(s.decision.note) : '';
+  const seeProgram = `<a class="btn" href="/${esc(ev.slug)}/agenda">See the program →</a>`;
+
+  switch (s.state) {
+    case 'accepted': {
+      const placed = whenLine(s, tz);
+      const waiting = s.scheduledNotPublic
+        ? '<p class="sub" style="margin-top:8px">Your time and room are set. They go up when the ' +
+          'rest of the program does.</p>'
+        : `<p class="bigwhen" style="color:var(--muted)">${esc(label('placement.none', 'onstage'))}</p>` +
+          '<p class="sub" style="margin-top:4px">We will write the moment they are settled.</p>';
+      return {
+        cls: 'accepted',
+        colour: 'var(--go)',
+        head: 'You are on the program.',
+        body: title + (placed ? placed + metaLine(s, ev.tzLabel) : waiting) + note,
+        bot:
+          (s.placement && s.publicSlug
+            ? `<a class="btn" href="/${esc(ev.slug)}/s/${esc(s.publicSlug)}">See it on the agenda →</a>`
+            : '') + (withdrawable(s) ? withdrawBlock(ev.slug, s) : ''),
+      };
+    }
+    case 'waitlisted':
+      return {
+        cls: 'undecided',
+        colour: 'var(--ember)',
+        head: `${label('submission.waitlisted', 'onstage')}.`,
+        body:
+          title +
+          '<p class="sub" style="margin-top:6px">The committee has not closed the door on this ' +
+          'one. If a room opens up, this is the list they come back to.</p>' +
+          note,
+        bot: withdrawBlock(ev.slug, s),
+      };
+    case 'rejected':
+      return {
+        cls: 'declined',
+        colour: 'var(--muted)',
+        head: `${label('submission.rejected', 'onstage')}.`,
+        body:
+          title +
+          `<p class="sub" style="margin-top:6px">The committee did not choose this one for the ` +
+          `${esc(ev.startsOn.slice(0, 4))} program.</p>` +
+          note,
+        bot: seeProgram,
+      };
+    case 'cancelled':
+      return {
+        cls: 'declined',
+        colour: 'var(--muted)',
+        head: `${label('submission.cancelled', 'onstage')}.`,
+        body:
+          title +
+          '<p class="sub" style="margin-top:6px">This one has come off the program.</p>' +
+          (s.cancelled?.note ? committeeNote(s.cancelled.note) : note),
+        bot: ev.agendaPublished ? seeProgram : '',
+      };
+    case 'withdrawn':
+      return {
+        cls: 'declined',
+        colour: 'var(--muted)',
+        head: `${label('submission.withdrawn', 'onstage')}.`,
+        body:
+          title +
+          '<p class="sub" style="margin-top:6px">You pulled this one back, and the committee no ' +
+          'longer has it.</p>',
+        bot:
+          ev.lifecycle === 'open' && ev.submissionsLeft > 0
+            ? `<a class="btn" href="/${esc(ev.slug)}/cfp">Send another proposal</a>`
+            : '',
+      };
+    case 'draft':
+      return {
+        cls: 'undecided',
+        colour: 'var(--muted)',
+        head: `${label('submission.draft', 'onstage')}.`,
+        body:
+          title +
+          '<p class="sub" style="margin-top:6px">You started this one and have not sent it. ' +
+          'Nobody on the committee can see it yet.</p>',
+        bot: '',
+      };
+    default: {
+      const sent = s.submittedAt
+        ? `You sent this on ${esc(dLong(s.submittedAt, tz))}. `
+        : '';
+      const by = ev.decideBy
+        ? `Decisions go out by <b>${esc(isoLong(ev.decideBy))}</b>.`
+        : 'We will write the moment there is news.';
+      return {
+        cls: 'undecided',
+        colour: 'var(--ember)',
+        head: `${label('submission.submitted', 'onstage')}.`,
+        body: title + `<p class="sub" style="margin-top:6px">${sent}${by}</p>`,
+        bot: withdrawBlock(ev.slug, s),
+      };
+    }
+  }
+}
+
+function proposalCard(view: PortalView, s: PortalSubmission): string {
+  const lane = laneOf(view, s);
+  return (
+    `<div class="pcard ${lane.cls}"><div class="top">` +
+    `<p style="margin:0;color:${lane.colour};font-weight:640">${esc(lane.head)}</p>` +
+    lane.body +
+    '</div>' +
+    (lane.bot ? `<div class="bot">${lane.bot}</div>` : '') +
+    '</div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * To do
+ * ------------------------------------------------------------------ */
+
+const CHIPS: Record<string, string> = {
+  open: 'chip s-undecided',
+  overdue: 'chip warn',
+  done: 'chip s-accepted',
+  cancelled: 'chip s-declined',
+  done_cancelled: 'chip plain',
+};
+
+function taskRow(slug: string, t: PortalTask, tz: string, forTitle: string | null): string {
+  const key = t.status === 'open' && t.overdue ? 'overdue' : t.status;
+  const stateWord = label(`task.${key}` as LabelKey, 'onstage');
+  const open = t.status === 'open';
+  const due =
+    open && t.dueOn
+      ? `<span class="sub">${t.overdue ? 'Was due ' : 'Due '}${esc(isoDayLong(t.dueOn))}</span>`
+      : '';
+  const done =
+    t.completedAt !== null
+      ? `<p>You marked this done on ${esc(dLong(t.completedAt, tz))}.</p>`
+      : '';
+  const dropped =
+    t.status === 'cancelled' ? '<p>The committee no longer needs this one.</p>' : '';
+  const action = open
+    ? `<form method="post" action="/${esc(slug)}/portal/done" style="margin-top:10px">` +
+      `<input type="hidden" name="task" value="${esc(t.id)}">` +
+      '<button class="btn btn-primary btn-sm" type="submit">Mark this done</button></form>'
+    : '';
+  return (
+    `<details class="task${t.completedAt !== null ? ' done' : ''}" id="task-${esc(t.id)}"${open ? ' open' : ''}>` +
+    '<summary>' +
+    `<span class="tname">${esc(t.title)}</span>` +
+    `<span class="${CHIPS[key] ?? 'chip plain'}">${esc(stateWord)}</span>` +
+    due +
+    '</summary><div class="tbody">' +
+    (forTitle ? `<p class="sub" style="margin-bottom:6px">For “${esc(forTitle)}”.</p>` : '') +
+    (t.instructions ? `<p>${esc(t.instructions)}</p>` : '') +
+    done +
+    dropped +
+    action +
+    '</div></details>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Messages
+ * ------------------------------------------------------------------ */
+
+const MESSAGE_KEYS: Record<string, string> = {
+  received: 'message.kind.received',
+  decision: 'message.kind.decision',
+  task: 'message.kind.task',
+  reminder: 'message.kind.task',
+  schedule: 'message.kind.schedule',
+};
+
+function messageRow(m: PortalMessage, tz: string): string {
+  const kind = word(MESSAGE_KEYS[m.kind] ?? '');
+  const when = fill(label('message.delivered', 'onstage'), {
+    date: esc(dShort(m.deliveredAt, tz)),
+  });
+  return (
+    '<div class="msg">' +
+    `<div class="mk">${esc(kind)}</div>` +
+    `<div><div class="msub">${esc(m.subject)}</div><div class="mprev">${esc(m.body)}</div></div>` +
+    `<div class="sub">${when}</div></div>`
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * The profile card
+ * ------------------------------------------------------------------ */
+
+function linksLine(links: string): string {
+  const parts = links
+    .split(/[\s,]+/)
+    .map((p) => p.trim())
+    .filter((p) => p !== '');
+  if (!parts.length) return '';
+  const rendered = parts.map((p) =>
+    /^https:\/\/[^\s]+$/.test(p)
+      ? `<a class="link" href="${esc(p)}" rel="noopener nofollow">${esc(p.replace(/^https:\/\//, ''))}</a>`
+      : esc(p)
+  );
+  return `<p class="sub" style="margin-top:10px">${rendered.join(' · ')}</p>`;
+}
+
+function profileCard(view: PortalView, onTheProgram: boolean): string {
+  const p = view.profile;
+  const role = [p.jobTitle, p.organisation].filter((x) => x).map((x) => esc(x as string));
+  return (
+    '<div class="card card-pad sec" style="max-width:46em">' +
+    '<h2 class="display" style="font-size:22px;margin-bottom:4px">How you appear on the program</h2>' +
+    '<p class="sub" style="margin-bottom:14px">These are the words that go on the printed program ' +
+    'and on your speaker page.</p>' +
+    '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">' +
+    avatar(p.name, p.initials, 56) +
+    `<div><div style="font-weight:640;font-size:17px">${esc(p.name)}</div>` +
+    (role.length ? `<div class="sub">${role.join(' · ')}</div>` : '') +
+    '</div></div>' +
+    (p.bio
+      ? `<p class="serif" style="margin-top:14px;font-size:17px;line-height:1.62">${esc(p.bio)}</p>`
+      : '') +
+    (p.links ? linksLine(p.links) : '') +
+    (onTheProgram
+      ? `<div class="btnrow" style="margin-top:16px"><a class="btn" href="/${esc(view.event.slug)}` +
+        `/speakers/${esc(p.personId)}">See your speaker page →</a></div>`
+      : '') +
+    '</div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * The page
+ * ------------------------------------------------------------------ */
+
+function portalPage(view: PortalView, note: string | undefined): string {
+  const ev = view.event;
+  const tz = ev.timezone;
+  const slug = esc(ev.slug);
+
+  const head =
+    '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
+    avatar(view.profile.name, view.profile.initials, 56) +
+    '<div><h1 class="display" style="font-size:32px">Your portal</h1>' +
+    `<p class="sub">${esc(view.profile.name)} · ${esc(ev.name)}</p></div></div>` +
+    noteLine(note);
+
+  // Nothing sent yet: one card that names the next thing, not three empty ones.
+  if (view.submissions.length === 0 && view.tasks.length === 0 && view.messages.length === 0) {
+    const door =
+      ev.lifecycle === 'open'
+        ? `<a class="btn btn-primary btn-lg" href="/${slug}/cfp">Send a proposal →</a>`
+        : `<a class="btn btn-primary btn-lg" href="/${slug}/agenda">See the program →</a>`;
+    const why =
+      ev.lifecycle === 'open'
+        ? 'The call is open. Send one and this page fills up: where it stands, what the ' +
+          'committee said, and anything they need from you.'
+        : 'The call has closed. When it opens again, everything you send lands here — where ' +
+          'it stands, what the committee said, and anything they need from you.';
+    return page({
+      title: `Your portal · ${ev.name}`,
+      register: 'onstage',
+      body: onstageShell(
+        eventNav(ev.slug, '/portal', ev.lifecycle === 'open'),
+        '<div class="wrap" style="padding-top:44px">' +
+          head +
+          '<div class="sec state-out" style="max-width:40em">' +
+          `<h2>You have not sent a proposal to ${esc(ev.name)} yet.</h2>` +
+          `<p>${why}</p><div class="btnrow">${door}</div></div></div>`
+      ),
+    });
+  }
+
+  const cards = view.submissions.map((s) => proposalCard(view, s)).join('');
+
+  // Everything owed, in one list — the answer to "what do I owe" in one glance.
+  const titles = new Map(view.submissions.map((s) => [s.id, s.title]));
+  const manyTalks = view.submissions.length > 1;
+  const tasks = [...view.submissions.flatMap((s) => s.tasks), ...view.tasks].sort((a, b) => {
+    const openness = Number(a.status !== 'open') - Number(b.status !== 'open');
+    if (openness !== 0) return openness;
+    return (a.dueOn ?? '9999-12-31').localeCompare(b.dueOn ?? '9999-12-31');
+  });
+
+  const onTheProgram = view.submissions.some(
+    (s) => s.state === 'accepted' || s.state === 'cancelled'
+  );
+  const mine = view.submissions.find((s) => s.placement && s.publicSlug);
+  const todoDoor = mine
+    ? `<a class="btn btn-primary" href="/${slug}/s/${esc(mine.publicSlug ?? '')}">See your talk on the program →</a>`
+    : `<a class="btn btn-primary" href="/${slug}/agenda">See the program →</a>`;
+
+  const todo = tasks.length
+    ? tasks
+        .map((t) =>
+          taskRow(
+            ev.slug,
+            t,
+            tz,
+            manyTalks && t.submissionId ? (titles.get(t.submissionId) ?? null) : null
+          )
+        )
+        .join('')
+    : '<div class="state-out"><h2>Nothing to do right now.</h2>' +
+      '<p>When the committee needs something from you, it turns up here with a date on it.</p>' +
+      `<div class="btnrow">${todoDoor}</div></div>`;
+
+  const letters = [...view.submissions.flatMap((s) => s.messages), ...view.messages].sort(
+    (a, b) => b.deliveredAt - a.deliveredAt
+  );
+  const messages = letters.length
+    ? letters.map((m) => messageRow(m, tz)).join('')
+    : '<div class="state-out"><h2>Nothing from the committee yet.</h2>' +
+      '<p>Every letter they send you lands here and stays here, so you can read it twice.</p>' +
+      `<div class="btnrow">${todoDoor}</div></div>`;
+
+  const another =
+    ev.lifecycle === 'open' && ev.submissionsLeft > 0
+      ? '<p class="hint" style="margin-top:14px">The call is still open — you have room for ' +
+        `${esc(String(ev.submissionsLeft))} more. ` +
+        `<a class="link" href="/${slug}/cfp">Send another proposal →</a></p>`
+      : '';
+
+  const body =
+    '<div class="wrap" style="padding-top:44px">' +
+    head +
+    `<div class="sec" style="max-width:46em">${cards}${another}</div>` +
+    '<div class="sec" style="max-width:46em">' +
+    '<h2 class="display" style="font-size:26px;margin-bottom:14px">To do</h2>' +
+    todo +
+    '</div>' +
+    '<div class="sec" style="max-width:46em">' +
+    '<h2 class="display" style="font-size:26px;margin-bottom:6px">Messages</h2>' +
+    '<p class="sub" style="margin-bottom:8px">Everything the committee has sent you, newest first.</p>' +
+    messages +
+    '</div>' +
+    profileCard(view, onTheProgram) +
+    '</div>';
+
+  return page({
+    title: `Your portal · ${ev.name}`,
+    register: 'onstage',
+    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body),
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * Routes
+ * ------------------------------------------------------------------ */
+
+const back = (slug: string, code: string): string =>
+  `/${encodeURIComponent(slug)}/portal?note=${encodeURIComponent(code)}`;
+
+const noteFor = (outcome: WriteOutcome, done: string): string =>
+  outcome === 'done' ? done : outcome;
+
+export function registerPortal(app: Hono<{ Bindings: Env }>): void {
+  app.get('/:event/portal', async (c) => {
+    const slug = c.req.param('event');
+    const ev = await eventBySlug(c.env.DB, slug);
+    if (!ev) return c.notFound();
+
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.html(signedOutPage(ev));
+
+    const view = await portalView(c.env.DB, ev.id, principal.personId);
+    if (!view) return c.html(signedOutPage(ev));
+
+    // One speaker's own page: never held in a shared cache anywhere.
+    c.header('cache-control', 'private, no-store');
+    return c.html(portalPage(view, c.req.query('note')));
+  });
+
+  app.post('/:event/portal/done', async (c) => {
+    const slug = c.req.param('event');
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+    const form = await c.req.parseBody();
+    const taskId = String(form['task'] ?? '');
+    if (!taskId) return c.redirect(back(slug, 'moved'), 303);
+    const outcome = await completeTask(c.env.DB, principal.personId, taskId);
+    return c.redirect(back(slug, noteFor(outcome, 'task-done')), 303);
+  });
+
+  app.post('/:event/portal/withdraw', async (c) => {
+    const slug = c.req.param('event');
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+    const form = await c.req.parseBody();
+    const proposalId = String(form['proposal'] ?? '');
+    if (!proposalId) return c.redirect(back(slug, 'moved'), 303);
+    const outcome = await withdrawProposal(c.env.DB, principal.personId, proposalId);
+    return c.redirect(back(slug, noteFor(outcome, 'withdrawn')), 303);
+  });
+}
