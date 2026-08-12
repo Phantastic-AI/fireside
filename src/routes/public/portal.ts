@@ -696,7 +696,7 @@ function profileCard(view: PortalView, onTheProgram: boolean): string {
       name: 'pronouns',
       labelText: 'Pronouns',
       value: p.pronouns,
-      hint: 'Printed as you write them, or left off if you leave this blank.',
+      hint: 'Printed as you write them.',
       limit: 40,
       optional: true,
     }) +

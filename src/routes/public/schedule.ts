@@ -242,8 +242,8 @@ function serverList(slug: string, embed: EmbeddedAgenda, starred: string[]): str
   if (!total) {
     return (
       '<div class="sec state-out"><h2>Nothing starred yet.</h2>' +
-      '<p>Star a session on the agenda and it turns up here — and stays there, on whichever ' +
-      'phone you open next.</p>' +
+      '<p>Star a session on the agenda and it turns up here, on whichever phone you open ' +
+      'next.</p>' +
       `<a class="btn btn-primary" href="/${esc(slug)}/agenda">Browse the agenda →</a></div>`
     );
   }

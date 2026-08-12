@@ -273,13 +273,13 @@ function sessionsSection(event: EventHome, firstName: string, sessions: GalleryS
   if (agendaPublished) {
     return (
       `<div class="sec state-out"><h2>Not speaking at ${esc(event.name)}.</h2>` +
-      `<p>${esc(firstName)} doesn't have a talk on this program.</p>` +
+      `<p>${esc(firstName)} does not have a talk on this program.</p>` +
       `<a class="btn btn-primary" href="/${esc(event.slug)}/speakers">See who is speaking →</a></div>`
     );
   }
   return (
-    '<div class="sec state-out"><h2>The schedule isn\'t out yet.</h2>' +
-    `<p>Times and rooms for ${esc(event.name)} haven't been published. Once they are, any sessions here will show up on this page.</p>` +
+    '<div class="sec state-out"><h2>The schedule is not out yet.</h2>' +
+    `<p>Times and rooms for ${esc(event.name)} have not been published. Once they are, any sessions of theirs show up here.</p>` +
     `<a class="btn btn-primary" href="/${esc(event.slug)}/speakers">See who else is speaking →</a></div>`
   );
 }

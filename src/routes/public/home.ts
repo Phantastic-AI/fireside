@@ -190,7 +190,6 @@ function vgCall(): string {
     'wrong, and what was different afterwards.' +
     '<span class="mkt-egbtn">Use this as a starting point</span></div>' +
     '<div class="mkt-saved">Saved, a moment ago</div>' +
-    '<div class="mkt-vg-note">Ask your own questions. Show one only when an earlier answer calls for it.</div>' +
     '</div>'
   );
 }

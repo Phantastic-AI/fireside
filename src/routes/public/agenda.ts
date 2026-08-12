@@ -539,7 +539,7 @@ function agendaBody(
     listHtml =
       '<div class="state-out" style="margin-top:26px"><h2>Nothing on the agenda yet.</h2>' +
       '<p>Speakers already confirmed are on the speakers page while the schedule comes together.</p>' +
-      `<a class="btn btn-primary" href="/${esc(slug)}/speakers">See who's speaking →</a></div>`;
+      `<a class="btn btn-primary" href="/${esc(slug)}/speakers">See who is speaking →</a></div>`;
   } else if (!shown && f.q) {
     listHtml =
       '<div class="state-out" style="margin-top:26px"><h2>Nothing matches that — clear the search.</h2>' +
@@ -716,7 +716,7 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
             `<p class="sub" style="margin-top:8px">${esc(headLine)}</p>`) +
         '<div class="sec state-out"><h2>The program is still being decided.</h2>' +
         `<p>${esc(decideClause)} Speakers already confirmed are on the speakers page.</p>` +
-        `<a class="btn btn-primary" href="/${esc(slug)}/speakers">See who's speaking →</a></div>` +
+        `<a class="btn btn-primary" href="/${esc(slug)}/speakers">See who is speaking →</a></div>` +
         '</div>';
     } else {
       inner = agendaBody(event, ag, f, slug, roles, stars, link);
