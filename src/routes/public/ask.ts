@@ -1,4 +1,11 @@
-// Ask — the concierge, as a page rather than a bubble in the corner.
+// Ask — the concierge, as a whole page, and as the bubble in the corner of
+// every other page that belongs to a conference (islands/concierge.js).
+//
+// The page is the thing; the bubble is the same thing, closer to hand. Both
+// ask this file, both are answered by workflows/ask.ts, and both offer exactly
+// the chips this reader has earned — chipRow() below is the one builder, so a
+// chip cannot appear in one place and not the other. The bubble's first paint
+// is GET ?panel=1: a greeting and that row, and nothing else.
 //
 // Dani is mid-hall with one thumb and about ninety seconds. She does not want
 // a conversation; she wants the room number and a way to walk there. So the
@@ -166,6 +173,33 @@ function youBubble(text: string): string {
 /** How many chips the row may carry, instant ones included. */
 const MOST_CHIPS = 6;
 
+/**
+ * The chips this reader is offered, in one builder — the page draws it under
+ * the box, the bubble draws it under its greeting, and neither can drift from
+ * the other. Same button, same shape, one letter apart: `i` is a question this
+ * file answers from the database on the spot, `q` is one for the concierge.
+ * The instant ones come first because they come back first, and the row is
+ * held to six however much standing somebody has — a wall of chips is a menu,
+ * and this is not a menu.
+ */
+function chipRow(ev: EventHome, intents: IntentChip[]): string {
+  const room = Math.max(1, MOST_CHIPS - intents.length);
+  const chips =
+    intents
+      .map(
+        (i) =>
+          `<button class="cc-chip" type="submit" name="i" value="${esc(i.code)}">${esc(i.label)}</button>`
+      )
+      .join('') +
+    starters(ev)
+      .slice(0, room)
+      .map(
+        (s) => `<button class="cc-chip" type="submit" name="q" value="${esc(s)}">${esc(s)}</button>`
+      )
+      .join('');
+  return chips ? `<div class="cc-chips">${chips}</div>` : '';
+}
+
 function starters(ev: EventHome): string[] {
   const out: string[] = [];
   if (ev.lifecycle === 'open') out.push('When does the call for speakers close?');
@@ -236,25 +270,7 @@ function askPage(o: {
 }): string {
   const { ev, curated } = o;
   const action = `/${encodeURIComponent(ev.slug)}/ask`;
-  // Same button, same shape, one letter apart: `i` is a question this page can
-  // answer from the database on the spot, `q` is one for the concierge. The
-  // instant ones come first because they come back first, and the row is held
-  // to six however much standing somebody has — a wall of chips is a menu, and
-  // this screen is not a menu.
-  const room = Math.max(1, MOST_CHIPS - o.intents.length);
-  const chips =
-    o.intents
-      .map(
-        (i) =>
-          `<button class="cc-chip" type="submit" name="i" value="${esc(i.code)}">${esc(i.label)}</button>`
-      )
-      .join('') +
-    starters(ev)
-      .slice(0, room)
-      .map(
-        (s) => `<button class="cc-chip" type="submit" name="q" value="${esc(s)}">${esc(s)}</button>`
-      )
-      .join('');
+  const chips = chipRow(ev, o.intents);
 
   const thread = o.thread + (o.note ? noteBlock(o.note, ev) : '');
 
@@ -275,8 +291,7 @@ function askPage(o: {
     '</div>' +
     `<p class="hint">Nobody has to sign in, and nothing you type is kept against your name.</p>` +
     (chips
-      ? '<p class="sub" style="margin:16px 0 6px;font-size:13px">Try one of these</p>' +
-        `<div class="cc-chips">${chips}</div>`
+      ? '<p class="sub" style="margin:16px 0 6px;font-size:13px">Try one of these</p>' + chips
       : '') +
     '</form>' +
     faq(ev, curated) +
@@ -287,9 +302,44 @@ function askPage(o: {
     description: `Ask about the program at ${ev.name} and get the page you were after.`,
     register: 'onstage',
     body:
-      onstageShell(eventNav(ev.slug, '/ask', ev.lifecycle === 'open'), body) +
+      // No bubble on this screen: it is the concierge, at full size.
+      onstageShell(eventNav(ev.slug, '/ask', ev.lifecycle === 'open'), body, null) +
       `<script>${askIsland}</script>`,
   });
+}
+
+/* ------------------------------------------------------------------ *
+ * The bubble's first paint — GET /:event/ask?panel=1
+ * ------------------------------------------------------------------ */
+
+/**
+ * What the concierge opens with. Role-aware without a query of its own: what
+ * somebody was offered is what somebody is, so the chips already read decide
+ * the sentence above them.
+ */
+function greeting(intents: IntentChip[]): string {
+  const has = (code: IntentCode): boolean => intents.some((i) => i.code === code);
+  if (has('pile-now')) {
+    return 'I can read the pile, the program and the call. Ask, and I will take you to whatever needs you.';
+  }
+  if (has('my-owed')) {
+    return 'I know where your proposals stand and what is still owed. Ask, and I will take you to it.';
+  }
+  if (has('my-queue')) {
+    return 'I know what is left in your reading, and everything the program says. Ask me about either.';
+  }
+  return 'I know this conference — the program, the call, and where everything is. Ask me anything about it.';
+}
+
+/** The greeting and the chips, and nothing else: no page, no FAQ, no shell.
+ *  The island appends it to an empty thread and keeps it for the visit. */
+function panelFragment(ev: EventHome, intents: IntentChip[]): string {
+  return (
+    '<div class="cc-fs">' +
+    `<p class="cc-lead">${esc(greeting(intents))}</p>` +
+    chipRow(ev, intents) +
+    '</div>'
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -344,6 +394,14 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
       c.env.SESSION_SECRET,
       c.req.header('cookie')
     );
+    // The bubble asking what to open with. One read, no FAQ, no page — and
+    // never held in a shared cache, because which chips come back is a fact
+    // about the person asking.
+    if (c.req.query('panel')) {
+      const offered = await offeredIntents(c.env.DB, ev, principal);
+      c.header('cache-control', 'private, no-store');
+      return c.html(panelFragment(ev, offered));
+    }
     const [curated, intents] = await Promise.all([
       curatedAnswers(c.env.DB, ev.id),
       offeredIntents(c.env.DB, ev, principal),

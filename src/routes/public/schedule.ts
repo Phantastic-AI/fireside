@@ -548,7 +548,7 @@ export function registerSchedule(app: Hono<{ Bindings: Env }>): void {
         '</div>';
 
     const body =
-      onstageShell(eventNav(ev.slug, '/my-schedule', ev.lifecycle === 'open'), inner) +
+      onstageShell(eventNav(ev.slug, '/my-schedule', ev.lifecycle === 'open'), inner, ev.slug) +
       '<script src="/a/stars.js" defer></script>';
 
     // One person's own page, and once they are signed in it names other people:

@@ -1,0 +1,257 @@
+// The concierge, in the corner. The same answers the Ask screen gives, on
+// whatever page you are already standing on — so a question does not cost you
+// the thing you were reading.
+//
+// It is a bubble, not a second engine. Every sentence it shows was built and
+// escaped by the server: the chips come from GET /:event/ask?panel=1, the
+// answers from POST /:event/ask with the same `x-ask: in-place` header the Ask
+// screen's own island sends. Nothing here decides what a reader may see.
+//
+// The one thing that did not come from the server is what somebody typed, and
+// that is set with textContent, never as markup.
+//
+// It is progressive enhancement with nothing to fall back to, and that is the
+// point: with scripts off there is no bubble at all, and the concierge is
+// still a whole page at /:event/ask, reachable from the nav on every screen
+// the bubble appears on. Nothing is only in here.
+//
+// The conversation lives in sessionStorage, keyed by the event, so walking
+// from the agenda to a speaker's page keeps what you were told — and closing
+// the tab ends it, because a question asked on a shared laptop in a hallway
+// should not be waiting there tomorrow.
+
+function conciergeIsland() {
+  var box = document.getElementById('concierge');
+  if (!box || !window.fetch) return;
+  var slug = box.getAttribute('data-concierge');
+  if (!slug) return;
+
+  var ask = '/' + encodeURIComponent(slug) + '/ask';
+  var THREAD = 'fireside.cc.thread.' + slug;
+  var OPEN = 'fireside.cc.open.' + slug;
+
+  var open = false;
+  var busy = false;
+  var kept = '';     // the conversation so far, as the server's own markup
+  var thread = null; // the scrolling middle of the panel, while it is up
+
+  // The brand's flame, the same path the masthead draws (lib/html.ts FLAME).
+  var FLAME =
+    '<svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">' +
+    '<path d="M16 3c1.6 4.2-1.4 6-1.4 8.6 0 1.6 1.2 2.6 2.4 2.6 1.5 0 2.3-1.1 2.2-2.6 2.2 1.9 ' +
+    '3.3 4.2 3.3 6.6 0 3.9-3 6.8-6.5 6.8S9.5 22.1 9.5 18.2C9.5 12.3 14.6 9.6 16 3z" fill="#B14D14"/></svg>';
+
+  var FAB =
+    '<button class="cc-fab" data-cc-open aria-label="Ask the concierge" aria-expanded="false">' +
+    '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M21 11.5a8.4 8.4 0 01-9 8.4 9.6 9.6 0 01-2.9-.4L4 21l1.4-3.9A8.3 8.3 0 013 11.5 ' +
+    '8.4 8.4 0 0112 3a8.4 8.4 0 019 8.5z"/>' +
+    '<path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/></svg></button>';
+
+  function panelHtml() {
+    return (
+      '<div class="cc-panel" role="dialog" aria-label="The concierge">' +
+      '<div class="cc-head">' + FLAME +
+      '<div><div class="t">The concierge</div>' +
+      '<div class="s">Ask about the program</div></div>' +
+      '<button class="cc-x" data-cc-close aria-label="Close">×</button></div>' +
+      '<div class="cc-body" data-cc-thread></div>' +
+      '<div class="cc-foot">' +
+      '<div class="cc-ask">' +
+      '<input type="text" data-cc-in autocomplete="off" placeholder="Ask about the program" ' +
+      'aria-label="Ask about the program">' +
+      '<button type="button" data-cc-send>Ask</button></div>' +
+      '<p class="cc-hand">Doing something bigger? Point your own agent at ' +
+      '<span class="code">/mcp</span> — the same public tools, no session.</p>' +
+      '</div></div>'
+    );
+  }
+
+  // ---- what is kept, and where ------------------------------------------
+  function recall() {
+    try {
+      kept = sessionStorage.getItem(THREAD) || '';
+      open = sessionStorage.getItem(OPEN) === '1';
+    } catch (e) { /* a private window: the conversation lasts this page only */ }
+  }
+
+  // A conversation is written down when it is settled, never mid-question: a
+  // thread with the typing dots still in it would come back from a walk across
+  // the site with an answer that is never going to arrive.
+  function keep() {
+    if (thread && !thread.querySelector('[data-cc-wait]')) kept = thread.innerHTML;
+    try {
+      sessionStorage.setItem(THREAD, kept);
+      sessionStorage.setItem(OPEN, open ? '1' : '0');
+    } catch (e) { /* nowhere to keep it; the panel still works */ }
+  }
+
+  // ---- pieces the panel grows -------------------------------------------
+  function waiting() {
+    var el = document.createElement('div');
+    el.className = 'cc-fs';
+    el.setAttribute('data-cc-wait', '');
+    el.innerHTML = '<span class="cc-typing"><i></i><i></i><i></i></span>';
+    return el;
+  }
+
+  // The one honest thing to say when the reply never lands, with the way to
+  // the screen that works without any of this.
+  function trouble() {
+    var el = document.createElement('div');
+    el.className = 'cc-fs';
+    var p = document.createElement('p');
+    p.textContent = 'I could not reach the program just now. Ask again, or ';
+    var a = document.createElement('a');
+    a.className = 'link';
+    a.href = ask;
+    a.textContent = 'open the concierge on its own page';
+    p.appendChild(a);
+    p.appendChild(document.createTextNode('.'));
+    el.appendChild(p);
+    return el;
+  }
+
+  function land() {
+    if (thread) thread.scrollTop = thread.scrollHeight;
+  }
+
+  // ---- painting ----------------------------------------------------------
+  function paint(focus) {
+    document.body.classList.toggle('cc-open', open);
+    if (!open) {
+      // The old thread is let go of but not dropped: a reply still in flight
+      // lands in it, detached, and is written down for the next time the panel
+      // comes up. Closing the panel does not lose the answer you asked for.
+      box.innerHTML = FAB;
+      return;
+    }
+    box.innerHTML = panelHtml();
+    thread = box.querySelector('[data-cc-thread]');
+    if (kept) thread.innerHTML = kept;
+    else greet();
+    land();
+    if (focus) {
+      var el = box.querySelector('[data-cc-in]');
+      if (el) el.focus();
+    }
+  }
+
+  function show(next, focus) {
+    if (next === open) return;
+    if (!next) keep();          // capture the thread while the panel still holds it
+    open = next;
+    paint(focus);
+    keep();
+  }
+
+  // The first paint: the greeting and the chips this reader has earned, asked
+  // for once and then kept in the thread, so a walk around the site does not
+  // ask again. A greeting that never lands is not written down, so the next
+  // open retries it.
+  function greet() {
+    var wait = waiting();
+    thread.appendChild(wait);
+    fetch(ask + '?panel=1', { credentials: 'same-origin' })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        wait.remove();
+        thread.insertAdjacentHTML('beforeend', html);
+        keep();
+        land();
+      })
+      .catch(function () {
+        wait.remove();
+        thread.appendChild(trouble());
+        land();
+      });
+  }
+
+  function send(payload, shown) {
+    if (busy || !thread) return;
+    busy = true;
+    var you = document.createElement('div');
+    you.className = 'cc-you';
+    you.textContent = shown;    // what somebody typed is text, never markup
+    thread.appendChild(you);
+    var wait = waiting();
+    thread.appendChild(wait);
+    land();
+    fetch(ask, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        'x-ask': 'in-place'
+      },
+      body: payload
+    })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        wait.remove();
+        thread.insertAdjacentHTML('beforeend', html);
+      })
+      .catch(function () {
+        wait.remove();
+        thread.appendChild(trouble());
+      })
+      .then(function () {
+        busy = false;
+        keep();
+        land();
+      });
+  }
+
+  function typed() {
+    var el = box.querySelector('[data-cc-in]');
+    if (!el) return;
+    var q = (el.value || '').trim();
+    if (!q) return;
+    el.value = '';
+    send('q=' + encodeURIComponent(q), q);
+  }
+
+  // ---- one delegated listener, installed once ----------------------------
+  box.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('[data-cc-open]')) { show(true, true); return; }
+    if (t.closest('[data-cc-close]')) { show(false, false); return; }
+    // The chips are the Ask screen's own, rendered by the same builder: `i` is
+    // a question the program answers on the spot, `q` is one for the model.
+    var chip = t.closest('button[name="i"],button[name="q"]');
+    if (chip && chip.value) {
+      e.preventDefault();
+      send(
+        chip.getAttribute('name') + '=' + encodeURIComponent(chip.value),
+        (chip.textContent || '').trim() || chip.value
+      );
+      return;
+    }
+    if (t.closest('[data-cc-send]')) typed();
+  });
+
+  box.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    var t = e.target;
+    if (!t || !t.hasAttribute || !t.hasAttribute('data-cc-in')) return;
+    e.preventDefault();
+    typed();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && open) show(false, false);
+  });
+
+  recall();
+  paint(false);
+}
+
+// The bundler's keepNames pass wraps every function it carries in
+// `__name(fn, 'name')`, and that helper lives in the bundle's module scope —
+// it does not travel inside the source text this exports. So the page defines
+// its own before running it. Without this line the whole island dies on its
+// first statement, and the corner stays empty.
+export default
+  '(function(){var __name=function(f){return f};(' + conciergeIsland.toString() + ')();})();';

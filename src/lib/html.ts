@@ -2,6 +2,10 @@
 // the lifted CSS in src/styles/ is the binding skin.
 
 import { label } from './labels';
+// Hand-written browser JavaScript, deliberately outside the TypeScript program
+// (tsconfig has no allowJs). Same arrangement as the call's island.
+// @ts-ignore -- plain-JS island; see islands/cfp.js for the same note.
+import conciergeIsland from '../islands/concierge.js';
 
 export const NAME = 'Fireside';
 
@@ -41,6 +45,25 @@ export function page(o: PageOpts): string {
     '</head><body>' +
     o.body +
     '</body></html>'
+  );
+}
+
+/**
+ * The concierge, in the corner. Every screen that belongs to one conference
+ * carries it, in the register that screen is written in; a screen that belongs
+ * to no conference — the front page, the events picker, signing in — carries
+ * nothing, because there would be no program to ask about. The Ask screen
+ * itself carries nothing either: it is the concierge, at full size.
+ *
+ * The slug is the whole handshake. Everything else the bubble needs it asks
+ * for: routes/public/ask.ts answers `?panel=1` with the greeting and the chips
+ * this reader has earned, and answers a question the same way it answers the
+ * page. See islands/concierge.js.
+ */
+function conciergeMount(eventSlug: string, register: 'onstage' | 'backstage'): string {
+  return (
+    `<div id="concierge" class="${register}" data-concierge="${esc(eventSlug)}"></div>` +
+    `<script>${conciergeIsland}</script>`
   );
 }
 
@@ -104,7 +127,8 @@ export function backstageShell(o: {
     `<footer class="foot"><div class="wrap wrap-wide foot-in"><span class="fname">${NAME}</span>` +
     `<span>${esc(o.tzLabel)}</span>` +
     `<span style="margin-left:auto"><a class="link" href="/${o.eventSlug}">See the public page ↗</a></span>` +
-    '</div></footer></div>'
+    '</div></footer></div>' +
+    conciergeMount(o.eventSlug, 'backstage')
   );
 }
 
@@ -124,8 +148,17 @@ export function deniedPage(message?: string): string {
   });
 }
 
-/** The onstage chrome: masthead, main, footer. `nav` is pre-built links. */
-export function onstageShell(nav: string, body: string, foot?: string): string {
+/** The onstage chrome: masthead, main, footer. `nav` is pre-built links.
+ *  `eventSlug` is the conference this screen belongs to, and the one thing the
+ *  concierge in the corner needs; `null` says this screen belongs to none, or
+ *  is the concierge already. It is required rather than optional so that a new
+ *  screen has to decide, the same way it has to decide what its nav says. */
+export function onstageShell(
+  nav: string,
+  body: string,
+  eventSlug: string | null,
+  foot?: string
+): string {
   return (
     '<div class="stage onstage">' +
     `<header class="mast"><div class="wrap mast-in">${brand()}<nav>${nav}</nav></div></header>` +
@@ -133,6 +166,7 @@ export function onstageShell(nav: string, body: string, foot?: string): string {
     '<footer class="foot"><div class="wrap foot-in">' +
     `<span class="fname">${NAME}</span>` +
     `<span>${foot ?? 'An open-source call for speakers.'}</span>` +
-    '</div></footer></div>'
+    '</div></footer></div>' +
+    (eventSlug ? conciergeMount(eventSlug, 'onstage') : '')
   );
 }

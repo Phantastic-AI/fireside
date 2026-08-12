@@ -181,7 +181,7 @@ function speakersGalleryPage(
       title: `Speakers · ${event.name}`,
       description: `Everyone confirmed to speak at ${event.name}.`,
       register: 'onstage',
-      body: onstageShell(nav, emptyGallery(event)),
+      body: onstageShell(nav, emptyGallery(event), event.slug),
     });
   }
 
@@ -256,7 +256,7 @@ function speakersGalleryPage(
     title: `Speakers · ${event.name}`,
     description: `Everyone confirmed to speak at ${event.name}.`,
     register: 'onstage',
-    body: embed ? `<div class="stage onstage embed"><main>${body}</main></div>` : onstageShell(nav, body),
+    body: embed ? `<div class="stage onstage embed"><main>${body}</main></div>` : onstageShell(nav, body, event.slug),
   });
 }
 
@@ -353,7 +353,7 @@ function speakerPersonPage(event: EventHome, sp: SpeakerPage): string {
     title: `${p.name} · ${event.name}`,
     description: `${p.name}'s sessions and speaking history on Fireside.`,
     register: 'onstage',
-    body: onstageShell(nav, body),
+    body: onstageShell(nav, body, event.slug),
   });
 }
 

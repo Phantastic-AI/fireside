@@ -264,7 +264,7 @@ function signedOutPage(ev: EventHome): string {
   return page({
     title: `Your portal · ${ev.name}`,
     register: 'onstage',
-    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body),
+    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body, ev.slug),
   });
 }
 
@@ -785,7 +785,8 @@ function portalPage(
           head +
           '<div class="sec state-out" style="max-width:40em">' +
           `<h2>You have not sent a proposal to ${esc(ev.name)} yet.</h2>` +
-          `<p>${why}</p><div class="btnrow">${door}</div></div></div>`
+          `<p>${why}</p><div class="btnrow">${door}</div></div></div>`,
+        ev.slug
       ),
     });
   }
@@ -869,7 +870,7 @@ function portalPage(
   return page({
     title: `Your portal · ${ev.name}`,
     register: 'onstage',
-    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body),
+    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body, ev.slug),
   });
 }
 

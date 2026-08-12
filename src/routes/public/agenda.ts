@@ -782,7 +782,7 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
     }
 
     const body =
-      (embed ? `<div class="stage onstage embed"><main>${inner}</main></div>` : onstageShell(nav, inner)) +
+      (embed ? `<div class="stage onstage embed"><main>${inner}</main></div>` : onstageShell(nav, inner, slug)) +
       (stars.kind === 'local' && ag.published ? `<script>${String(agendaStarsIsland)}</script>` : '');
 
     // Signed in, the stars on this page are one person's own: never held in a
@@ -862,7 +862,7 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
         : '') +
       '</div>';
 
-    const body = embed ? `<div class="stage onstage embed"><main>${inner}</main></div>` : onstageShell(nav, inner);
+    const body = embed ? `<div class="stage onstage embed"><main>${inner}</main></div>` : onstageShell(nav, inner, slug);
 
     return c.html(
       page({

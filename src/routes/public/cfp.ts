@@ -501,7 +501,7 @@ function speakerStrip(ev: EventHome, speakers: GallerySpeaker[]): string {
 }
 
 function shell(ev: EventHome, callOpen: boolean, body: string, script = ''): string {
-  return onstageShell(eventNav(ev.slug, '/cfp', callOpen), body) + script;
+  return onstageShell(eventNav(ev.slug, '/cfp', callOpen), body, ev.slug) + script;
 }
 
 /** The call, open: intro, the form, and the people already on the program. */

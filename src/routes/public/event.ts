@@ -241,7 +241,7 @@ function eventHomePage(ev: EventHome, speakers: GallerySpeaker[]): string {
     title: `${ev.name} · Fireside`,
     description: ev.cfpIntro ?? undefined,
     register: 'onstage',
-    body: onstageShell(nav, main),
+    body: onstageShell(nav, main, ev.slug),
   });
 }
 

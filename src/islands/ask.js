@@ -2,7 +2,7 @@
 // page renders and answers with JavaScript switched off, and this only removes
 // the reload between a question and its answer.
 //
-// It asks the same door the form posts to, with one extra header, and the
+// It posts where the form already posts, with one extra header, and the
 // server hands back just the answer instead of a whole page — one small reply
 // on one bar of signal rather than a fresh document. Everything it inserts was
 // escaped and built server-side; the only thing that came from the person at
@@ -89,4 +89,10 @@ function askIsland() {
   });
 }
 
-export default '(' + askIsland.toString() + ')();';
+// The bundler's keepNames pass wraps every function it carries in
+// `__name(fn, 'name')`, and that helper lives in the bundle's module scope —
+// it does not travel inside the source text this exports. So the page defines
+// its own before running it. Without this line the whole island dies on its
+// first statement, and every ask becomes a full page reload.
+export default
+  '(function(){var __name=function(f){return f};(' + askIsland.toString() + ')();})();';

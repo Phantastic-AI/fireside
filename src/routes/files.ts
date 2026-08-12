@@ -43,7 +43,9 @@ function shutPage(head: string, said: string, doorText: string, doorHref: string
         '<div class="sec state-out" style="max-width:36em">' +
         `<h2>${esc(head)}</h2><p>${esc(said)}</p>` +
         `<div class="btnrow"><a class="btn btn-primary" href="${esc(doorHref)}">${esc(doorText)}</a></div>` +
-        '</div></div>'
+        '</div></div>',
+      // A refused file names no conference — there is nothing here to ask about.
+      null
     ),
   });
 }

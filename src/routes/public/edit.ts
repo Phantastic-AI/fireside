@@ -390,7 +390,7 @@ function coBlock(rows: readonly CoRow[]): string {
 
 // Nothing in the nav is this page, so nothing in it is marked as this page.
 const shell = (ev: EventHome, body: string, script = ''): string =>
-  onstageShell(eventNav(ev.slug, '/cfp/edit', callIsOpen(ev, Date.now())), body) + script;
+  onstageShell(eventNav(ev.slug, '/cfp/edit', callIsOpen(ev, Date.now())), body, ev.slug) + script;
 
 /** Signed out: the portal's own door, because that is where identity lives. */
 function signedOutPage(ev: EventHome): string {
