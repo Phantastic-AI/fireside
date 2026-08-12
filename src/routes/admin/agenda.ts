@@ -299,7 +299,7 @@ function cancelStrip(view: Builder, session: BuilderSession): string {
     hidden('day', view.day) +
     '<label class="sub" for="cancel-note">What should people be told?</label>' +
     '<input type="text" id="cancel-note" name="note" maxlength="160" ' +
-    'placeholder="The speaker is unwell — this one comes back next year." style="flex:1;min-width:16em">' +
+    'placeholder="The speaker is unwell — this talk comes back next year." style="flex:1;min-width:16em">' +
     '<button class="btn btn-danger" type="submit">Cancel this session</button>' +
     `<a class="link" href="${esc(here(view.slug, { day: view.day, on: session.id }))}">Leave it on</a>` +
     '</form></div>'

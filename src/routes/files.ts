@@ -53,7 +53,7 @@ function shutPage(head: string, said: string, doorText: string, doorHref: string
 const signInFirst = (): string =>
   shutPage(
     'Sign in to open this.',
-    'Decks and photographs belong to the people who sent them, so this one opens once we know ' +
+    'Decks and photographs belong to the people who sent them, so this file opens once we know ' +
       'who you are. Use the address you sent your proposal from.',
     label('auth.sign_in', 'onstage'),
     '/sign-in'

@@ -226,8 +226,8 @@ const NOTES: Record<string, string> = {
   // change. It says what is true of every proposal the committee is holding,
   // and nothing that is true of only some of them — read the page it comes
   // from (routes/public/edit.ts, inHandPage) before changing a word of it.
-  'in-hand': 'The committee has this one in hand. While they read, the words stay as you sent them.',
-  refused: 'The committee has moved this one on, so it can no longer be withdrawn here.',
+  'in-hand': 'The committee has this talk in hand. While they read, the words stay as you sent them.',
+  refused: 'The committee has moved this talk on, so it can no longer be withdrawn here.',
   trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
 };
 
@@ -384,7 +384,7 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
         head: `${label('submission.rejected', 'onstage')}.`,
         body:
           title +
-          `<p class="sub" style="margin-top:6px">The committee did not choose this one for the ` +
+          `<p class="sub" style="margin-top:6px">The committee did not choose this talk for the ` +
           `${esc(ev.startsOn.slice(0, 4))} program.</p>` +
           note,
         bot: seeProgram,
@@ -407,7 +407,7 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
         head: `${label('submission.withdrawn', 'onstage')}.`,
         body:
           title +
-          '<p class="sub" style="margin-top:6px">You pulled this one back, and the committee no ' +
+          '<p class="sub" style="margin-top:6px">You pulled this talk back, and the committee no ' +
           'longer has it.</p>',
         bot:
           ev.lifecycle === 'open' && ev.submissionsLeft > 0
@@ -421,7 +421,7 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
         head: `${label('submission.draft', 'onstage')}.`,
         body:
           title +
-          '<p class="sub" style="margin-top:6px">You started this one and have not sent it. ' +
+          '<p class="sub" style="margin-top:6px">You started this talk and have not sent it. ' +
           'Nobody on the committee can see it yet.</p>',
         bot: editable(view, s) ? editLink(ev.slug, s) : '',
       };
@@ -540,7 +540,7 @@ function taskRow(
           `${esc(weight(deck.sizeBytes))}</p>`
         : '';
   const dropped =
-    t.status === 'cancelled' ? '<p>The committee no longer needs this one.</p>' : '';
+    t.status === 'cancelled' ? '<p>The committee no longer needs it.</p>' : '';
   const action = wantsAFile
     ? picker({
         id: `f-deck-${t.id}`,

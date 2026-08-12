@@ -275,7 +275,7 @@ const OUTCOMES: Record<string, string> = {
   // verbatim from workflows/decide.ts
   'not-here': 'That proposal is not on this event.',
   'not-open': 'That move is not open from where this proposal stands.',
-  moved: 'Someone else decided this one while you were reading it.',
+  moved: 'Someone else decided this proposal while you were reading it.',
   // this screen's own guards
   'look-again': 'Something moved while this page was open. Look again, then decide.',
   'second-look': 'A decision already made takes the second look first. Nothing has changed.',
@@ -369,7 +369,7 @@ function participantRow(part: ProposalParticipant, sent: boolean): string {
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
     `<span style="font-weight:640">${esc(part.name)}</span>` +
     (part.isSubmitter
-      ? `<span class="chip plain">${sent ? 'Sent this one in' : 'Wrote this one'}</span>`
+      ? `<span class="chip plain">${sent ? 'Sent this proposal in' : 'Wrote this proposal'}</span>`
       : '') +
     '</div>' +
     (line ? `<div class="sub">${line}</div>` : '') +
@@ -383,7 +383,7 @@ function peopleSection(p: Proposal, slug: string): string {
   if (p.participation.length === 0) {
     return (
       `<div class="sec" id="people">${sectionHead('Who is speaking')}` +
-      '<div class="state-out"><h2>Nobody’s speaking on this one yet.</h2>' +
+      '<div class="state-out"><h2>Nobody’s speaking on this proposal yet.</h2>' +
       '<p>A proposal with no speaker on it cannot be told anything. Put a name on it from the ' +
       'roster and the letters have somewhere to go.</p>' +
       `<div class="btnrow"><a class="btn btn-primary" href="/admin/${esc(slug)}/people">Open the roster →</a></div>` +
@@ -628,7 +628,7 @@ const DATE_FIELD =
 
 /**
  * The same ask as on the person's own page, standing where the proposal is —
- * scoped to whoever sent this one in, and about this one, so neither has to be
+ * scoped to whoever sent this proposal in, and about this proposal, so neither has to be
  * chosen twice. The write is workflows/tasks.ts and nothing else.
  */
 function askBox(p: Proposal, slug: string, who: ProposalParticipant): string {
@@ -666,7 +666,7 @@ function scoreBox(p: Proposal, slug: string): string {
       ? `<div style="display:flex;gap:10px;align-items:baseline">` +
         `<span class="display" style="font-size:30px;font-variant-numeric:tabular-nums">${esc(String(p.score))}</span>` +
         '</div>'
-      : '<p class="sub">Nobody has put a number on this one.</p>' +
+      : '<p class="sub">Nobody has put a number on this proposal.</p>' +
         `<p style="margin-top:8px"><a class="link" style="font-size:14px" href="/admin/${esc(slug)}/reviews?hand=${encodeURIComponent(p.id)}#hand">Hand it to a reviewer →</a></p>`;
   const notes = p.scoreNotes
     ? `<div style="margin-top:12px"><h4>Our notes</h4><p class="sub">${esc(p.scoreNotes)}</p>` +
@@ -689,7 +689,7 @@ function standingLine(p: Proposal, tz: string, nowMs: number): string {
     case 'draft':
       return `Started ${rel(p.createdAt, nowMs, tz)}. Not sent — only the writer can see it.`;
     case 'submitted':
-      return 'Waiting on you. Nobody has decided on this one.';
+      return 'Waiting on you. Nobody has decided on this proposal.';
     case 'accepted':
       return `${stateWord('accepted')}${decided}. ${told}${scheduled}`;
     case 'waitlisted':
@@ -697,7 +697,7 @@ function standingLine(p: Proposal, tz: string, nowMs: number): string {
     case 'rejected':
       return `${stateWord('rejected')}${decided}. ${told}`;
     case 'withdrawn':
-      return 'The speaker pulled this one back. It is off the committee’s list.';
+      return 'The speaker pulled this proposal back. It is off the committee’s list.';
     case 'cancelled':
       return `Came off the program${p.cancelledAt !== null ? ` ${dShort(p.cancelledAt, tz)}` : ''}. ` +
         'It keeps its place on the agenda so nobody turns up expecting it.';
@@ -775,7 +775,7 @@ function decideBox(
       'nothing to decide yet.</p>';
   } else if (p.state === 'withdrawn') {
     acts =
-      '<p class="sub">They took this one back, so there is nothing left to decide.</p>';
+      '<p class="sub">They took this proposal back, so there is nothing left to decide.</p>';
   } else if (p.decidedAt === null) {
     // D-024, one click: only you have seen this, and you can take it straight
     // back. Nothing leaves the building until the outbox act.
@@ -825,8 +825,8 @@ function shell(ev: AdminEvent, principal: Principal, body: string, crumb: string
   });
 }
 
-const CRUMB = (slug: string): string =>
-  `<a href="/admin/${esc(slug)}/submissions">Proposals</a> › <span>this one</span>`;
+const CRUMB = (slug: string, title?: string): string =>
+  `<a href="/admin/${esc(slug)}/submissions">Proposals</a> › <span>${esc(title ?? 'this proposal')}</span>`;
 
 /** The proposal that is not here. Naomi followed a stale link; say so and give
  *  her the pile back in one click. */
@@ -890,8 +890,8 @@ function renderProposal(o: {
   const abstract = p.abstract
     ? paras(p.abstract)
     : p.state === 'draft'
-      ? '<p>Nothing written yet — this one is still a draft, and only the writer can see what is in it.</p>'
-      : '<p>No abstract came with this one.</p>';
+      ? '<p>Nothing written yet — this proposal is still a draft, and only the writer can see what is in it.</p>'
+      : '<p>No abstract came with this proposal.</p>';
 
   const publicDoor =
     p.publicSlug !== null
@@ -947,7 +947,7 @@ function renderProposal(o: {
   return page({
     title: `${p.title} · ${ev.name}`,
     register: 'backstage',
-    body: shell(ev, o.principal, head + `<div class="det">${main}${rail}</div>`, CRUMB(slug)),
+    body: shell(ev, o.principal, head + `<div class="det">${main}${rail}</div>`, CRUMB(slug, p.title)),
   });
 }
 
@@ -1103,7 +1103,7 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
         return c.html(deniedPage('Asking speakers for things is held by this event’s organizers.'), 403);
       }
 
-      // Read it again before writing: who sent this one in is a fact about the
+      // Read it again before writing: who sent this proposal in is a fact about the
       // proposal, and the page may have been open a while.
       const fresh = await proposal(c.env.DB, principal, ev.id, id);
       if (!fresh) return c.redirect(back('not-here', '#tasks'), 303);

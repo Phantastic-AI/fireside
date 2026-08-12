@@ -292,7 +292,7 @@ function formatWord(stored: string): string {
 
 /**
  * The sentence under the chip. The chip is short; this line does the work,
- * and it is written to answer "does this one need me?" without a second look.
+ * and it is written to answer "does this proposal need me?" without a second look.
  * Not-told is deliberately absent here — the chip beside it says that.
  */
 function standing(r: PileRow, say: Say): string {
@@ -307,7 +307,7 @@ function standing(r: PileRow, say: Say): string {
     case 'draft':
       return 'Not sent. Only the person writing it can see what is in it.';
     case 'submitted':
-      return 'Waiting on you. Nobody has decided on this one.';
+      return 'Waiting on you. Nobody has decided on this proposal.';
     case 'accepted':
       return on(word('accepted')) + told + (r.startsAt === null ? ' Not scheduled.' : '');
     case 'waitlisted':

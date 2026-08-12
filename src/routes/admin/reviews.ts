@@ -557,7 +557,7 @@ function rowHead(row: QueueRow, ev: ReviewEvent): string {
 function abstractBlock(row: QueueRow, slug: string, v: View, open: boolean): string {
   const text = (row.abstract ?? '').trim();
   if (!text) {
-    return '<p class="sub" style="margin-top:10px">Nothing written in the body of this one.</p>';
+    return '<p class="sub" style="margin-top:10px">Nothing written in the body of this review.</p>';
   }
   const folded = clip(text);
   const anchor = `#p-${encodeURIComponent(row.id)}`;
@@ -601,7 +601,7 @@ function queueRow(
       head +
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">' +
       '<span class="chip s-withdrawn">Stepped aside</span>' +
-      '<span class="sub">Nothing you marked on this one counts towards its average.</span>' +
+      '<span class="sub">Nothing you marked on this proposal counts towards its average.</span>' +
       '</div></div>'
     );
   }
@@ -649,7 +649,7 @@ function queueRow(
     `<div style="margin-top:16px">${lines}</div>` +
     '<label class="f" style="margin-bottom:0"><span class="f-lab">Your note' +
     '<span class="opt">only the committee reads this</span></span>' +
-    '<textarea name="note" rows="2" maxlength="2000" placeholder="What would you tell the room about this one?">' +
+    '<textarea name="note" rows="2" maxlength="2000" placeholder="What would you tell the room about this proposal?">' +
     `${esc(row.myNote ?? '')}</textarea></label>` +
     '<div class="btnrow" style="margin-top:14px">' +
     `<button class="btn btn-primary" type="submit">${esc(say('review.save'))}</button>` +
@@ -761,7 +761,7 @@ function handCard(
         title +
         held +
         '<p class="sub" style="margin-top:6px">Everyone who reads on this conference already ' +
-        'has this one.</p>' +
+        'has this proposal.</p>' +
         `<p style="margin:10px 0 0"><a class="link" href="${esc(shut)}">Back to the list</a></p>`
     );
   }
@@ -787,7 +787,7 @@ function handCard(
       `<input type="hidden" name="on" value="${esc(target.id)}">` +
       `<input type="hidden" name="q" value="${esc(v.q)}">` +
       `<input type="hidden" name="p" value="${v.page}">` +
-      '<div class="f-lab" style="margin:14px 0 8px">Who should read this one' +
+      '<div class="f-lab" style="margin:14px 0 8px">Who should read this proposal' +
       '<span class="opt">what each of them is already holding is beside their name</span></div>' +
       `<div class="btnrow" style="flex-wrap:wrap">${who}</div>` +
       '<div class="btnrow" style="margin-top:16px;align-items:center">' +
@@ -979,7 +979,7 @@ function handOutForm(ev: ReviewEvent, team: TeamReader[], pile: number): string 
     '<div class="f-lab" style="margin-bottom:8px">Give every undecided proposal to</div>' +
     `<div class="btnrow">${each.join('')}<span class="sub">readers</span></div>` +
     '<div class="f-lab" style="margin:16px 0 8px">Who is reading this round' +
-    '<span class="opt">untick anyone sitting this one out</span></div>' +
+    '<span class="opt">untick anyone sitting this round out</span></div>' +
     `<div class="btnrow" style="flex-wrap:wrap">${who}</div>` +
     '<div class="btnrow" style="margin-top:16px;align-items:center">' +
     '<button class="btn btn-primary" type="submit">Hand them out</button>' +
@@ -1703,7 +1703,7 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
       );
     } catch (e) {
       if (e instanceof ScopeError) {
-        return new Response(deniedPage('Handing this one out is not yours to do.'), {
+        return new Response(deniedPage('Handing this proposal out is not yours to do.'), {
           status: 403,
           headers: HTML,
         });

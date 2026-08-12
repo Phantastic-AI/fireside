@@ -51,7 +51,7 @@ import {
 import { editProposal, trueStanding } from '../../workflows/edit';
 // The island is hand-written browser JS, deliberately outside the TypeScript
 // program (tsconfig has no allowJs, and types.d.ts declares only '*.css').
-// @ts-ignore -- plain-JS island; the call's form and this one run the same one.
+// @ts-ignore -- plain-JS island; the call's form and this talk run the same one.
 import cfpIsland from '../../islands/cfp.js';
 
 /* ------------------------------------------------------------------ *
@@ -456,20 +456,20 @@ function settledPage(ev: EventHome, s: PortalSubmission): string {
       return shutPage(
         ev,
         'You are on the program.',
-        'A talk keeps the words it was accepted with, so this one is settled. Everything still to ' +
+        'A talk keeps the words it was accepted with, so this talk is settled. Everything still to ' +
           'come — the time, the room, what the organizers need from you — is in your portal.'
       );
     case 'waitlisted':
       return shutPage(
         ev,
         `${label('submission.waitlisted', 'onstage')}.`,
-        'The committee is holding this one exactly as it is, so the words stay put while they decide.'
+        'The committee is holding this talk exactly as it is, so the words stay put while they decide.'
       );
     case 'rejected':
       return shutPage(
         ev,
         `${label('submission.rejected', 'onstage')}.`,
-        'The committee has been through this one, so there is nothing here left to change. What ' +
+        'The committee has been through this talk, so there is nothing here left to change. What ' +
           'they said about it is in your portal.'
       );
     case 'cancelled':
@@ -482,7 +482,7 @@ function settledPage(ev: EventHome, s: PortalSubmission): string {
       return shutPage(
         ev,
         `${label('submission.withdrawn', 'onstage')}.`,
-        'You pulled this one back, so there is nothing here to change. Your portal has the rest ' +
+        'You pulled this talk back, so there is nothing here to change. Your portal has the rest ' +
           'of where things stand.'
       );
   }
@@ -503,7 +503,7 @@ function settledPage(ev: EventHome, s: PortalSubmission): string {
 function inHandPage(ev: EventHome): string {
   return shutPage(
     ev,
-    'The committee has this one in hand.',
+    'The committee has this talk in hand.',
     'While they read, the words stay as you sent them. Anything you need them to know, add a ' +
       'note from your portal.',
     'Open your portal →'
@@ -515,7 +515,7 @@ function notYoursPage(ev: EventHome): string {
   return shutPage(
     ev,
     'That proposal is not one of yours.',
-    'A portal only ever holds the talks you are on. If you sent this one from another address, ' +
+    'A portal only ever holds the talks you are on. If you sent this talk from another address, ' +
       'sign in with that address and it will be waiting.',
     'Open your portal →'
   );
@@ -567,7 +567,7 @@ function editPage(o: {
   // Under the save. The lede has already said what the committee is holding,
   // so this is the date, and the one fact a draft still needs.
   const closing =
-    (sent ? '' : 'Nobody on the committee sees this one yet. ') +
+    (sent ? '' : 'Nobody on the committee sees this talk yet. ') +
     (closes ? `The call closes on ${esc(closes)}, and nothing changed after that reaches them.` : '');
 
   const key = `edit-${s.id}`.replace(/[^A-Za-z0-9._-]/g, '');
