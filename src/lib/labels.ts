@@ -86,7 +86,7 @@ const LABELS = {
   'auth.google': { onstage: 'Continue with Google' },
   'auth.signed_in': { onstage: 'Signed in as {name}' },
   'auth.sign_out': { onstage: 'Sign out' },
-  'auth.link_expired': { onstage: 'That link has expired — they last fifteen minutes' },
+  'auth.link_expired': { onstage: 'That link has expired — they last two hours' },
   'auth.merged': { onstage: 'Your {n} starred talks came with you' },
 
   // §1.13 — sharing your schedule · Δ2

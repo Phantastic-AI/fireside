@@ -500,8 +500,8 @@ function composer(slug: string): string {
     'room."></textarea></label>' +
     '<div class="btnrow" style="margin-top:16px">' +
     '<button class="btn btn-primary" type="submit">Write it</button></div>' +
-    '<p class="hint" style="margin-top:10px">One letter, everybody in it at once. It waits here ' +
-    'with everything else until you send it, and you can take it back until then.</p>' +
+    '<p class="hint" style="margin-top:10px">It waits here with everything else until you send it, ' +
+    'and you can take it back until then.</p>' +
     '</form>'
   );
 }
@@ -632,8 +632,6 @@ function outboxPage(v: View): string {
       : '<b>Nothing to send</b>') +
     (ev.tzLabel ? `<span class="sep">·</span>${esc(ev.tzLabel)}` : '') +
     '</p></div>' +
-    '<div class="sec standing">Messages land in each speaker’s portal. Real addresses get real ' +
-    'email too.</div>' +
     (v.note ? noteBox(v.note) : '');
 
   if (ob.staged === 0) {

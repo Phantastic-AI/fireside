@@ -410,7 +410,7 @@ export async function releaseNotes(
               to: r.email,
               from: { email: email.from, name: 'Fireside' },
               subject: r.subject,
-              text: `Hello ${r.name},\n\n${r.body}\n\n— sent from Fireside, where your portal always has the latest.`,
+              text: `Hello ${r.name},\n\n${r.body}\n\n— sent from Fireside.`,
             });
             await db.prepare('UPDATE message SET emailed_at = ? WHERE id = ?').bind(now(), r.id).run();
           } catch {

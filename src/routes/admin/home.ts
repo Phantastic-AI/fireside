@@ -264,7 +264,7 @@ function newEventPage(principal: Principal, error?: string, v: NewEventValues = 
     field('Name', `<input name="name" required maxlength="120" value="${val('name')}" ${inputStyle}>`) +
     field(
       'Address',
-      `<input name="slug" maxlength="48" value="${val('slug')}" placeholder="left blank, it comes from the name" ${inputStyle}>`,
+      `<input name="slug" maxlength="48" value="${val('slug')}" placeholder="leave it blank and it comes from the name" ${inputStyle}>`,
       'Lowercase letters, digits and dashes — the public page lives at /that-address.'
     ) +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
@@ -340,8 +340,7 @@ function attnBand(ev: AdminEvent, counts: PileCounts): string {
   return (
     '<div class="sec attn" style="background:var(--go-wash);border-color:#CBE0D1">' +
     '<div class="n">0</div>' +
-    '<div><div class="lab">Everyone has been told</div>' +
-    '<div class="why">Every decision you have made has reached the person it is about.</div></div>' +
+    '<div><div class="lab">Everyone has been told</div></div>' +
     `<a class="btn go" href="/admin/${slug}/submissions">Go to proposals →</a>` +
     '</div>'
   );
@@ -413,7 +412,7 @@ function programPage(principal: Principal, ev: AdminEvent, counts: PileCounts): 
     `<p class="sub" style="margin-top:6px">${esc(dateRange(ev.startsOn, ev.endsOn))} · ` +
     `${esc(callStateText(ev))}${ev.tzLabel ? ` · ${esc(ev.tzLabel)}` : ''}</p>` +
     '<p class="serif" style="font-size:19px;color:var(--ink-soft);margin-top:16px;max-width:40em">' +
-    'A decision leaves when you send it, not when you make it. Who has been told is never a guess.</p>' +
+    'A decision leaves when you send it, not when you make it.</p>' +
     '</div>' +
     attnBand(ev, counts) +
     `<div class="sec"><div class="card card-pad">${countsBand(counts)}${decideByLine}</div></div>` +

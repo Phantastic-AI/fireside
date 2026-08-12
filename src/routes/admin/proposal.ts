@@ -867,7 +867,6 @@ function renderProposal(o: {
   // No fallback to the stored format either: a value with no row in the label
   // map is a gap in the map, and printing it raw would hide the gap.
   const inPlay = p.state !== 'draft';
-  const decidableEver = inPlay && p.state !== 'withdrawn';
   const metaBits = [
     word(FORMAT_KEY[p.format]),
     mins(p.minutes),
@@ -929,10 +928,6 @@ function renderProposal(o: {
     reviewsSection(p, slug, inPlay) +
     revisionsSection(p, tz) +
     publicDoor +
-    (decidableEver
-      ? `<p class="hint" style="margin-top:26px;max-width:44em">Deciding stages a letter. Nothing ` +
-        `goes out until you send it from the <a class="link" href="/admin/${esc(slug)}/outbox">outbox</a>.</p>`
-      : '') +
     `<p style="margin-top:14px"><a class="link" href="/admin/${esc(slug)}/submissions">← Back to the ` +
     'proposals</a></p>' +
     '</div>';

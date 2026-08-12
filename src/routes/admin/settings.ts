@@ -540,8 +540,8 @@ function roomsTracksSection(ev: EventSettings, said: Said | null): string {
   return (
     `<div class="sec card card-pad" style="max-width:46em" id="${ANCHOR.rooms}">` +
     '<h3 class="serif" style="font-size:21px;font-weight:600">The rooms and the tracks</h3>' +
-    '<p class="sub" style="margin:6px 0 14px">Where a session happens, and how proposals sort by subject. ' +
-    'Neither comes off this list — a room with sessions already placed on it is the conference’s own ' +
+    '<p class="sub" style="margin:6px 0 14px">Neither comes off this list — a room with sessions ' +
+    'already placed on it is the conference’s own ' +
     'history, so renaming is the whole of what this page does to either one.</p>' +
     saidIn('rooms', said) +
     '<h4 class="serif" style="font-size:15.5px;font-weight:600">Rooms</h4>' +
@@ -984,7 +984,7 @@ function teamSection(ev: EventSettings, said: Said | null, confirmOff: string | 
         value: '',
         type: 'email',
         placeholder: 'name@example.org',
-        hint: 'It has to be an address that already signs in here. Nothing is sent to them and nothing is created — this page will say so if it finds nobody.',
+        hint: 'It has to be an address that already signs in here. Nothing is sent to them and nothing is created.',
       }) +
       `<label class="f"><span class="f-lab">What they may do</span>${standingSelect('role', 'viewer', 'What they may do')}</label>` +
       '<div class="btnrow"><button class="btn btn-primary" type="submit">Add them</button></div>' +

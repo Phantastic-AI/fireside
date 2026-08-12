@@ -539,7 +539,7 @@ function builderPage(view: Builder, principal: Principal, q: Params): string {
     '</div>' +
     '<p class="hint">' +
     (view.canEdit
-      ? 'Pick a talk on the left, then click where it goes. A clash comes back as a sentence right here, not a warning you have to go looking for.'
+      ? 'Pick a talk on the left, then click where it goes.'
       : 'This is the program as it stands. Ask an organizer of this event for a hand in changing it.') +
     '</p>';
 

@@ -377,8 +377,7 @@ function adminGreenRoomPage(
   const share = hasScope(principal, ev.id, EDIT_ROLES) ? shareRow(slug, nonce) : '';
 
   const body = gr.sessions.length
-    ? `<div class="sec" style="max-width:640px">${sessionCards(gr.sessions, gr.timezone, todayKey)}` +
-      '<p class="hint">This sheet is built to be read standing up, on a phone, in a corridor.</p></div>'
+    ? `<div class="sec" style="max-width:640px">${sessionCards(gr.sessions, gr.timezone, todayKey)}</div>`
     : '<div class="sec state-out">' +
       `<h2>Nothing scheduled on ${esc(dayLong(gr.day))} yet.</h2>` +
       '<p>Talks appear here the moment they get a time and a room.</p>' +

@@ -169,8 +169,7 @@ function embedsPage(
     `<p class="counts"><b>${parts.length} addresses</b><span class="sep">·</span>` +
     'each one live, each one current as the program changes</p></div>' +
     '<p class="sub" style="max-width:56em;margin:10px 0 18px">Every address below is public and needs no ' +
-    'sign-in. Copy one, paste it into the page that should carry it, and it keeps itself up to date — ' +
-    'nothing to re-export when a talk moves.</p>';
+    'sign-in.</p>';
 
   return page({
     title: `Embeds · ${ev.name}`,
