@@ -1,9 +1,9 @@
 // agenda-stars.js — the hollow star on the public agenda (EMB-10/11).
 //
-// The signed-out half of one promise my schedule already makes: "star a
-// session on the agenda and it turns up here — kept in this browser, no
-// account needed." This is the other end of that sentence, and it keeps the
-// list under exactly the key src/islands/stars.js reads back:
+// The signed-out half of one promise my schedule already makes: "star the
+// talks you want to see and they line up here, in the order you will walk to
+// them." This is the other end of that sentence, and it keeps the list under
+// exactly the key src/islands/stars.js reads back:
 //
 //     localStorage['fireside.stars.' + <event slug>] = ["sub_…", "sub_…"]
 //
@@ -56,7 +56,7 @@ function agendaStarsIsland() {
     if (!counter) return;
     var n = read().length;
     counter.textContent = !n
-      ? 'Star what you want to see.'
+      ? 'Nothing starred yet.'
       : n === 1
         ? '1 session starred'
         : n + ' sessions starred';

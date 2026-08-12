@@ -209,7 +209,7 @@
     if (!total) {
       root.innerHTML =
         '<div class="sec state-out"><h2>Nothing starred yet.</h2>' +
-        '<p>Star a session on the agenda and it turns up here — kept in this browser, no account needed.</p>' +
+        '<p>Star the talks you want to see and they line up here, in the order you will walk to them.</p>' +
         '<a class="btn btn-primary" href="/' + esc(data.slug) + '/agenda">Browse the agenda →</a></div>';
       return;
     }

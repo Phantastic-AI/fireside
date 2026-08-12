@@ -61,9 +61,9 @@ const LABELS = {
   'message.emailed': { backstage: 'Emailed {date}' }, // Δ13 R-12 — additional fact, never replaces Sent
 
   // §1.7 — the call, open and closed (EVT-1..3)
-  'call.before': { backstage: 'Opens {date}', onstage: 'The call for speakers opens {date}' },
-  'call.open': { backstage: 'Open · closes in {n} days', onstage: 'Open until {date}' },
-  'call.closed': { backstage: 'Closed {date}', onstage: 'The call for speakers closed on {date}' },
+  'call.before': { backstage: 'Opens {date}', onstage: 'Proposals open on {date}' },
+  'call.open': { backstage: 'Open · closes in {n} days', onstage: 'You can still submit a talk — closes {date}' },
+  'call.closed': { backstage: 'Closed {date}', onstage: 'Proposals closed on {date}' },
 
   // §1.10 — roles, formats, levels, provenance
   'role.speaker': 'Speaker',

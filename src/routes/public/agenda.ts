@@ -79,10 +79,24 @@ function weekdayDate(iso: string, weekday: 'short' | 'long'): string {
   }).format(dateFromKey(iso));
 }
 
+/** A day key as "27 August" — day first, the way every other date on this
+ *  screen is written. en-US would order it the other way round on its own. */
 function dateLabel(iso: string): string {
-  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', day: 'numeric', month: 'long' }).format(
-    dateFromKey(iso)
-  );
+  const d = dateFromKey(iso);
+  const month = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'long' }).format(d);
+  return `${d.getUTCDate()} ${month}`;
+}
+
+/** An instant as "20 August", read in the event's own timezone — a call that
+ *  closes at 23:59 in New York closed on the New York day, not the UTC one. */
+function dayMonth(ms: number, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    day: 'numeric',
+    month: 'long',
+  }).formatToParts(new Date(ms));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${get('day')} ${get('month')}`;
 }
 
 function dateRangeLabel(startsOn: string, endsOn: string): string {
@@ -136,6 +150,31 @@ function timesLine(tzLabel: string | null): string | null {
 
 function joinParts(parts: (string | null | undefined)[]): string {
   return parts.filter((p): p is string => !!p && p.length > 0).join(' · ');
+}
+
+/**
+ * The line under the dates: how much there is to choose from, whether more is
+ * still coming, and what a star is worth. Three seasons, because a program
+ * still filling up, a program having its last talks settled, and a program
+ * that already ran are three different reads — and only the first two are
+ * worth planning a walk around.
+ */
+function programLine(event: EventHome, total: number): string {
+  const sessions = plural(total, 'session', 'sessions');
+  if (event.lifecycle === 'happened') {
+    return (
+      `${sessions}, exactly as ${total === 1 ? 'it' : 'they'} ran. ` +
+      'Star the ones you want to watch back; your list keeps them in one place.'
+    );
+  }
+  const coming =
+    event.lifecycle === 'open' && event.cfpClosesAt !== null
+      ? `more landing until ${dayMonth(event.cfpClosesAt, event.timezone)}`
+      : 'more still landing';
+  return (
+    `${sessions} to choose from — ${coming}. ` +
+    'Star what pulls at you; your list keeps up as the schedule grows.'
+  );
 }
 
 /** "A", "A with B", "A with B and C", "A with B, C and D" — the prototype's byline(). */
@@ -446,7 +485,6 @@ function agendaBody(
     }
   }
   const roomNames = new Set(allSessions.map((s) => s.roomName).filter((x): x is string => !!x));
-  const speakerIds = new Set(allSessions.flatMap((s) => s.speakers.map((sp) => sp.personId)));
 
   const base = `/${slug}/agenda`;
   const hereUrl = (over: { q?: string | null; day?: string | null; track?: string | null; format?: string | null; room?: string | null }) =>
@@ -538,7 +576,7 @@ function agendaBody(
   if (!allSessions.length) {
     listHtml =
       '<div class="state-out" style="margin-top:26px"><h2>Nothing on the agenda yet.</h2>' +
-      '<p>Speakers already confirmed are on the speakers page while the schedule comes together.</p>' +
+      '<p>Speakers already confirmed are on the speakers page.</p>' +
       `<a class="btn btn-primary" href="/${esc(slug)}/speakers">See who is speaking →</a></div>`;
   } else if (!shown && f.q) {
     listHtml =
@@ -547,7 +585,7 @@ function agendaBody(
       `<a class="btn btn-primary" href="${esc(hereUrl({ q: null }))}">Clear the search →</a></div>`;
   } else if (!shown) {
     listHtml =
-      '<div class="state-out" style="margin-top:26px"><h2>Nothing here with those filters.</h2>' +
+      '<div class="state-out" style="margin-top:26px"><h2>Nothing matches those choices.</h2>' +
       '<p>The other days and tracks still have plenty.</p>' +
       `<a class="btn btn-primary" href="${esc(hereUrl({ q: null, day: null, track: null, format: null, room: null }))}">Show the whole agenda →</a></div>`;
   }
@@ -557,9 +595,9 @@ function agendaBody(
     event.venueName,
     timesLine(event.tzLabel),
   ]);
-  const countsLine = roomNames.size
-    ? `${plural(allSessions.length, 'session', 'sessions')} across ${plural(roomNames.size, 'room', 'rooms')} · ${plural(speakerIds.size, 'speaker', 'speakers')}`
-    : `${plural(allSessions.length, 'session', 'sessions')} · ${plural(speakerIds.size, 'speaker', 'speakers')}`;
+  // One line, not an inventory: the room count is on every card already, and
+  // the speakers page is where people are counted.
+  const mastheadLine = programLine(event, allSessions.length);
 
   // Once anything is narrowed, the honest headline is the arithmetic: how
   // much of the program is in front of you, out of how much there is.
@@ -577,11 +615,20 @@ function agendaBody(
 
   const chipRow = (inner: string) => (inner ? `<div class="filters scrollx daybar">${inner}</div>` : '');
 
+  // The one line for the other reader on this page: somebody scrolling a
+  // program and thinking they have a talk in them too.
+  const pitchLine =
+    event.lifecycle === 'open' && allSessions.length
+      ? '<p class="sub" style="margin-top:6px">Still time to pitch one of these yourself — ' +
+        `<a class="link" href="/${esc(slug)}/cfp">submit a talk</a>.</p>`
+      : '';
+
   const head =
     `<h1 class="display">${esc(event.name)}</h1>` +
     `<p class="sub" style="margin-top:8px">${esc(headLine)}</p>` +
-    (allSessions.length ? `<p class="sub">${esc(countsLine)}</p>` : '') +
+    (allSessions.length ? `<p class="sub">${esc(mastheadLine)}</p>` : '') +
     icsLink +
+    pitchLine +
     (allSessions.length ? searchForm : '') +
     chipRow(dayChips) +
     chipRow(trackChips) +
@@ -615,7 +662,7 @@ function agendaBody(
       ? ''
       : '<div class="starcount">' +
         `<span data-starcount>${esc(
-          startedWith ? plural(startedWith, 'session starred', 'sessions starred') : 'Star what you want to see.'
+          startedWith ? plural(startedWith, 'session starred', 'sessions starred') : 'Nothing starred yet.'
         )}</span>` +
         `<a class="link" style="margin-left:auto" href="/${esc(slug)}/my-schedule">My schedule →</a></div>`;
 
@@ -700,9 +747,17 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
 
     let inner: string;
     if (!ag.published) {
-      const decideClause = event.decideBy
-        ? `Decisions go out by ${dateLabel(event.decideBy)}.`
-        : 'Decisions are still being made.';
+      // Two seasons, one screen: while the call is still open there is nothing
+      // to decide yet, and saying otherwise would be the wrong kind of quiet.
+      const open = event.lifecycle === 'open';
+      const heading = open ? 'The program is still coming together.' : 'The times are not out yet.';
+      const clause = open
+        ? event.cfpClosesAt !== null
+          ? `Talks are still coming in until ${dayMonth(event.cfpClosesAt, event.timezone)}.`
+          : 'Talks are still coming in.'
+        : event.decideBy
+          ? `The lineup is settled by ${dateLabel(event.decideBy)}.`
+          : 'Every talk gets a time and a room before the first morning.';
       const headLine = joinParts([
         dateRangeLabel(event.startsOn, event.endsOn),
         event.venueName,
@@ -714,9 +769,13 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
           ? ''
           : `<h1 class="display">${esc(event.name)}</h1>` +
             `<p class="sub" style="margin-top:8px">${esc(headLine)}</p>`) +
-        '<div class="sec state-out"><h2>The program is still being decided.</h2>' +
-        `<p>${esc(decideClause)} Speakers already confirmed are on the speakers page.</p>` +
+        `<div class="sec state-out"><h2>${esc(heading)}</h2>` +
+        `<p>${esc(clause)} Speakers already confirmed are on the speakers page.</p>` +
         `<a class="btn btn-primary" href="/${esc(slug)}/speakers">See who is speaking →</a></div>` +
+        (open && !embed
+          ? '<p class="sub" style="margin-top:14px">Still time to be one of them — ' +
+            `<a class="link" href="/${esc(slug)}/cfp">submit a talk</a>.</p>`
+          : '') +
         '</div>';
     } else {
       inner = agendaBody(event, ag, f, slug, roles, stars, link);

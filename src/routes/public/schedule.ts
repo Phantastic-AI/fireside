@@ -242,8 +242,8 @@ function serverList(slug: string, embed: EmbeddedAgenda, starred: string[]): str
   if (!total) {
     return (
       '<div class="sec state-out"><h2>Nothing starred yet.</h2>' +
-      '<p>Star a session on the agenda and it turns up here, on whichever phone you open ' +
-      'next.</p>' +
+      '<p>Star the talks you want to see and they line up here, in the order you will walk to ' +
+      'them.</p>' +
       `<a class="btn btn-primary" href="/${esc(slug)}/agenda">Browse the agenda →</a></div>`
     );
   }
@@ -402,8 +402,7 @@ function peopleSection(slug: string, view: SocialView): string {
       '<div class="sec" style="max-width:46em">' +
       head +
       '<div class="state-out"><h2>Nobody else is sharing yet.</h2>' +
-      '<p>The moment someone going to one of your sessions turns sharing on, they turn up here ' +
-      'with their name and whatever they chose to show.</p>' +
+      '<p>When someone going to the same talk puts themselves on the list, they turn up here.</p>' +
       `<a class="btn btn-primary" href="/${esc(slug)}/agenda">Star a few more talks →</a></div></div>`
     );
   }
@@ -539,14 +538,13 @@ export function registerSchedule(app: Hono<{ Bindings: Env }>): void {
         head +
         '<div id="my-schedule-root" class="sec">' +
         '<noscript><div class="sec state-out"><h2>Turn on scripts to see your list.</h2>' +
-        '<p>Starred sessions are kept in this browser and shown here once scripts run.</p>' +
+        '<p>Nothing is lost — your stars are kept in this browser.</p>' +
         `<a class="btn btn-primary" href="/${esc(ev.slug)}/agenda">Browse the agenda →</a></div></noscript>` +
         '</div>' +
         `<script type="application/json" id="my-schedule-data">${safeJson(embed)}</script>` +
         '<p class="hint" style="margin-top:22px">' +
-        '<a class="link" href="/sign-in">Signing in keeps this list on every device</a></p>' +
-        '<p class="hint" style="margin-top:4px">It is also how you share what you are going to, and see ' +
-        'who else is going.</p>' +
+        '<a class="link" href="/sign-in">Sign in</a> to keep this list on every phone, share what you ' +
+        'are going to, and see who else is going.</p>' +
         '</div>';
 
     const body =

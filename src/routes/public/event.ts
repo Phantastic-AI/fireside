@@ -1,36 +1,31 @@
-// The event home: kicker, name, intro, the fact rail, the call to action,
-// two facts about the event, and who is already on the program. Mirrors the
+// The event home: kicker, name, intro, the fact rail, one loud button, two
+// facts about the event, and who is already on the program. Mirrors the
 // prototype's screenEvent + factRail + speakerStrip (S-2, ~lines 1450-1494).
 //
-// Personas: Priya Raghunathan (speaker) walks in asking "where do things
-// stand with my talk?" — this is her front door before her portal exists to
-// her. Dani Okafor (attendee) walks in asking "what's worth arriving early
-// for?" and gets that from the intro, the program link, and the people
-// already announced, with zero ceremony before any of it.
+// Who this page is for, in that order. Dani Okafor walks in with "who is
+// speaking, when and where is it, and should I start planning?" — every
+// choice below serves that read. Priya Raghunathan, who has a talk in her and
+// no idea whether there is still room for it, gets exactly one line and one
+// quiet button, in her own verb: submit a talk.
+//
+// What is deliberately not here: the funnel. How much came in and how much was
+// taken is the committee's arithmetic — it is not a fact anybody out here can
+// act on, and printed on a landing page it reads as a scoreboard. It stays
+// backstage. The counts on `EventCounts` are read by other screens; this one
+// asks for none of them.
 //
 // Gaps routed around — queries/public.ts has no query for these facts, so
 // nothing here guesses at them:
 //  - No organizer-name query exists. The prototype's fact rail opens with
-//    "Organizer: {name}"; ours carries only the call's state, the
+//    "Organizer: {name}"; ours carries the call's next move, the
 //    Program/Speakers links, and the venue.
-//  - `EventCounts` has no track/room breakdown, so the first fact card reads
-//    "{n} accepted so far · {n} speaking" instead of the prototype's
-//    "across N tracks and M rooms."
-//  - `Lifecycle` has only 'open' | 'closed' | 'happened', and labels.ts
-//    documents `call.happened` as a fact with no §6 row at all. A past
-//    event's call did close (at cfp_closes_at), so `call.closed` stays
-//    literally true there and is what the fact rail uses for it — no new
-//    copy invented.
-//
-// Scope trim: the prototype's hint line under the button row (decide-by
-// date, submission cap) restates the fact rail's call-state sentence with
-// two more numbers; left out rather than duplicating the fact rail with
-// slightly different words.
+//  - No track/room breakdown exists on this read, so the second card carries
+//    the reader's next move rather than the prototype's "across N tracks and
+//    M rooms."
 
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { esc, onstageShell, eventNav, page } from '../../lib/html';
-import { label, CALL_HAPPENED } from '../../lib/labels';
 import { eventBySlug, speakersGallery, type EventHome, type GallerySpeaker } from '../../queries/public';
 
 /* ------------------------------------------------------------------ *
@@ -63,36 +58,54 @@ function dateRange(startsOn: string, endsOn: string): string {
   return `${s.weekday} ${s.day} ${s.month} ${s.year} – ${e.weekday} ${e.day} ${e.month} ${e.year}`;
 }
 
-/** An instant, read as a day-and-month in the event's own timezone. */
+/** An instant as "20 August" in the event's own timezone — day first, the way
+ *  the date range above it is written. en-US would order it the other way. */
 function dayMonthAt(ms: number, timezone: string): string {
-  return new Date(ms).toLocaleDateString('en-US', { timeZone: timezone, day: 'numeric', month: 'long' });
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    day: 'numeric',
+    month: 'long',
+  }).formatToParts(new Date(ms));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '';
+  return `${get('day')} ${get('month')}`;
+}
+
+/** A day key ("2026-08-27") as "27 August", read as its own wall date. */
+function dayMonthOn(iso: string): string {
+  const p = dayParts(iso);
+  return `${p.day} ${p.month}`;
 }
 
 /* ------------------------------------------------------------------ *
  * Copy.
  * ------------------------------------------------------------------ */
 
-/** The call's own state, in the fact rail's words (labels.ts, §1.7). */
-function callStateText(ev: EventHome): string {
-  if (ev.lifecycle === 'happened') return CALL_HAPPENED;
-  if (ev.lifecycle === 'open' && ev.cfpClosesAt !== null) {
-    return label('call.open', 'onstage').replace('{date}', dayMonthAt(ev.cfpClosesAt, ev.timezone));
+/**
+ * The call, said as the next move rather than as a state. Somebody reading
+ * this page is either coming to listen — in which case the call is a passing
+ * fact — or thinking about speaking, in which case the only two things worth
+ * knowing are whether there is still time and, once there is not, when they
+ * hear. An event that has already run says neither: nobody is deciding
+ * anything about its call any more.
+ */
+function callStateText(ev: EventHome): string | null {
+  if (ev.lifecycle === 'happened') return null;
+  if (ev.lifecycle === 'open') {
+    return ev.cfpClosesAt !== null
+      ? `You can still submit a talk until ${dayMonthAt(ev.cfpClosesAt, ev.timezone)}`
+      : 'You can still submit a talk';
   }
-  if (ev.cfpClosesAt !== null) {
-    return label('call.closed', 'onstage').replace('{date}', dayMonthAt(ev.cfpClosesAt, ev.timezone));
-  }
-  // No closing date on record at all (an event with no call of its own) —
-  // the same sentence, minus the date clause rather than a guessed one.
-  return label('call.closed', 'onstage').replace(' on {date}', '');
+  return ev.decideBy ? `The call is closed — decisions by ${dayMonthOn(ev.decideBy)}` : 'The call is closed';
 }
 
 function factRailHtml(ev: EventHome): string {
   const slug = esc(ev.slug);
+  const call = callStateText(ev);
   const cells = [
-    esc(callStateText(ev)),
     `<a class="link" href="/${slug}/agenda">Program ↗</a>`,
     `<a class="link" href="/${slug}/speakers">Speakers ↗</a>`,
   ];
+  if (call) cells.unshift(esc(call));
   if (ev.venueName) cells.push(esc(ev.venueName));
   const sep = '<span style="opacity:.4">│</span>';
   return (
@@ -105,61 +118,57 @@ function factRailHtml(ev: EventHome): string {
 
 function buttonRowHtml(ev: EventHome): string {
   const slug = esc(ev.slug);
-  const primary =
-    ev.lifecycle === 'open'
-      ? `<a class="btn btn-primary btn-lg" href="/${slug}/cfp">Open the call</a>`
-      : `<a class="btn btn-primary btn-lg" href="/${slug}/agenda">See the program →</a>`;
-  const agendaLabel = ev.agendaPublished ? 'See the agenda' : 'See who is speaking';
+  // The loud button belongs to whoever came to listen — the program if there
+  // is one, the people if there is not. Somebody thinking of speaking gets the
+  // quieter button beside it, in their own verb.
+  const primary = ev.agendaPublished
+    ? `<a class="btn btn-primary btn-lg" href="/${slug}/agenda">See the agenda →</a>`
+    : `<a class="btn btn-primary btn-lg" href="/${slug}/speakers">See who is speaking →</a>`;
+  const pitch = ev.lifecycle === 'open' ? `<a class="btn" href="/${slug}/cfp">Submit a talk</a>` : '';
+  return `<div class="btnrow" style="margin-top:22px">${primary}${pitch}</div>`;
+}
+
+function cardHtml(title: string, inner: string): string {
   return (
-    `<div class="btnrow" style="margin-top:22px">${primary}` +
-    `<a class="btn" href="/${slug}/agenda">${agendaLabel}</a>` +
-    `<a class="btn" href="/${slug}/portal">Your speaker portal</a></div>`
+    '<div class="card card-pad">' +
+    `<h3 class="serif" style="font-size:21px;font-weight:600">${esc(title)}</h3>` +
+    `<p class="sub" style="margin-top:6px">${inner}</p>` +
+    '</div>'
   );
 }
 
-function proposalsCardHtml(ev: EventHome): string {
-  const { proposals, accepted, speakers } = ev.counts;
+/**
+ * The card beside the venue. Never the funnel: how much came in and how much
+ * was taken is arithmetic nobody out here can act on, and it reads as a
+ * scoreboard on a page somebody opened to find out who is speaking. This one
+ * answers what they did come with — is there anything to plan around yet.
+ */
+function programCardHtml(ev: EventHome): string {
   const slug = esc(ev.slug);
-  if (proposals > 0) {
-    const noun = proposals === 1 ? 'proposal' : 'proposals';
-    // Past events read as memory, not as a race still being run.
-    const line =
-      ev.lifecycle === 'happened'
-        ? `${esc(accepted)} made the program${speakers > 0 ? ` · ${esc(speakers)} spoke` : ''}.`
-        : `${esc(accepted)} accepted so far${speakers > 0 ? ` · ${esc(speakers)} speaking` : ''}.`;
-    return (
-      '<div class="card card-pad">' +
-      `<h3 class="serif" style="font-size:21px;font-weight:600">${esc(proposals)} ${noun} came in</h3>` +
-      `<p class="sub" style="margin-top:6px">${line}</p>` +
-      '</div>'
+  if (ev.lifecycle === 'happened') {
+    return cardHtml(
+      'Everything that ran',
+      `<a class="link" href="/${slug}/agenda">The whole program is still up</a>, talk by talk, ` +
+        'with recordings where there are any.'
     );
   }
-  // Never a bare zero: name the next thing and link to it.
-  if (ev.lifecycle === 'open') {
-    return (
-      '<div class="card card-pad">' +
-      '<h3 class="serif" style="font-size:21px;font-weight:600">Be the first to send one in</h3>' +
-      `<p class="sub" style="margin-top:6px"><a class="link" href="/${slug}/cfp">Open the call</a> and start a proposal.</p>` +
-      '</div>'
+  if (ev.agendaPublished) {
+    return cardHtml(
+      'Start planning your days',
+      'Star the talks you want to see and they line up in ' +
+        `<a class="link" href="/${slug}/my-schedule">one list</a>, in the order you will walk to them.`
     );
   }
-  return (
-    '<div class="card card-pad">' +
-    '<h3 class="serif" style="font-size:21px;font-weight:600">The program is still coming together</h3>' +
-    `<p class="sub" style="margin-top:6px"><a class="link" href="/${slug}/agenda">See the program</a> once it is published.</p>` +
-    '</div>'
+  return cardHtml(
+    'The program is still coming together',
+    `Speakers already confirmed are on the <a class="link" href="/${slug}/speakers">speakers page</a>.`
   );
 }
 
 function venueCardHtml(ev: EventHome): string {
   const title = ev.venueName ?? 'Venue to be announced';
   const tz = ev.tzLabel ?? ev.timezone;
-  return (
-    '<div class="card card-pad">' +
-    `<h3 class="serif" style="font-size:21px;font-weight:600">${esc(title)}</h3>` +
-    `<p class="sub" style="margin-top:6px">${esc(dateRange(ev.startsOn, ev.endsOn))}. ${esc(tz)}.</p>` +
-    '</div>'
-  );
+  return cardHtml(title, `${esc(dateRange(ev.startsOn, ev.endsOn))}. ${esc(tz)}.`);
 }
 
 /** The no-headshot mark: initials in a dashed circle. No headshot is seeded
@@ -177,13 +186,9 @@ function speakerStripHtml(ev: EventHome, speakers: GallerySpeaker[]): string {
   const slug = esc(ev.slug);
   const list = speakers.slice(0, 8);
   if (list.length === 0) {
-    const cta =
-      ev.lifecycle === 'open'
-        ? `<a class="link" href="/${slug}/cfp">Open the call</a>`
-        : `<a class="link" href="/${slug}/speakers">See the speakers page</a>`;
     return (
       '<div class="sec"><h2 class="display" style="font-size:26px;margin-bottom:14px">Nobody is on the program yet</h2>' +
-      `<p class="sub">${cta} to see what comes next.</p></div>`
+      '<p class="sub">The first names go up here as soon as the program takes shape.</p></div>'
     );
   }
   const cards = list
@@ -226,8 +231,8 @@ function eventHomePage(ev: EventHome, speakers: GallerySpeaker[]): string {
     buttonRowHtml(ev) +
     '</div>' +
     '<div class="sec grid2">' +
-    proposalsCardHtml(ev) +
     venueCardHtml(ev) +
+    programCardHtml(ev) +
     '</div>' +
     speakerStripHtml(ev, speakers) +
     '</div>';

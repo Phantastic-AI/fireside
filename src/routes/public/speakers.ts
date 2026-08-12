@@ -2,7 +2,7 @@
 // stranger's read, same as everything in queries/public.ts.
 //
 // Persona pass: Dani skims the gallery corridor-fast, looking for who to
-// see next; the judge lands cold, checking that a person carries a real
+// see next; a stranger lands cold, checking that a person carries a real
 // history rather than one row behind one talk. Register: Onstage — warm,
 // second person absent (this is about a third person, the speaker), dates
 // not statuses, sentence case, no exclamation marks.
@@ -136,13 +136,17 @@ function speakerCard(eventSlug: string, p: GallerySpeaker, link: Outbound): stri
   );
 }
 
-/** Call open, nobody accepted yet — never a bare zero, always a door onward. */
+/** Nobody announced yet — never a bare zero, always somewhere to go next. */
 function emptyGallery(event: EventHome): string {
+  const open = event.lifecycle === 'open';
+  const onward = open
+    ? `<a class="btn btn-primary" href="/${esc(event.slug)}/cfp">Submit a talk →</a>`
+    : `<a class="btn btn-primary" href="/${esc(event.slug)}/agenda">See the agenda →</a>`;
   return (
     '<div class="wrap" style="padding-top:44px"><h1 class="display">Speakers</h1>' +
-    '<div class="sec state-out"><h2>The program is being decided now.</h2>' +
-    `<p>Nobody has been announced at ${esc(event.name)} yet. The call for speakers is where the program starts.</p>` +
-    `<a class="btn btn-primary" href="/${esc(event.slug)}/cfp">See the call for speakers →</a></div></div>`
+    '<div class="sec state-out"><h2>Nobody is announced yet.</h2>' +
+    `<p>The first names go up here as soon as the program at ${esc(event.name)} takes shape.</p>` +
+    `${onward}</div></div>`
   );
 }
 
@@ -185,7 +189,12 @@ function speakersGalleryPage(
   const shown = gallery.filter((p) => matches(p, tokens));
 
   const noun = gallery.length === 1 ? '1 speaker' : `${num(gallery.length)} speakers`;
-  const more = event.lifecycle === 'happened' ? '' : ' More as decisions go out.';
+  // Past tense for a lineup that has already been on stage; for one still
+  // being built, the honest promise is only that there will be more of it.
+  const mastheadLine =
+    event.lifecycle === 'happened'
+      ? `${noun} at ${event.name}.`
+      : `${noun} confirmed at ${event.name}. More to come.`;
   const resultLine =
     q && gallery.length ? `<p class="sub" style="margin:10px 0 0">${esc(`${num(shown.length)} of ${noun}.`)}</p>` : '';
 
@@ -194,23 +203,39 @@ function speakersGalleryPage(
     // Only an embed reaches this: the gallery's own empty state is the page
     // above, and it belongs on the event's site, not in somebody's sidebar.
     grid =
-      '<div class="sec state-out"><h2>Nobody has been announced yet.</h2>' +
-      '<p>The program is being decided now.</p></div>';
+      '<div class="sec state-out"><h2>Nobody is announced yet.</h2>' +
+      '<p>The first names go up as soon as the program takes shape.</p></div>';
   } else if (!shown.length) {
+    // This box only ever reads people. A word that is not a name is almost
+    // always a subject, so hand it to the search that reads talk titles, with
+    // the word already typed into it.
     grid =
-      '<div class="sec state-out"><h2>Nothing matches that — clear the search.</h2>' +
-      '<p>The search reads names and organisations.</p>' +
+      '<div class="sec state-out"><h2>Nobody by that name.</h2>' +
+      '<p>This search reads names and where people work. If you are looking for talks about it, ' +
+      'the agenda search reads titles.</p>' +
       `<a class="btn btn-primary" href="${esc(
+        link.href(`/${event.slug}/agenda?q=${encodeURIComponent(q)}`)
+      )}"${link.attrs}>Look for “${esc(q)}” on the agenda →</a>` +
+      `<p class="sub" style="margin-top:12px"><a class="link" href="${esc(
         embed ? `/${event.slug}/speakers?embed=1` : `/${event.slug}/speakers`
-      )}">Clear the search →</a></div>`;
+      )}">Clear the search</a></p></div>`;
   } else {
     grid = `<div class="sec gal">${shown.map((p) => speakerCard(event.slug, p, link)).join('')}</div>`;
   }
 
+  // One line for the other reader: somebody reading a lineup and wondering
+  // whether they could be on it.
+  const pitchLine =
+    !embed && event.lifecycle === 'open'
+      ? '<p class="sub" style="margin-top:6px">Still time to join them — ' +
+        `<a class="link" href="/${esc(event.slug)}/cfp">submit a talk</a>.</p>`
+      : '';
+
   const head = embed
     ? ''
     : '<h1 class="display">Speakers</h1>' +
-      `<p class="sub" style="margin-top:8px">${esc(`${noun} confirmed at ${event.name}.`)}${esc(more)}</p>`;
+      `<p class="sub" style="margin-top:8px">${esc(mastheadLine)}</p>` +
+      pitchLine;
 
   const wayOut = embed
     ? `<p class="sub" style="margin-top:16px"><a class="link" href="${esc(
@@ -272,14 +297,13 @@ function sessionsSection(event: EventHome, firstName: string, sessions: GalleryS
   }
   if (agendaPublished) {
     return (
-      `<div class="sec state-out"><h2>Not speaking at ${esc(event.name)}.</h2>` +
-      `<p>${esc(firstName)} does not have a talk on this program.</p>` +
+      `<div class="sec state-out"><h2>${esc(firstName)} is not speaking at ${esc(event.name)}.</h2>` +
       `<a class="btn btn-primary" href="/${esc(event.slug)}/speakers">See who is speaking →</a></div>`
     );
   }
   return (
-    '<div class="sec state-out"><h2>The schedule is not out yet.</h2>' +
-    `<p>Times and rooms for ${esc(event.name)} have not been published. Once they are, any sessions of theirs show up here.</p>` +
+    '<div class="sec state-out"><h2>Times and rooms are not out yet.</h2>' +
+    `<p>Any talk of theirs at ${esc(event.name)} turns up here as soon as they are.</p>` +
     `<a class="btn btn-primary" href="/${esc(event.slug)}/speakers">See who else is speaking →</a></div>`
   );
 }
