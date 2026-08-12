@@ -46,6 +46,17 @@ export type Said =
   | 'link_made'
   | 'link_rotated'
   | 'link_moved'
+  | 'room_added'
+  | 'room_name_needed'
+  | 'room_name_taken'
+  | 'room_renamed'
+  | 'room_moved'
+  | 'room_gone'
+  | 'track_added'
+  | 'track_name_needed'
+  | 'track_renamed'
+  | 'track_moved'
+  | 'track_gone'
   | 'nothing_sent';
 
 const stale = (e: unknown): boolean =>
@@ -424,7 +435,199 @@ export async function takeOffTeam(
 }
 
 /* ------------------------------------------------------------------ *
- * 4 — the green room link (R-4)
+ * 4 — the rooms and the tracks (AIA-02)
+ * ------------------------------------------------------------------ */
+
+/** The track wheel a new event is painted with — TRACK_COLOURS in
+ *  workflows/create-event.ts. Redeclared rather than imported: create-event.ts
+ *  is not this parcel's to reach into, and a five-colour constant is cheap to
+ *  keep in step by eye. If it ever drifts from the source, that source wins. */
+const TRACK_COLOURS = ['#B14D14', '#2F5D50', '#8B3A62', '#3E5C76', '#7A5C2E'];
+
+function trackSlugOf(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
+/**
+ * A room is added, never removed here: a room with sessions already placed
+ * on it is part of the conference's own history (AIA-02). Position is
+ * appended after whatever is already on the list.
+ */
+export async function addRoom(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  name: string
+): Promise<Said> {
+  requireScope(principal, eventId, EDIT_ROLES);
+
+  const roomName = trimmed(name);
+  if (roomName === '') return 'room_name_needed';
+
+  const at = await db
+    .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM room WHERE event_id = ?')
+    .bind(eventId)
+    .first<{ m: number }>();
+  const position = (at?.m ?? -1) + 1;
+
+  // room carries a UNIQUE(event_id, name) — the guard IS that constraint,
+  // same idiom createEvent uses for its own slug: check the exact thing the
+  // insert would collide on, not just that the event still exists.
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(db, 'SELECT 1 FROM room WHERE event_id = ?1 AND name = ?2', eventId, roomName),
+        db
+          .prepare('INSERT INTO room (id, event_id, name, position) VALUES (?,?,?,?)')
+          .bind(newId('room'), eventId, roomName, position),
+      ],
+      [0, 1]
+    );
+  } catch (e) {
+    if (stale(e)) return 'room_name_taken';
+    throw e;
+  }
+  return 'room_added';
+}
+
+/** Renaming a room carries every session already placed on it — nothing
+ *  keyed off the name has to move, because nothing is keyed off the name. */
+export async function renameRoom(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  roomId: string,
+  name: string
+): Promise<Said> {
+  requireScope(principal, eventId, EDIT_ROLES);
+
+  const roomName = trimmed(name);
+  if (roomName === '') return 'room_name_needed';
+
+  // The UNIQUE(event_id, name) collision is the one this function's own
+  // words can name precisely, so it is checked live rather than left for the
+  // constraint to refuse blindly — the guard below stays existence-only.
+  const clash = await db
+    .prepare('SELECT 1 FROM room WHERE event_id = ? AND name = ? AND id <> ?')
+    .bind(eventId, roomName, roomId)
+    .first();
+  if (clash) return 'room_name_taken';
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(
+          db,
+          'SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM room WHERE id = ?1 AND event_id = ?2)',
+          roomId,
+          eventId
+        ),
+        db.prepare('UPDATE room SET name = ?3 WHERE id = ?1 AND event_id = ?2').bind(roomId, eventId, roomName),
+      ],
+      [0, 1]
+    );
+  } catch (e) {
+    if (stale(e)) return 'room_gone';
+    throw e;
+  }
+  return 'room_renamed';
+}
+
+/**
+ * A track is added, never removed here — same reasoning as a room. Its
+ * colour is the next one on the creation wheel, so a hand-added track reads
+ * the same as one an event started with.
+ */
+export async function addTrack(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  name: string
+): Promise<Said> {
+  requireScope(principal, eventId, EDIT_ROLES);
+
+  const trackName = trimmed(name);
+  if (trackName === '') return 'track_name_needed';
+
+  const at = await db
+    .prepare('SELECT COALESCE(MAX(position), -1) AS m, COUNT(*) AS n FROM track WHERE event_id = ?')
+    .bind(eventId)
+    .first<{ m: number; n: number }>();
+  const position = (at?.m ?? -1) + 1;
+  const colour = TRACK_COLOURS[(at?.n ?? 0) % TRACK_COLOURS.length];
+
+  // Same id-collision idiom saveQuestions uses below: prefer the readable
+  // slug, fall back to a random one the instant two tracks would share it.
+  const wanted = trackSlugOf(trackName);
+  const taken =
+    wanted !== ''
+      ? await db.prepare('SELECT 1 FROM track WHERE event_id = ? AND slug = ?').bind(eventId, wanted).first()
+      : true;
+  const slug = wanted !== '' && !taken ? wanted : newId('trk');
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(db, 'SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM event WHERE id = ?1)', eventId),
+        db
+          .prepare('INSERT INTO track (id, event_id, name, slug, colour, position) VALUES (?,?,?,?,?,?)')
+          .bind(newId('trk'), eventId, trackName, slug, colour, position),
+      ],
+      [0, 1]
+    );
+  } catch (e) {
+    if (stale(e)) return 'track_moved';
+    throw e;
+  }
+  return 'track_added';
+}
+
+/** Renaming a track carries every proposal already sorted onto it — the slug
+ *  and the colour, both the join key and the paint, stay exactly put. */
+export async function renameTrack(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  trackId: string,
+  name: string
+): Promise<Said> {
+  requireScope(principal, eventId, EDIT_ROLES);
+
+  const trackName = trimmed(name);
+  if (trackName === '') return 'track_name_needed';
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(
+          db,
+          'SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM track WHERE id = ?1 AND event_id = ?2)',
+          trackId,
+          eventId
+        ),
+        db
+          .prepare('UPDATE track SET name = ?3 WHERE id = ?1 AND event_id = ?2')
+          .bind(trackId, eventId, trackName),
+      ],
+      [0, 1]
+    );
+  } catch (e) {
+    if (stale(e)) return 'track_gone';
+    throw e;
+  }
+  return 'track_renamed';
+}
+
+/* ------------------------------------------------------------------ *
+ * 5 — the green room link (R-4)
  * ------------------------------------------------------------------ */
 
 /**

@@ -27,6 +27,23 @@ import {
 } from '../../queries/portal';
 import { principalFromCookie } from '../../workflows/account';
 import { completeTask, withdrawProposal, type WriteOutcome } from '../../workflows/portal-actions';
+import {
+  saveHeadshot,
+  saveDeck,
+  saveProfile,
+  decksForTasks,
+  filePart,
+  tooLargeToRead,
+  BIO_MAX,
+  DECK_ACCEPT,
+  DECK_LINE,
+  DECK_MAX_BYTES,
+  PHOTO_ACCEPT,
+  PHOTO_LINE,
+  PHOTO_MAX_BYTES,
+  type FileOutcome,
+  type StoredFile,
+} from '../../workflows/files';
 
 /* ------------------------------------------------------------------ *
  * Words
@@ -161,6 +178,19 @@ function avatar(name: string, initials: string, size: number): string {
   );
 }
 
+/** The speaker's own face: their photograph once they have sent one, and the
+ *  generated portrait until then. Same circle, same size, so the page does not
+ *  jump the moment a photograph arrives. */
+function face(p: { name: string; initials: string; headshotFileId: string | null }, size: number): string {
+  if (!p.headshotFileId) return avatar(p.name, p.initials, size);
+  return (
+    `<img class="av" src="/files/${esc(p.headshotFileId)}" alt="${esc(p.name)}" ` +
+    `width="${size}" height="${size}" ` +
+    `style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;` +
+    'border:1px solid rgba(34,30,23,.12);flex:none">'
+  );
+}
+
 /** The committee's own words, kept in their own box and never paraphrased. */
 function committeeNote(text: string): string {
   return (
@@ -179,6 +209,14 @@ const NOTES: Record<string, string> = {
   edited: 'Saved. Those are the words on it now.',
   withdrawn: 'That one is withdrawn. It has left the committee’s list.',
   'task-done': 'Marked done. Your list is one shorter.',
+  saved: 'Saved. That is how you appear on the program now.',
+  photo: 'That is your photograph now. It goes wherever your name does.',
+  deck: 'Your slides are in. The organizers can see them from here on.',
+  'too-big': 'That one is over the size we can take, so nothing changed. The size is written ' +
+    'beside the picker.',
+  'wrong-kind': 'We cannot take that kind, so nothing changed. The kinds we can take are ' +
+    'written beside the picker.',
+  nothing: 'Nothing came through. Choose a file and send it again.',
   moved: 'That had already moved before this page opened. What you see now is where it stands.',
   refused: 'The committee has moved this one on, so it can no longer be withdrawn here.',
   trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
@@ -408,25 +446,96 @@ const CHIPS: Record<string, string> = {
   done_cancelled: 'chip plain',
 };
 
-function taskRow(slug: string, t: PortalTask, tz: string, forTitle: string | null): string {
+/* ------------------------------------------------------------------ *
+ * Handing something over
+ *
+ * CNT-06: what a door takes is said in one quiet line right beside the
+ * control — and said in the same words the door itself believes, because
+ * both the sentence and the check come from workflows/files.ts. A page
+ * that promises what the server will refuse has wasted somebody's evening
+ * and their last bar of hotel wifi.
+ * ------------------------------------------------------------------ */
+
+const KB = 1024;
+
+/** A size a person can feel: "1.4 MB", "820 KB". */
+function weight(bytes: number): string {
+  return bytes >= KB * KB
+    ? `${(bytes / (KB * KB)).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / KB))} KB`;
+}
+
+function picker(o: {
+  id: string;
+  name: string;
+  labelText: string;
+  accept: string;
+  line: string;
+  button: string;
+  action: string;
+  hidden?: [string, string];
+}): string {
+  return (
+    `<form method="post" action="${o.action}" enctype="multipart/form-data" style="margin-top:10px">` +
+    (o.hidden
+      ? `<input type="hidden" name="${esc(o.hidden[0])}" value="${esc(o.hidden[1])}">`
+      : '') +
+    `<label class="f" for="${esc(o.id)}" style="margin-bottom:10px">` +
+    `<span class="f-lab">${esc(o.labelText)}</span>` +
+    `<input type="file" id="${esc(o.id)}" name="${esc(o.name)}" accept="${esc(o.accept)}" required` +
+    ' style="font:inherit;font-size:14px;max-width:100%;color:var(--ink-soft)">' +
+    `<span class="hint">${esc(o.line)}</span></label>` +
+    `<button class="btn btn-primary btn-sm" type="submit">${esc(o.button)}</button></form>`
+  );
+}
+
+function taskRow(
+  slug: string,
+  t: PortalTask,
+  tz: string,
+  forTitle: string | null,
+  deck: StoredFile | null
+): string {
   const key = t.status === 'open' && t.overdue ? 'overdue' : t.status;
   const stateWord = label(`task.${key}` as LabelKey, 'onstage');
   const open = t.status === 'open';
+  // A request for a file is finished by sending the file, so that is the only
+  // way out of this panel — one act, not a picker beside a button that claims
+  // the same thing without the bytes.
+  const wantsAFile = t.kind === 'file_request' && t.status !== 'cancelled';
   const due =
     open && t.dueOn
       ? `<span class="sub">${t.overdue ? 'Was due ' : 'Due '}${esc(isoDayLong(t.dueOn))}</span>`
       : '';
   const done =
     t.completedAt !== null
-      ? `<p>You marked this done on ${esc(dLong(t.completedAt, tz))}.</p>`
-      : '';
+      ? deck
+        ? `<p>It came in on ${esc(dLong(t.completedAt, tz))}: ` +
+          `<a class="link" href="/files/${esc(deck.id)}">${esc(deck.filename)}</a> · ` +
+          `${esc(weight(deck.sizeBytes))}</p>`
+        : `<p>You marked this done on ${esc(dLong(t.completedAt, tz))}.</p>`
+      : deck
+        ? `<p>We have <a class="link" href="/files/${esc(deck.id)}">${esc(deck.filename)}</a> · ` +
+          `${esc(weight(deck.sizeBytes))}</p>`
+        : '';
   const dropped =
     t.status === 'cancelled' ? '<p>The committee no longer needs this one.</p>' : '';
-  const action = open
-    ? `<form method="post" action="/${esc(slug)}/portal/done" style="margin-top:10px">` +
-      `<input type="hidden" name="task" value="${esc(t.id)}">` +
-      '<button class="btn btn-primary btn-sm" type="submit">Mark this done</button></form>'
-    : '';
+  const action = wantsAFile
+    ? picker({
+        id: `f-deck-${t.id}`,
+        name: 'deck',
+        labelText: deck ? 'Send a newer one' : 'Your slides',
+        accept: DECK_ACCEPT,
+        line: DECK_LINE,
+        button: deck ? 'Send this one instead' : 'Send my slides',
+        action: `/${esc(slug)}/portal/slides`,
+        hidden: ['task', t.id],
+      })
+    : open
+      ? `<form method="post" action="/${esc(slug)}/portal/done" style="margin-top:10px">` +
+        `<input type="hidden" name="task" value="${esc(t.id)}">` +
+        '<button class="btn btn-primary btn-sm" type="submit">Mark this done</button></form>'
+      : '';
   return (
     `<details class="task${t.completedAt !== null ? ' done' : ''}" id="task-${esc(t.id)}"${open ? ' open' : ''}>` +
     '<summary>' +
@@ -472,41 +581,138 @@ function messageRow(m: PortalMessage, tz: string): string {
  * The profile card
  * ------------------------------------------------------------------ */
 
-function linksLine(links: string): string {
-  const parts = links
-    .split(/[\s,]+/)
-    .map((p) => p.trim())
-    .filter((p) => p !== '');
-  if (!parts.length) return '';
-  const rendered = parts.map((p) =>
-    /^https:\/\/[^\s]+$/.test(p)
-      ? `<a class="link" href="${esc(p)}" rel="noopener nofollow">${esc(p.replace(/^https:\/\//, ''))}</a>`
-      : esc(p)
+/** One field, in the shared form clothes. The call's own field() has a
+ *  teaching apparatus — model answers, counters, an island watching it — that
+ *  belongs to a stranger writing a proposal for the first time. This is the
+ *  same person a year later, correcting one line. Nothing should get in the
+ *  way of that. */
+function line(o: {
+  id: string;
+  name: string;
+  labelText: string;
+  value: string | null;
+  hint?: string;
+  area?: boolean;
+  rows?: number;
+  limit?: number;
+  optional?: boolean;
+  required?: boolean;
+}): string {
+  const attrs =
+    `id="${esc(o.id)}" name="${esc(o.name)}"` +
+    (o.limit ? ` maxlength="${o.limit}"` : '') +
+    (o.required ? ' required' : '');
+  const control = o.area
+    ? `<textarea ${attrs} rows="${o.rows ?? 4}">${esc(o.value ?? '')}</textarea>`
+    : `<input type="text" ${attrs} value="${esc(o.value ?? '')}">`;
+  return (
+    `<label class="f" for="${esc(o.id)}"><span class="f-lab">${esc(o.labelText)}` +
+    (o.optional ? '<span class="opt">optional</span>' : '') +
+    '</span>' +
+    control +
+    (o.hint ? `<span class="hint">${esc(o.hint)}</span>` : '') +
+    '</label>'
   );
-  return `<p class="sub" style="margin-top:10px">${rendered.join(' · ')}</p>`;
 }
 
+/**
+ * SPK-08 — the block that used to show a speaker how they appear, now the
+ * block where they say it. Two forms, deliberately: a photograph travels as
+ * bytes and the words travel as words, and putting them in one form would
+ * mean re-sending a two-megabyte photograph to fix a typo in a job title.
+ */
 function profileCard(view: PortalView, onTheProgram: boolean): string {
   const p = view.profile;
-  const role = [p.jobTitle, p.organisation].filter((x) => x).map((x) => esc(x as string));
+  const slug = esc(view.event.slug);
+  const photo =
+    '<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">' +
+    face(p, 72) +
+    '<div style="flex:1 1 16em;min-width:14em">' +
+    picker({
+      id: 'f-photo',
+      name: 'photo',
+      labelText: p.headshotFileId ? 'A different photograph' : 'Your photograph',
+      accept: PHOTO_ACCEPT,
+      line: `${PHOTO_LINE} It sits beside your name on the program.`,
+      button: p.headshotFileId ? 'Use this one instead' : 'Use this photograph',
+      action: `/${slug}/portal/photo`,
+    }) +
+    '</div></div>';
+
+  const words =
+    `<form method="post" action="/${slug}/portal/profile">` +
+    line({
+      id: 'f-pname',
+      name: 'name',
+      labelText: 'Your name',
+      value: p.name,
+      hint: 'As you would like it printed on the schedule.',
+      limit: 120,
+      required: true,
+    }) +
+    line({
+      id: 'f-ptitle',
+      name: 'job_title',
+      labelText: 'What you do',
+      value: p.jobTitle,
+      hint: 'Your role, in your own words.',
+      limit: 120,
+      optional: true,
+    }) +
+    line({
+      id: 'f-porg',
+      name: 'organisation',
+      labelText: 'Where you do it',
+      value: p.organisation,
+      hint: 'Shown under your name on the public agenda.',
+      limit: 120,
+      optional: true,
+    }) +
+    line({
+      id: 'f-ppronouns',
+      name: 'pronouns',
+      labelText: 'Pronouns',
+      value: p.pronouns,
+      hint: 'Printed as you write them, or left off if you leave this blank.',
+      limit: 40,
+      optional: true,
+    }) +
+    line({
+      id: 'f-pbio',
+      name: 'bio',
+      labelText: 'A short life',
+      value: p.bio,
+      hint: `A paragraph a stranger reads before you walk on. Up to ${BIO_MAX} characters.`,
+      area: true,
+      rows: 5,
+      limit: BIO_MAX,
+      optional: true,
+    }) +
+    line({
+      id: 'f-plinks',
+      name: 'links',
+      labelText: 'Where to find you',
+      value: p.links,
+      hint: 'One address per line.',
+      area: true,
+      rows: 3,
+      limit: 600,
+      optional: true,
+    }) +
+    '<div class="btnrow"><button class="btn btn-primary" type="submit">Save how I appear</button>' +
+    (onTheProgram
+      ? `<a class="btn" href="/${slug}/speakers/${esc(p.personId)}">See your speaker page →</a>`
+      : '') +
+    '</div></form>';
+
   return (
     '<div class="card card-pad sec" style="max-width:46em">' +
     '<h2 class="display" style="font-size:22px;margin-bottom:4px">How you appear on the program</h2>' +
     '<p class="sub" style="margin-bottom:14px">These are the words that go on the printed program ' +
-    'and on your speaker page.</p>' +
-    '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">' +
-    avatar(p.name, p.initials, 56) +
-    `<div><div style="font-weight:640;font-size:17px">${esc(p.name)}</div>` +
-    (role.length ? `<div class="sub">${role.join(' · ')}</div>` : '') +
-    '</div></div>' +
-    (p.bio
-      ? `<p class="serif" style="margin-top:14px;font-size:17px;line-height:1.62">${esc(p.bio)}</p>`
-      : '') +
-    (p.links ? linksLine(p.links) : '') +
-    (onTheProgram
-      ? `<div class="btnrow" style="margin-top:16px"><a class="btn" href="/${esc(view.event.slug)}` +
-        `/speakers/${esc(p.personId)}">See your speaker page →</a></div>`
-      : '') +
+    'and on your speaker page. Change them whenever you like — the program reads them fresh.</p>' +
+    photo +
+    '<hr class="rule">' +
+    words +
     '</div>'
   );
 }
@@ -515,14 +721,18 @@ function profileCard(view: PortalView, onTheProgram: boolean): string {
  * The page
  * ------------------------------------------------------------------ */
 
-function portalPage(view: PortalView, note: string | undefined): string {
+function portalPage(
+  view: PortalView,
+  note: string | undefined,
+  decks: Map<string, StoredFile>
+): string {
   const ev = view.event;
   const tz = ev.timezone;
   const slug = esc(ev.slug);
 
   const head =
     '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
-    avatar(view.profile.name, view.profile.initials, 56) +
+    face(view.profile, 56) +
     '<div><h1 class="display" style="font-size:32px">Your portal</h1>' +
     `<p class="sub">${esc(view.profile.name)} · ${esc(ev.name)}</p></div></div>` +
     noteLine(note);
@@ -579,7 +789,8 @@ function portalPage(view: PortalView, note: string | undefined): string {
             ev.slug,
             t,
             tz,
-            manyTalks && t.submissionId ? (titles.get(t.submissionId) ?? null) : null
+            manyTalks && t.submissionId ? (titles.get(t.submissionId) ?? null) : null,
+            decks.get(t.id) ?? null
           )
         )
         .join('')
@@ -636,6 +847,11 @@ const back = (slug: string, code: string): string =>
 const noteFor = (outcome: WriteOutcome, done: string): string =>
   outcome === 'done' ? done : outcome;
 
+/** The same shape for the file outcomes: every word in FileOutcome but 'done'
+ *  is itself a key in NOTES, so the closed set stays closed. */
+const fileNote = (outcome: FileOutcome, done: string): string =>
+  outcome === 'done' ? done : outcome;
+
 export function registerPortal(app: Hono<{ Bindings: Env }>): void {
   app.get('/:event/portal', async (c) => {
     const slug = c.req.param('event');
@@ -647,17 +863,24 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
       c.env.SESSION_SECRET,
       c.req.header('cookie')
     );
-    if (!principal) return c.html(signedOutPage(ev));
+    // The door says the same thing it always said, and now says it in the
+    // status line as well: nobody is signed in, so nothing was shown.
+    if (!principal) return c.html(signedOutPage(ev), 401);
 
     const view = await portalView(c.env.DB, ev.id, principal.personId);
-    if (!view) return c.html(signedOutPage(ev));
+    if (!view) return c.html(signedOutPage(ev), 401);
+
+    const asked = [...view.submissions.flatMap((s) => s.tasks), ...view.tasks]
+      .filter((t) => t.kind === 'file_request')
+      .map((t) => t.id);
+    const decks = await decksForTasks(c.env.DB, asked);
 
     // One speaker's own page: never held in a shared cache anywhere.
     c.header('cache-control', 'private, no-store');
     // A saved edit arrives under its own flag; its sentence still lives in
     // NOTES with the others, so there is one closed set and not two.
     const note = c.req.query('edited') === '1' ? 'edited' : c.req.query('note');
-    return c.html(portalPage(view, note));
+    return c.html(portalPage(view, note, decks));
   });
 
   app.post('/:event/portal/done', async (c) => {
@@ -688,5 +911,69 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     if (!proposalId) return c.redirect(back(slug, 'moved'), 303);
     const outcome = await withdrawProposal(c.env.DB, principal.personId, proposalId);
     return c.redirect(back(slug, noteFor(outcome, 'withdrawn')), 303);
+  });
+
+  // -- SPK-08: the words on the program ---------------------------------
+  app.post('/:event/portal/profile', async (c) => {
+    const slug = c.req.param('event');
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+    const form = await c.req.parseBody();
+    const said = (k: string): string => String(form[k] ?? '');
+    const outcome = await saveProfile(c.env.DB, principal.personId, {
+      name: said('name'),
+      jobTitle: said('job_title'),
+      organisation: said('organisation'),
+      bio: said('bio'),
+      pronouns: said('pronouns'),
+      links: said('links'),
+    });
+    return c.redirect(back(slug, fileNote(outcome, 'saved')), 303);
+  });
+
+  // -- SPK-08: the photograph -------------------------------------------
+  // The header is read before the body is: a phone that picked a nine-megabyte
+  // camera original gets its answer without either side carrying the bytes.
+  app.post('/:event/portal/photo', async (c) => {
+    const slug = c.req.param('event');
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+    if (tooLargeToRead(c.req.header('content-length'), PHOTO_MAX_BYTES)) {
+      return c.redirect(back(slug, 'too-big'), 303);
+    }
+    const form = await c.req.parseBody();
+    const photo = filePart(form['photo']);
+    if (!photo) return c.redirect(back(slug, 'nothing'), 303);
+    const outcome = await saveHeadshot(c.env.DB, c.env.FILES, principal.personId, photo);
+    return c.redirect(back(slug, fileNote(outcome, 'photo')), 303);
+  });
+
+  // -- CNT-02: the deck --------------------------------------------------
+  app.post('/:event/portal/slides', async (c) => {
+    const slug = c.req.param('event');
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+    if (tooLargeToRead(c.req.header('content-length'), DECK_MAX_BYTES)) {
+      return c.redirect(back(slug, 'too-big'), 303);
+    }
+    const form = await c.req.parseBody();
+    const taskId = String(form['task'] ?? '');
+    const deck = filePart(form['deck']);
+    if (!taskId) return c.redirect(back(slug, 'moved'), 303);
+    if (!deck) return c.redirect(back(slug, 'nothing'), 303);
+    const outcome = await saveDeck(c.env.DB, c.env.FILES, principal.personId, taskId, deck);
+    return c.redirect(back(slug, fileNote(outcome, 'deck')), 303);
   });
 }

@@ -30,6 +30,8 @@ import { label, FORMAT_KEY, LEVEL_KEY, type LabelKey } from '../../lib/labels';
 import {
   adminEvents,
   proposal,
+  requireScope,
+  EDIT_ROLES,
   ScopeError,
   type AdminEvent,
   type Proposal,
@@ -42,6 +44,7 @@ import {
 import { cfpQuestions, type CfpQuestion } from '../../queries/public';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { requireDecider, stageDecision, type Decision } from '../../workflows/decide';
+import { createTask, TASK_KINDS } from '../../workflows/tasks';
 
 /* ------------------------------------------------------------------ *
  * Words
@@ -277,6 +280,15 @@ const OUTCOMES: Record<string, string> = {
   'second-look': 'A decision already made takes the second look first. Nothing has changed.',
   'no-decision': 'That carried no decision, so nothing changed.',
   trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
+  // asking — its own codes, because "not here" means something else here than
+  // it does about a decision: the speaker, not the proposal
+  asked: 'Asked. It is on their portal now.',
+  'ask-not-here':
+    'An ask has to go to somebody on this conference, about something of theirs. Nothing was asked.',
+  'ask-no-title': 'An ask needs a short line saying what you are asking for.',
+  'ask-no-kind': 'Say what kind of ask it is, so they know what to send back.',
+  'ask-bad-date': 'That is not a day anyone has. Give the date again and it goes on their list.',
+  'ask-trouble': 'The ask did not go through, and nothing changed. Worth trying once more.',
 };
 
 /** decide.ts speaks in sentences; this maps each back to its code so the same
@@ -568,12 +580,13 @@ function taskChip(t: ProposalTask, todayKey: string): { text: string; cls: strin
   return { text: label('task.open', 'backstage'), cls: 'chip s-undecided' };
 }
 
-function tasksBox(p: Proposal, tz: string, todayKey: string): string {
+function tasksBox(p: Proposal, tz: string, todayKey: string, askable: boolean): string {
   if (p.tasks.length === 0) {
     return (
-      '<div class="railbox"><h4>To do</h4>' +
-      '<p class="sub">Nothing is being asked of them. Tasks start once this one is accepted.</p>' +
-      '</div>'
+      '<div class="railbox" id="tasks"><h4>To do</h4>' +
+      '<p class="sub">Nothing is being asked of them yet.' +
+      (askable ? ' Ask below and it lands on their portal against this proposal.' : '') +
+      '</p></div>'
     );
   }
   const rows = p.tasks
@@ -604,7 +617,49 @@ function tasksBox(p: Proposal, tz: string, todayKey: string): string {
       );
     })
     .join('');
-  return `<div class="railbox"><h4>To do</h4>${rows}</div>`;
+  return `<div class="railbox" id="tasks"><h4>To do</h4>${rows}</div>`;
+}
+
+/* ---------- asking the speaker for something ---------- */
+
+// input[type=date] sits outside the field rule in shared.css (text, email, tel,
+// textarea, select), so it carries that rule's own skin inline.
+const DATE_FIELD =
+  'style="width:100%;font:inherit;font-size:15px;color:var(--ink);background:var(--card);' +
+  'border:1px solid var(--field-line);border-radius:var(--r-sm);padding:9px 11px"';
+
+/**
+ * The same ask as on the person's own page, standing where the proposal is —
+ * scoped to whoever sent this one in, and about this one, so neither has to be
+ * chosen twice. The write is workflows/tasks.ts and nothing else.
+ */
+function askBox(p: Proposal, slug: string, who: ProposalParticipant): string {
+  const first = who.name.trim().split(/\s+/)[0] ?? who.name;
+  const kinds = TASK_KINDS.map(
+    (k) => `<option value="${esc(k.value)}">${esc(k.word)}</option>`
+  ).join('');
+  return (
+    '<div class="railbox" id="ask"><h4>Ask for something</h4>' +
+    `<p class="sub" style="margin:0 0 10px">It lands on ${esc(first)}’s portal against this ` +
+    'proposal, with the day it is due. Nothing is emailed.</p>' +
+    `<form method="post" action="/admin/${esc(slug)}/submissions/${esc(p.id)}/ask">` +
+    '<label class="f" style="margin-bottom:12px"><span class="f-lab">What are you asking for?</span>' +
+    '<input type="text" name="title" required maxlength="140" placeholder="Send your slides"></label>' +
+    '<label class="f" style="margin-bottom:12px"><span class="f-lab">What kind of ask</span>' +
+    `<select name="kind">${kinds}</select></label>` +
+    '<label class="f" style="margin-bottom:12px"><span class="f-lab">Due by</span>' +
+    `<input type="date" name="due" required ${DATE_FIELD}></label>` +
+    `<div class="btnrow"><button class="btn btn-primary btn-sm" type="submit">Ask ${esc(
+      first
+    )}</button></div>` +
+    '</form></div>'
+  );
+}
+
+/** Whose ask this is: the person who sent it in, or the first name on it when
+ *  nobody was marked the sender. */
+function askable(p: Proposal): ProposalParticipant | undefined {
+  return p.participation.find((x) => x.isSubmitter) ?? p.participation[0];
 }
 
 function scoreBox(p: Proposal, slug: string): string {
@@ -798,6 +853,7 @@ function renderProposal(o: {
   p: Proposal;
   questions: readonly CfpQuestion[];
   mayDecide: boolean;
+  mayAsk: boolean;
   armed: boolean;
   outcome: string | undefined;
   nowMs: number;
@@ -881,12 +937,18 @@ function renderProposal(o: {
     'proposals</a></p>' +
     '</div>';
 
+  // A draft has not been sent, so nobody on it is on the roster yet and there
+  // is nothing to ask them for. Everywhere else, the ask stands under the list
+  // it lands in.
+  const asker = askable(p);
+  const canAskHere = inPlay && o.mayAsk && asker !== undefined;
   const rail =
     '<aside class="rail">' +
     decideBox(p, slug, tz, nowMs, o.mayDecide, o.armed) +
     // A draft is nobody's to score yet, so the box does not sit there empty.
     (inPlay ? scoreBox(p, slug) : '') +
-    tasksBox(p, tz, todayIso(tz, nowMs)) +
+    tasksBox(p, tz, todayIso(tz, nowMs), canAskHere) +
+    (canAskHere && asker ? askBox(p, slug, asker) : '') +
     '</aside>';
 
   return page({
@@ -943,6 +1005,7 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
           p,
           questions,
           mayDecide: mayDecide(principal, ev.id),
+          mayAsk: mayAsk(principal, ev.id),
           armed: c.req.query('change') === '1',
           outcome: c.req.query('outcome'),
           nowMs: Date.now(),
@@ -1016,6 +1079,53 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
       throw e;
     }
   });
+
+  // Asking the speaker for something, from the proposal it is about. One click:
+  // it is only on their list, and it comes off from their own page.
+  app.post('/admin/:eventSlug/submissions/:id/ask', async (c) => {
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const id = c.req.param('id');
+    const home = `/admin/${encodeURIComponent(slug)}/submissions/${encodeURIComponent(id)}`;
+    const back = (code: string, anchor: string): string =>
+      `${home}?outcome=${encodeURIComponent(code)}${anchor}`;
+
+    try {
+      const events = await adminEvents(c.env.DB, principal);
+      const ev = events.find((e) => e.slug === slug);
+      if (!ev) return c.html(deniedPage(), 403);
+      if (!mayAsk(principal, ev.id)) {
+        return c.html(deniedPage('Asking speakers for things is held by this event’s organizers.'), 403);
+      }
+
+      // Read it again before writing: who sent this one in is a fact about the
+      // proposal, and the page may have been open a while.
+      const fresh = await proposal(c.env.DB, principal, ev.id, id);
+      if (!fresh) return c.redirect(back('not-here', '#tasks'), 303);
+      const who = askable(fresh);
+      if (!who) return c.redirect(back('ask-not-here', '#people'), 303);
+
+      const form = await c.req.parseBody();
+      const result = await createTask(c.env.DB, principal, ev.id, {
+        personId: who.personId,
+        submissionId: id,
+        kind: String(form['kind'] ?? ''),
+        title: String(form['title'] ?? ''),
+        dueOn: String(form['due'] ?? ''),
+      });
+      if (!result.ok) return c.redirect(back(`ask-${result.code}`, '#ask'), 303);
+      return c.redirect(back('asked', '#tasks'), 303);
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
 }
 
 /** May this principal decide here? The rule lives in decide.ts; this only asks
@@ -1023,6 +1133,17 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
 function mayDecide(principal: Principal, eventId: string): boolean {
   try {
     requireDecider(principal, eventId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** May they ask this speaker for something? Same question, one standing wider:
+ *  an editor who cannot decide can still chase the slides. */
+function mayAsk(principal: Principal, eventId: string): boolean {
+  try {
+    requireScope(principal, eventId, EDIT_ROLES);
     return true;
   } catch {
     return false;

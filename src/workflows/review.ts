@@ -15,7 +15,8 @@
 
 import { checkedBatch, guard, newId, now } from '../lib/db';
 import { requireScope, READ_ROLES } from '../queries/admin';
-import { MY_STAGED_SQL } from '../queries/reviews';
+import { MY_STAGED_SQL, UNTOUCHED_SQL } from '../queries/reviews';
+import { requireDecider } from './decide';
 import type { Principal } from './account';
 
 /**
@@ -219,4 +220,246 @@ export async function submitReviews(
     return { outcome: outcomeOf(e, 'submitReviews'), submitted: 0 };
   }
   return { outcome: 'sent', submitted: expectedCount };
+}
+
+/* ------------------------------------------------------------------ *
+ * Handing the pile out
+ * ------------------------------------------------------------------ */
+
+/**
+ * The closed set of things that can happen to a hand-out. Same discipline as
+ * ReviewOutcome: this file owns which one is true, the screen owns the words.
+ *
+ *   'handed'  — assignments were made; the counts come back with it
+ *   'nobody'  — no reader was chosen, or none of the chosen can read here
+ *   'nothing' — every undecided proposal already has the readers she asked for
+ *   'freed'   — untouched assignments came back off somebody's list
+ *   'kept'    — nothing came back, because everything they hold has work in it
+ *   'moved'   — the round or the numbers moved between the reading and the click
+ *   'trouble' — something unexpected; nothing was written
+ */
+export type AssignOutcome =
+  | 'handed'
+  | 'nobody'
+  | 'nothing'
+  | 'freed'
+  | 'kept'
+  | 'moved'
+  | 'trouble';
+
+/**
+ * One click reaches this far down the pile — the longest-waiting proposals
+ * first. It is a ceiling on one transaction, not on the work: a call bigger
+ * than this wants the round split, and the outcome sentence says as much
+ * rather than pretending the rest were handed out.
+ */
+export const HANDOUT_CAP = 1000;
+/** More readers than this in one pass is a committee, not a hand-out. */
+export const MOST_READERS = 12;
+/** Nobody reads a proposal more than three times before the room talks. */
+export const MOST_EACH = 3;
+
+export type HandOut = {
+  outcome: AssignOutcome;
+  /** Rows written. */
+  handed: number;
+  /** Pairs that were already in that reader's hands, so nothing was written. */
+  held: number;
+  /** True when the pile is longer than one pass can carry. */
+  more: boolean;
+};
+
+/**
+ * The undecided pile, indexed in the queue's own order.
+ *
+ * `i` is what makes the round-robin set-based: proposal i goes to readers
+ * i, i+1 … i+n-1 modulo the number chosen, so one statement per reader hands
+ * out the whole pile without a loop, a temporary table, or a thousand round
+ * trips at midnight.
+ *
+ * THE INDEX MUST NOT MOVE WHILE THE BATCH RUNS. An earlier draft narrowed this
+ * to "proposals with fewer than n readers", which reads well and is wrong: the
+ * statements run in order inside one transaction, so the second reader's
+ * shortlist had already lost everything the first reader took, the numbering
+ * shifted under it, and three readers finished holding 25, 17 and 5. Ordering
+ * on submission facts alone — which no statement here writes — is what makes
+ * every reader's share the same size and makes `held` exact arithmetic rather
+ * than an estimate.
+ */
+const PILE_INDEXED = `SELECT s.id AS id,
+          ROW_NUMBER() OVER (ORDER BY s.submitted_at IS NULL, s.submitted_at, s.id) - 1 AS i
+     FROM submission s
+    WHERE s.event_id = ?1 AND s.state = 'submitted'`;
+
+/**
+ * Give every undecided proposal to `each` of the readers chosen, spread
+ * round-robin so nobody carries the evening alone.
+ *
+ * ONE CLICK, and the law says so: this is backstage, private, and undoable —
+ * an assignment holds nobody's work until somebody writes in it, and the
+ * take-back below undoes exactly the ones nobody has. Nothing leaves the
+ * building, no speaker learns anything, no average moves. What the two-pass
+ * rule asks of an act this size is that the screen name the number, which the
+ * outcome sentence does: "312 handed out. 16 were already held."
+ *
+ * Existing pairs are skipped rather than overwritten (the NOT EXISTS), which
+ * makes the whole act idempotent: run it twice with the same answer and the
+ * second run writes nothing and says so. `held` is exact rather than
+ * estimated — every slot the distribution intended either became a row or was
+ * already that reader's, and the difference between the two is the number the
+ * sentence reports.
+ */
+export async function handOutAssignments(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  round: number,
+  readerIds: string[],
+  each: number
+): Promise<HandOut> {
+  requireDecider(principal, eventId);
+
+  const none: HandOut = { outcome: 'nobody', handed: 0, held: 0, more: false };
+  const per = Math.floor(each);
+  if (!Number.isInteger(per) || per < 1 || per > MOST_EACH) return none;
+
+  const wanted = [...new Set(readerIds.filter((id) => id.trim() !== ''))].slice(0, MOST_READERS);
+  if (wanted.length === 0) return none;
+
+  // Only people who can already read this event's proposals may be handed one.
+  // Checked here so an unknown name is quietly dropped, and checked again in
+  // the batch so a standing withdrawn mid-click takes the whole thing down.
+  const eligible = await db
+    .prepare(
+      `SELECT p.id FROM person p
+        WHERE p.id IN (${wanted.map(() => '?').join(',')})
+          AND (p.internal_role = 'organizer'
+               OR EXISTS (SELECT 1 FROM event_role er
+                           WHERE er.event_id = ? AND er.person_id = p.id))`
+    )
+    .bind(...wanted, eventId)
+    .all<{ id: string }>();
+  const readers = eligible.results.map((r) => r.id);
+  if (readers.length === 0) return none;
+
+  const pile = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM submission s
+        WHERE s.event_id = ?1 AND s.state = 'submitted'`
+    )
+    .bind(eventId)
+    .first<{ n: number }>();
+  const undecided = pile?.n ?? 0;
+  if (undecided === 0) return { outcome: 'nothing', handed: 0, held: 0, more: false };
+
+  const k = readers.length;
+  const reach = Math.min(undecided, HANDOUT_CAP);
+  const intended = reach * Math.min(per, k);
+
+  const statements = [
+    guard(db, 'SELECT 1 FROM event WHERE id = ?1 AND current_round <> ?2', eventId, round),
+    guard(
+      db,
+      `SELECT 1 FROM person p
+        WHERE p.id IN (${readers.map(() => '?').join(',')})
+          AND p.internal_role IS NOT 'organizer'
+          AND NOT EXISTS (SELECT 1 FROM event_role er
+                           WHERE er.event_id = ? AND er.person_id = p.id)`,
+      ...readers,
+      eventId
+    ),
+    // One statement per reader: their slice of the round-robin, minus whatever
+    // is already in their hands. The id is drawn per row, because a batch of
+    // six hundred rows cannot share one.
+    ...readers.map((reader, j) =>
+      db
+        .prepare(
+          `INSERT INTO review (id, submission_id, reviewer_person_id, round, scores, note, submitted_at)
+           SELECT 'rev-' || lower(hex(randomblob(6))), q.id, ?3, ?2, '{}', NULL, NULL
+             FROM (${PILE_INDEXED}) q
+            WHERE q.i < ?4
+              AND ((?5 - q.i) % ?6 + ?6) % ?6 < ?7
+              AND NOT EXISTS (SELECT 1 FROM review rv
+                               WHERE rv.submission_id = q.id
+                                 AND rv.reviewer_person_id = ?3 AND rv.round = ?2)`
+        )
+        .bind(eventId, round, reader, HANDOUT_CAP, j, k, Math.min(per, k))
+    ),
+  ];
+
+  let results;
+  try {
+    results = await checkedBatch(
+      db,
+      statements,
+      [0, 0, ...readers.map(() => 'any' as const)],
+      STALE
+    );
+  } catch (e) {
+    const outcome = outcomeOf(e, 'handOutAssignments');
+    return { outcome: outcome === 'moved' ? 'moved' : 'trouble', handed: 0, held: 0, more: false };
+  }
+
+  const handed = results
+    .slice(2)
+    .reduce((sum, r) => sum + (r.meta.changes ?? 0), 0);
+  const held = Math.max(0, intended - handed);
+  const more = undecided > reach;
+  return { outcome: handed > 0 ? 'handed' : 'nothing', handed, held, more };
+}
+
+/**
+ * Take back the assignments one reader has not written in.
+ *
+ * The refusal is structural rather than polite: the cohort below is
+ * UNTOUCHED_SQL, so a staged review and a submitted one are not eligible to be
+ * deleted by anybody, ever. `expected` is the number the chair read on the
+ * button, and the guard refuses the whole batch if it moved — if that reader
+ * scored one of them in the last half-second, nothing comes back and the
+ * screen says so rather than quietly taking one fewer.
+ */
+const UNTOUCHED_COHORT = `SELECT rv.id AS review_id
+   FROM review rv
+   JOIN submission s ON s.id = rv.submission_id
+  WHERE s.event_id = ?1 AND s.state = 'submitted'
+    AND rv.reviewer_person_id = ?2 AND rv.round = ?3
+    AND ${UNTOUCHED_SQL}`;
+
+export async function takeBackAssignments(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  round: number,
+  personId: string,
+  expectedCount: number
+): Promise<{ outcome: AssignOutcome; freed: number }> {
+  requireDecider(principal, eventId);
+  if (!personId || !Number.isInteger(expectedCount) || expectedCount < 1) {
+    return { outcome: 'kept', freed: 0 };
+  }
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(
+          db,
+          `SELECT 1 WHERE (SELECT COUNT(*) FROM (${UNTOUCHED_COHORT})) <> ?4`,
+          eventId,
+          personId,
+          round,
+          expectedCount
+        ),
+        db
+          .prepare(`DELETE FROM review WHERE id IN (SELECT review_id FROM (${UNTOUCHED_COHORT}))`)
+          .bind(eventId, personId, round),
+      ],
+      [0, expectedCount],
+      STALE
+    );
+  } catch (e) {
+    const outcome = outcomeOf(e, 'takeBackAssignments');
+    return { outcome: outcome === 'moved' ? 'moved' : 'trouble', freed: 0 };
+  }
+  return { outcome: 'freed', freed: expectedCount };
 }

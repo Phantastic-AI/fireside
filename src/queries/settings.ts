@@ -38,6 +38,24 @@ export type TeamMember = {
 /** A question, plus how many proposals already answered it. */
 export type SettingsQuestion = CfpQuestion & { answered: number };
 
+/** AIA-02: a room, as the settings screen lists it. No delete — see workflows/settings.ts. */
+export type SettingsRoom = {
+  id: string;
+  name: string;
+  capacity: number | null;
+  position: number;
+};
+
+/** AIA-02: a track, as the settings screen lists it. Colour comes from the
+ *  same creation wheel a new event is painted with. */
+export type SettingsTrack = {
+  id: string;
+  name: string;
+  slug: string;
+  colour: string;
+  position: number;
+};
+
 export type EventSettings = {
   id: string;
   slug: string;
@@ -65,6 +83,8 @@ export type EventSettings = {
   team: TeamMember[];
   teamCount: number;
   ownerCount: number;
+  rooms: SettingsRoom[];
+  tracks: SettingsTrack[];
   proposalCount: number;
   /** The reader's own standing here: 'organizer' install-wide, or their role. */
   standing: string;
@@ -171,6 +191,12 @@ export async function eventSettings(
       db
         .prepare("SELECT COUNT(*) AS n FROM submission WHERE event_id = ? AND state <> 'draft'")
         .bind(ev.id),
+      db
+        .prepare('SELECT id, name, capacity, position FROM room WHERE event_id = ? ORDER BY position, name')
+        .bind(ev.id),
+      db
+        .prepare('SELECT id, name, slug, colour, position FROM track WHERE event_id = ? ORDER BY position, name')
+        .bind(ev.id),
     ]),
   ]);
 
@@ -214,6 +240,12 @@ export async function eventSettings(
     team,
     teamCount: team.length,
     ownerCount: team.filter((m) => m.role === 'owner').length,
+    rooms: rowsOf<{ id: string; name: string; capacity: number | null; position: number }>(res[3]).map(
+      (r) => ({ id: r.id, name: r.name, capacity: r.capacity, position: r.position })
+    ),
+    tracks: rowsOf<{ id: string; name: string; slug: string; colour: string; position: number }>(
+      res[4]
+    ).map((t) => ({ id: t.id, name: t.name, slug: t.slug, colour: t.colour, position: t.position })),
     proposalCount: rowsOf<{ n: number }>(res[2])[0]?.n ?? 0,
     standing,
     mayTouchTeam: principal.role === 'organizer' || principal.eventRoles[ev.id] === 'owner',

@@ -11,6 +11,7 @@ import { registerEditProposal } from './routes/public/edit';
 import { registerIcs } from './routes/public/ics';
 import { registerAsk } from './routes/public/ask';
 import { registerMcp } from './mcp';
+import { registerFiles } from './routes/files';
 import { registerAdminHome } from './routes/admin/home';
 import { registerPile } from './routes/admin/pile';
 import { registerProposal } from './routes/admin/proposal';
@@ -20,6 +21,7 @@ import { registerPeople } from './routes/admin/people';
 import { registerGreenRoomAdmin } from './routes/admin/greenroom';
 import { registerSettings } from './routes/admin/settings';
 import { registerReviews } from './routes/admin/reviews';
+import { registerEmbeds } from './routes/admin/embeds';
 import {
   signUp,
   signIn,
@@ -239,6 +241,7 @@ registerPeople(app);
 registerGreenRoomAdmin(app);
 registerSettings(app);
 registerReviews(app);
+registerEmbeds(app);
 
 // ---------- The event screens ----------
 // registerEventHome goes last: its GET /:eventSlug matches broadest, and it
@@ -246,6 +249,7 @@ registerReviews(app);
 // registerIcs sits before registerAgenda so /:event/s/:slug.ics wins the
 // match before the session page's bare :slug can swallow the suffix.
 registerMcp(app);
+registerFiles(app);
 registerCfp(app);
 registerEditProposal(app);
 registerPortal(app);

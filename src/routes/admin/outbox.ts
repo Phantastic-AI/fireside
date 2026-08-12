@@ -13,10 +13,16 @@
 //   D-027 — nothing here knows the software is new.
 //
 // The read is queries/admin.ts `outbox()` (which denies a viewer outright) plus
-// one local query for the history of what has already gone. The write is
-// workflows/release.ts `releaseDecisions()` and nothing else — the guard, the
-// cohort and the email pass all live there, so this file never re-derives what
-// "staged" means or who may send.
+// one local query for the history of what has already gone. The writes are
+// workflows/release.ts `releaseDecisions()` and workflows/tasks.ts
+// `stageNotes` / `withdrawNotes` / `releaseNotes` — the guards, the cohort and
+// the email pass all live there, so this file never re-derives what "staged"
+// means or who may send.
+//
+// Two things leave from this screen and they never share a number. A decision
+// cohort is guarded on the decisions count; a message to a room is guarded on
+// its own. Each has its own band, its own arithmetic and its own confirm, and
+// no button on this page can send the other one's post.
 
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
@@ -36,6 +42,7 @@ import {
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { requireDecider } from '../../workflows/decide';
 import { releaseDecisions } from '../../workflows/release';
+import { AUDIENCES, releaseNotes, stageNotes, withdrawNotes } from '../../workflows/tasks';
 
 /* ------------------------------------------------------------------ *
  * Words
@@ -68,6 +75,15 @@ const KIND_KEY: Record<string, string> = {
   reminder: 'message.kind.task',
   schedule: 'message.kind.schedule',
 };
+
+/** The word above a letter written to a room. 02 §6 names five kinds of message
+ *  and this is not one of them, so this screen supplies its own word — and
+ *  supplies the same one in all three places such a letter can appear: staged,
+ *  in the band, and in the history afterwards. */
+const TO_PEOPLE = 'To people';
+
+const kindWord = (kind: string): string =>
+  kind === 'note' ? TO_PEOPLE : word(KIND_KEY[kind] ?? '');
 
 /** The order the committee thinks in: yes, maybe, no. */
 const STATE_ORDER: SubmissionState[] = ['accepted', 'waitlisted', 'rejected'];
@@ -236,7 +252,7 @@ function letterBody(main: string, note: string | null): string {
 
 function letterRow(slug: string, m: OutboxMessage): string {
   const { main, note } = splitLetter(m.body);
-  const kind = word(KIND_KEY[m.kind] ?? '');
+  const kind = kindWord(m.kind);
   const chip = m.hasEmail
     ? `<span class="chip s-undecided">${esc(label('message.staged', 'backstage'))}</span>`
     : `<span class="chip warn">${esc(label('message.blocked', 'backstage'))}</span>`;
@@ -365,6 +381,160 @@ function blockedBand(slug: string, ob: Outbox): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * Writing to people
+ *
+ * A message to a whole room is one letter with many recipients, so it is drawn
+ * as one letter with a count on it — six hundred identical rows would be six
+ * hundred ways of saying the same sentence. Its own band, its own number, its
+ * own confirm; the decisions arithmetic above never sees it.
+ * ------------------------------------------------------------------ */
+
+type NoteBatch = { at: number; subject: string; body: string; count: number; blocked: number };
+
+/** Staged messages, gathered back into the groups they were written in. The
+ *  instant is the group's name: one write, one instant, one batch. */
+function noteBatches(rows: OutboxMessage[]): NoteBatch[] {
+  const byInstant = new Map<number, NoteBatch>();
+  for (const m of rows) {
+    const found = byInstant.get(m.createdAt);
+    const batch = found ?? {
+      at: m.createdAt,
+      subject: m.subject,
+      body: m.body,
+      count: 0,
+      blocked: 0,
+    };
+    batch.count += 1;
+    if (!m.hasEmail) batch.blocked += 1;
+    if (!found) byInstant.set(m.createdAt, batch);
+  }
+  return [...byInstant.values()].sort((a, b) => b.at - a.at);
+}
+
+function noteBatchRow(slug: string, ev: AdminEvent, b: NoteBatch): string {
+  const flat = b.body.replace(/\s+/g, ' ').trim();
+  const written = `${esc(plural(b.count, 'person', 'people'))}, written at ${esc(
+    dTime(b.at, ev.timezone)
+  )}`;
+  const inPortalOnly =
+    b.blocked > 0
+      ? `<div class="sub" style="margin-top:4px">${esc(
+          plural(b.blocked, 'person has', 'people have')
+        )} no address — it lands in the portal and stays there.</div>`
+      : '';
+  return (
+    '<div class="msg">' +
+    `<div class="mk">${esc(TO_PEOPLE)}</div>` +
+    '<div>' +
+    `<div class="msub">${esc(b.subject)}</div>` +
+    `<div class="mprev" style="white-space:pre-wrap">${esc(flat)}</div>` +
+    `<div class="sub" style="margin-top:5px">${written}</div>` +
+    inPortalOnly +
+    `<form method="post" style="margin-top:8px" action="/admin/${encodeURIComponent(
+      slug
+    )}/outbox/notes/withdraw">` +
+    `<input type="hidden" name="at" value="${esc(String(b.at))}">` +
+    '<button class="btn btn-sm btn-quiet" type="submit">Take it back</button></form>' +
+    '</div>' +
+    `<div><span class="chip s-undecided">${esc(label('message.staged', 'backstage'))}</span></div>` +
+    '</div>'
+  );
+}
+
+/** First pass: the arithmetic, and a button that only asks the question. */
+function notesAskBand(slug: string, n: number): string {
+  const send = `Send ${plural(n, 'message', 'messages')}`;
+  return (
+    `<form class="attn" style="margin-top:16px" method="get" action="/admin/${encodeURIComponent(
+      slug
+    )}/outbox">` +
+    `<div class="n">${esc(num(n))}</div>` +
+    '<div>' +
+    `<div class="lab">${esc(send)}. Everyone on the list gets the words you have read.</div>` +
+    '<div class="why">They land in the speakers’ portals at once, and real addresses get an ' +
+    'email too. You cannot take it back.</div>' +
+    '</div>' +
+    `<input type="hidden" name="confirm_notes" value="${esc(String(n))}">` +
+    `<button class="btn btn-primary go" type="submit">${esc(send)}</button>` +
+    '</form>'
+  );
+}
+
+/** Second pass: the same number, carried in the form and guarded on the way in. */
+function notesConfirmBand(slug: string, n: number): string {
+  const send = `Send ${plural(n, 'message', 'messages')}`;
+  return (
+    `<form class="attn" style="margin-top:16px" method="post" action="/admin/${encodeURIComponent(
+      slug
+    )}/outbox/notes/release">` +
+    `<div class="n">${esc(num(n))}</div>` +
+    '<div>' +
+    `<div class="lab">${esc(send)}?</div>` +
+    `<div class="why">Once this goes, ${esc(
+      plural(n, 'person has it', 'people have it')
+    )} and nothing here can be taken back.</div>` +
+    '</div>' +
+    `<input type="hidden" name="expected" value="${esc(String(n))}">` +
+    '<div class="btnrow go">' +
+    `<button class="btn btn-primary" type="submit">${esc(send)}</button>` +
+    `<a class="btn" href="/admin/${encodeURIComponent(slug)}/outbox">Not yet</a>` +
+    '</div></form>'
+  );
+}
+
+function composer(slug: string): string {
+  const rooms = AUDIENCES.map(
+    (a) => `<option value="${esc(a.key)}">${esc(a.word)}</option>`
+  ).join('');
+  return (
+    `<form class="card card-pad" style="margin-top:16px;max-width:44em" method="post" ` +
+    `action="/admin/${encodeURIComponent(slug)}/outbox/notes">` +
+    '<label class="f"><span class="f-lab">Who it goes to</span>' +
+    `<select name="audience">${rooms}</select></label>` +
+    '<label class="f"><span class="f-lab">Subject</span>' +
+    '<input type="text" name="subject" required maxlength="120" ' +
+    'placeholder="Where to send your slides"></label>' +
+    '<label class="f" style="margin-bottom:0"><span class="f-lab">What you want to say</span>' +
+    '<textarea name="body" rows="5" required maxlength="2000" ' +
+    'placeholder="Send them by the Friday before, and we will have them on the machine in the ' +
+    'room."></textarea></label>' +
+    '<div class="btnrow" style="margin-top:16px">' +
+    '<button class="btn btn-primary" type="submit">Write it</button></div>' +
+    '<p class="hint" style="margin-top:10px">One letter, everybody in it at once. It waits here ' +
+    'with everything else until you send it, and you can take it back until then.</p>' +
+    '</form>'
+  );
+}
+
+function writeSection(
+  ev: AdminEvent,
+  notes: OutboxMessage[],
+  confirmingNotes: boolean
+): string {
+  const slug = ev.slug;
+  const n = notes.length;
+  const band = n === 0 ? '' : confirmingNotes ? notesConfirmBand(slug, n) : notesAskBand(slug, n);
+  const batches = noteBatches(notes)
+    .map((b) => noteBatchRow(slug, ev, b))
+    .join('');
+  const standing =
+    n === 0
+      ? 'One letter to everybody at once — everyone accepted, everyone still undecided, everyone ' +
+        'who owes you something.'
+      : `${plural(n, 'letter is', 'letters are')} written and waiting. They go when you send them, ` +
+        'and not before.';
+  return (
+    '<div class="sec">' +
+    '<h2 class="display" style="font-size:24px">Write to people</h2>' +
+    `<p class="sub" style="margin:4px 0 0">${esc(standing)}</p>` +
+    band +
+    batches +
+    composer(slug) +
+    '</div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * The history
  * ------------------------------------------------------------------ */
 
@@ -372,7 +542,7 @@ function sentBlock(ev: AdminEvent, hist: SentHistory): string {
   if (hist.total === 0) return '';
   const rows = hist.batches
     .map((b) => {
-      const kind = word(KIND_KEY[b.kind] ?? '');
+      const kind = kindWord(b.kind);
       const when = fill(label('message.delivered', 'backstage'), {
         date: esc(dShort(b.deliveredAt, ev.timezone)),
       });
@@ -437,6 +607,8 @@ type View = {
   hist: SentHistory;
   /** Present when the first pass has been taken and the number is still true. */
   confirming: boolean;
+  /** The same, on the messages' own number — the two never share one. */
+  confirmingNotes: boolean;
   note: string;
 };
 
@@ -445,13 +617,18 @@ function outboxPage(v: View): string {
   const slug = ev.slug;
   const decider = canDecide(v.principal, ev.id);
   const spread = breakdown(ob);
+  const notes = ob.groups.find((g) => g.kind === 'note')?.messages ?? [];
+  const write = writeSection(ev, notes, v.confirmingNotes);
 
   const head =
     '<div style="padding:26px 0 0"><h1 class="display">Outbox</h1>' +
     '<p class="counts">' +
     (ob.staged > 0
       ? `<b>${esc(label('message.staged', 'backstage'))} · ${esc(num(ob.staged))}</b>` +
-        (spread ? `<span class="sep">·</span>${esc(spread)}` : '')
+        (spread ? `<span class="sep">·</span>${esc(spread)}` : '') +
+        (notes.length > 0
+          ? `<span class="sep">·</span>${esc(num(notes.length))} written to people`
+          : '')
       : '<b>Nothing to send</b>') +
     (ev.tzLabel ? `<span class="sep">·</span>${esc(ev.tzLabel)}` : '') +
     '</p></div>' +
@@ -473,29 +650,36 @@ function outboxPage(v: View): string {
         body:
           head +
           '<div class="sec state-out"><h2>Nothing to send.</h2>' +
-          '<p>Decisions you make show up here before they go out, so you can read them first.</p>' +
+          '<p>Decisions you make show up here before they go out, so you can read them first. ' +
+          'So does anything you write to people yourself.</p>' +
           `<a class="btn btn-primary" href="/admin/${encodeURIComponent(
             slug
           )}/submissions">Go to proposals →</a></div>` +
+          write +
           sentBlock(ev, hist),
       }),
     });
   }
 
-  // The band, or the plain sentence that says why there is no band.
-  const band = !decider
-    ? '<p class="hint" style="margin-top:18px">These go out when someone who decides on this ' +
-      'conference sends them. You can read every one first.</p>'
-    : ob.decisionsStaged === 0
-      ? '<p class="hint" style="margin-top:18px">These are written and waiting. Only decisions ' +
-        'go out from this screen.</p>'
-      : v.confirming
-        ? confirmBand(slug, ob)
-        : askBand(slug, ob);
+  // The decisions band, or the plain sentence that says why there is none. It
+  // says nothing at all when there are no decisions waiting: the messages
+  // below have their own band and their own count.
+  const band =
+    ob.decisionsStaged === 0
+      ? ''
+      : !decider
+        ? '<p class="hint" style="margin-top:18px">The decisions go out when someone who decides ' +
+          'on this conference sends them. You can read every one first.</p>'
+        : v.confirming
+          ? confirmBand(slug, ob)
+          : askBand(slug, ob);
 
   // Decisions first, split the way the committee decided; then anything else.
+  // Messages to a room are not letters about a proposal, so they are not in
+  // this run at all — they have their own section, under their own number.
   const blocks: string[] = [];
   for (const group of ob.groups) {
+    if (group.kind === 'note') continue;
     if (group.kind === 'decision') {
       const seen = new Set<string>();
       const order: (SubmissionState | 'other')[] = [...STATE_ORDER];
@@ -534,7 +718,13 @@ function outboxPage(v: View): string {
       who: v.principal.name,
       whoInitials: initialsOf(v.principal.name),
       tzLabel: ev.tzLabel ?? ev.timezone,
-      body: head + band + blockedBand(slug, ob) + blocks.join('') + sentBlock(ev, hist),
+      body:
+        head +
+        band +
+        blockedBand(slug, ob) +
+        blocks.join('') +
+        write +
+        sentBlock(ev, hist),
     }),
   });
 }
@@ -544,14 +734,39 @@ function outboxPage(v: View): string {
  * ------------------------------------------------------------------ */
 
 // One closed set of sentences. The only things that travel in the query string
-// are two counts and, on a refusal, nothing at all — free text never rides a URL.
+// are counts and codes from this list — free text never rides a URL.
 const MOVED = 'The pile moved while you were reading. Look again, then send.';
+const NOTES_MOVED = 'The outbox moved while you were reading. Look again, then send.';
+
+/** What writing to a room can refuse, in the words this screen would use. */
+const WRITE_OUTCOMES: Record<string, string> = {
+  'no-audience': 'Say which room it goes to, and it will be waiting here.',
+  'no-subject': 'A letter needs a subject — it is the line they read first.',
+  'no-body': 'A letter needs something in it.',
+  nobody: 'Nobody is in that room yet, so nothing was written.',
+  gone: 'Those have already gone, so there was nothing to take back.',
+  trouble: 'That did not go through, and nothing changed. Worth trying once more.',
+};
 
 // The sentence is escaped once, by noteBox, on its way onto the page.
 function sentSentence(released: number, emailed: number): string {
   const gone = `${plural(released, 'letter', 'letters')} delivered.`;
   if (emailed >= released) return `${gone} ${num(emailed)} emailed as well.`;
   return `${gone} ${num(emailed)} emailed — the rest live in their portals.`;
+}
+
+const wroteSentence = (n: number): string =>
+  `${plural(n, 'letter is', 'letters are')} written and waiting below. Nothing has gone out.`;
+
+const tookBackSentence = (n: number): string =>
+  `${plural(n, 'letter', 'letters')} taken back. Nothing had gone out.`;
+
+/** A count this screen wrote itself, read back. Anything else is ignored
+ *  rather than echoed. */
+function counted(raw: string | undefined): number | null {
+  if (raw === undefined || !/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
 async function eventFor(
@@ -599,11 +814,35 @@ export function registerOutbox(app: Hono<{ Bindings: Env }>): void {
           ? sentSentence(sent, emailed)
           : '';
 
+      const notesStaged = ob.groups.find((g) => g.kind === 'note')?.count ?? 0;
+
       // The first pass hands the number back. If the pile moved in between, the
       // confirm is not shown — the number on screen is always the number now.
       const confirm = c.req.query('confirm');
       const asked = confirm !== undefined && confirm !== '';
       const confirming = asked && Number(confirm) === ob.decisionsStaged && ob.decisionsStaged > 0;
+
+      // The same again, on the messages' own count.
+      const confirmNotes = c.req.query('confirm_notes');
+      const askedNotes = confirmNotes !== undefined && confirmNotes !== '';
+      const confirmingNotes = askedNotes && Number(confirmNotes) === notesStaged && notesStaged > 0;
+
+      const notesSent = counted(c.req.query('notes_sent'));
+      const notesEmailed = Number(c.req.query('notes_emailed') ?? '');
+      const wrote = counted(c.req.query('wrote'));
+      const took = counted(c.req.query('back'));
+      const code = c.req.query('note');
+
+      const said =
+        told ||
+        (notesSent !== null && Number.isInteger(notesEmailed) && notesEmailed >= 0
+          ? sentSentence(notesSent, notesEmailed)
+          : '') ||
+        (wrote !== null ? wroteSentence(wrote) : '') ||
+        (took !== null ? tookBackSentence(took) : '') ||
+        (code ? (WRITE_OUTCOMES[code] ?? '') : '') ||
+        (asked && !confirming ? MOVED : '') ||
+        (askedNotes && !confirmingNotes ? NOTES_MOVED : '');
 
       return c.html(
         outboxPage({
@@ -612,7 +851,8 @@ export function registerOutbox(app: Hono<{ Bindings: Env }>): void {
           ob,
           hist,
           confirming,
-          note: told || (asked && !confirming ? MOVED : ''),
+          confirmingNotes,
+          note: said,
         })
       );
     } catch (e) {
@@ -653,7 +893,15 @@ export function registerOutbox(app: Hono<{ Bindings: Env }>): void {
           sentHistory(c.env.DB, principal, ev!.id),
         ]);
         return c.html(
-          outboxPage({ ev: ev!, principal, ob, hist, confirming: false, note: message })
+          outboxPage({
+            ev: ev!,
+            principal,
+            ob,
+            hist,
+            confirming: false,
+            confirmingNotes: false,
+            note: message,
+          })
         );
       };
 
@@ -671,6 +919,129 @@ export function registerOutbox(app: Hono<{ Bindings: Env }>): void {
 
       return c.redirect(
         `/admin/${encodeURIComponent(slug)}/outbox?sent=${res.released}&emailed=${res.emailed}`,
+        303
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(refusal(principal, ev, e.message), 403);
+      throw e;
+    }
+  });
+
+  /* ---------- writing to a room ---------- */
+
+  // One click, because nothing leaves: the letters sit here under their own
+  // number until somebody sends them, and until then they can be taken back.
+  app.post('/admin/:eventSlug/outbox/notes', async (c) => {
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const home = `/admin/${encodeURIComponent(slug)}/outbox`;
+    let ev: AdminEvent | undefined;
+    try {
+      ev = await eventFor(c.env.DB, principal, slug);
+      if (!ev) return c.html(deniedPage(), 403);
+
+      const form = await c.req.parseBody();
+      const res = await stageNotes(c.env.DB, principal, ev.id, {
+        audience: String(form['audience'] ?? ''),
+        subject: String(form['subject'] ?? ''),
+        body: String(form['body'] ?? ''),
+      });
+      if (!res.ok) return c.redirect(`${home}?note=${encodeURIComponent(res.code)}`, 303);
+      return c.redirect(`${home}?wrote=${res.staged}`, 303);
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(refusal(principal, ev, e.message), 403);
+      throw e;
+    }
+  });
+
+  app.post('/admin/:eventSlug/outbox/notes/withdraw', async (c) => {
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const home = `/admin/${encodeURIComponent(slug)}/outbox`;
+    let ev: AdminEvent | undefined;
+    try {
+      ev = await eventFor(c.env.DB, principal, slug);
+      if (!ev) return c.html(deniedPage(), 403);
+
+      const form = await c.req.parseBody();
+      const at = Number(String(form['at'] ?? ''));
+      if (!Number.isSafeInteger(at) || at <= 0) return c.redirect(`${home}?note=gone`, 303);
+
+      const res = await withdrawNotes(c.env.DB, principal, ev.id, at);
+      if (!res.ok) return c.redirect(`${home}?note=${encodeURIComponent(res.code)}`, 303);
+      return c.redirect(`${home}?back=${res.taken}`, 303);
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(refusal(principal, ev, e.message), 403);
+      throw e;
+    }
+  });
+
+  // The second pass, on the messages' own number. releaseDecisions is not called
+  // here and could not be: its cohort is decisions, and this one is not.
+  app.post('/admin/:eventSlug/outbox/notes/release', async (c) => {
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    let ev: AdminEvent | undefined;
+    try {
+      ev = await eventFor(c.env.DB, principal, slug);
+      if (!ev) return c.html(deniedPage(), 403);
+
+      const form = await c.req.parseBody();
+      const raw = String(form['expected'] ?? '');
+      const expected = Number(raw);
+      const sane = /^\d+$/.test(raw) && Number.isSafeInteger(expected) && expected > 0;
+
+      const again = async (message: string) => {
+        const [ob, hist] = await Promise.all([
+          outbox(c.env.DB, principal, ev!.id),
+          sentHistory(c.env.DB, principal, ev!.id),
+        ]);
+        return c.html(
+          outboxPage({
+            ev: ev!,
+            principal,
+            ob,
+            hist,
+            confirming: false,
+            confirmingNotes: false,
+            note: message,
+          })
+        );
+      };
+
+      if (!sane) return await again(NOTES_MOVED);
+
+      const res = await releaseNotes(
+        c.env.DB,
+        principal,
+        ev.id,
+        expected,
+        { binding: c.env.EMAIL, from: c.env.FROM_EMAIL },
+        (p) => c.executionCtx.waitUntil(p)
+      );
+      if (!res.ok) return await again(NOTES_MOVED);
+
+      return c.redirect(
+        `/admin/${encodeURIComponent(slug)}/outbox?notes_sent=${res.released}` +
+          `&notes_emailed=${res.emailed}`,
         303
       );
     } catch (e) {

@@ -66,6 +66,7 @@ const BS_NAV: [path: string, label: string][] = [
   ['/green-room', 'Green room'],
   ['/slides', 'Slides'],
   ['/outbox', 'Outbox'],
+  ['/embeds', 'Embeds'],
   ['/settings', 'Settings'],
 ];
 

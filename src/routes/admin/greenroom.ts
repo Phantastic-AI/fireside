@@ -25,7 +25,9 @@
 // The read is queries/admin.ts `adminEvents` (to resolve and scope the
 // slug) and `greenRoom` (the day's run of show — token-scoped by design, so
 // this file supplies the Principal check greenRoom() itself does not: see
-// its own doc comment). No writes: nothing on either screen changes state.
+// its own doc comment), plus workflows/files.ts for the decks themselves.
+// S-17 writes nothing at all — a runner on one bar of signal changes no
+// state. S-18 has exactly one act, asking again, in its two forms.
 //
 // Gaps routed around — see the report to the calling agent for the full
 // list; the two that shape the markup most:
@@ -55,6 +57,14 @@ import {
 import { eventDayKey } from '../../queries/public';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { eventByGreenRoomNonce } from '../../queries/greenroom-token';
+import {
+  decksAsked,
+  stillWaitingCount,
+  askAgain,
+  askEveryoneWaiting,
+  type DeckAsked,
+  type FileOutcome,
+} from '../../workflows/files';
 
 /* ------------------------------------------------------------------ *
  * Small words and numbers — duplicated locally rather than added to a
@@ -180,6 +190,38 @@ function slidesChip(status: SlidesStatus, dueOn: string | null, todayKey: string
 function slidesDueDetail(status: SlidesStatus, dueOn: string | null, todayKey: string): string {
   if (status !== 'absent' || dueOn === null || dueOn < todayKey) return '';
   return `due ${dayShort(dueOn)}`;
+}
+
+const KB = 1024;
+
+/** A size an organizer can feel, beside the name of the thing. */
+const weight = (bytes: number): string =>
+  bytes >= KB * KB
+    ? `${(bytes / (KB * KB)).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / KB))} KB`;
+
+/** The one date "Ask again" writes: a week out, on the conference's own
+ *  calendar. Long enough to be answerable, short enough to mean it. */
+const aWeekOut = (timezone: string): string =>
+  eventDayKey(Date.now() + 7 * 24 * 60 * 60 * 1000, timezone);
+
+/* ------------------------------------------------------------------ *
+ * What just happened. The same closed-set discipline the portal keeps:
+ * a code in the address, a sentence here, and no free text ever
+ * travelling through a query string.
+ * ------------------------------------------------------------------ */
+
+const SLIDE_NOTES: Record<string, string> = {
+  asked: 'Asked again. The new date is on their list now.',
+  'asked-all': 'Asked. Everyone still waiting has the new date on their list.',
+  moved: 'The numbers moved while you were looking. What you see now is where they stand.',
+  trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
+};
+
+function noteLine(code: string | undefined): string {
+  const text = code ? SLIDE_NOTES[code] : undefined;
+  if (!text) return '';
+  return `<div class="sec standing" role="status"><p style="margin:0">${esc(text)}</p></div>`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -412,17 +454,62 @@ async function allAcceptedSessions(
   return { event: probe, sessions };
 }
 
+type Filters = { day: string; room: string };
+
+/** One row, one act. The filters ride along in the form so that pressing it
+ *  puts the organizer back on the same view of the board they were reading. */
+function askAgainForm(slug: string, taskId: string, filters: Filters): string {
+  return (
+    `<form method="post" action="/admin/${encodeURIComponent(slug)}/slides/ask-again" style="margin:0">` +
+    `<input type="hidden" name="task" value="${esc(taskId)}">` +
+    (filters.day ? `<input type="hidden" name="day" value="${esc(filters.day)}">` : '') +
+    (filters.room ? `<input type="hidden" name="room" value="${esc(filters.room)}">` : '') +
+    '<button class="btn btn-sm" type="submit">Ask again</button></form>'
+  );
+}
+
+/**
+ * The Detail column, which is where this board earns its place: a deck that
+ * is in becomes a link to the deck itself, and a deck that is late becomes
+ * the one thing an organizer can do about it.
+ */
+function slidesDetail(
+  s: GreenRoomSession,
+  asked: DeckAsked | undefined,
+  todayKey: string,
+  slug: string,
+  filters: Filters
+): string {
+  if (asked?.file) {
+    return (
+      `<a class="link" href="/files/${esc(asked.file.id)}">Open the deck</a>` +
+      `<br><span class="t-sub">${esc(asked.file.filename)} · ${esc(weight(asked.file.sizeBytes))}</span>`
+    );
+  }
+  // Done, but by hand rather than by sending anything — the chip is true and
+  // there is simply nothing here to open.
+  if (s.slides === 'present') return '<span class="t-sub">Marked done by the speaker</span>';
+  if (s.slides === 'absent' && asked && s.slidesDueOn !== null && s.slidesDueOn < todayKey) {
+    return askAgainForm(slug, asked.taskId, filters);
+  }
+  const due = slidesDueDetail(s.slides, s.slidesDueOn, todayKey);
+  return due ? `<span class="t-sub">${esc(due)}</span>` : '';
+}
+
 function slidesRow(
   s: GreenRoomSession,
   day: string,
   timezone: string,
-  todayKey: string
+  todayKey: string,
+  asked: DeckAsked | undefined,
+  slug: string,
+  filters: Filters
 ): string {
   const strike = s.cancelled
     ? ' style="text-decoration:line-through;text-decoration-color:var(--muted-2)"'
     : '';
   const names = byline(s.speakers.map((p) => p.name));
-  const detail = slidesDueDetail(s.slides, s.slidesDueOn, todayKey);
+  const detail = slidesDetail(s, asked, todayKey, slug, filters);
   return (
     '<tr>' +
     `<td class="num" style="white-space:nowrap"><b>${esc(timeOfDay(s.startsAt, timezone))}</b><br>` +
@@ -431,8 +518,54 @@ function slidesRow(
     `<td><span class="t-name"${strike}>${esc(s.title)}</span><br>` +
     `<span class="t-sub">${names || 'No speaker listed'} · ${esc(formatLabel(s.format))} · ${esc(durationLabel(s.minutes))}</span></td>` +
     `<td>${slidesChip(s.slides, s.slidesDueOn, todayKey)}</td>` +
-    `<td><span class="t-sub">${esc(detail)}</span></td>` +
+    `<td>${detail}</td>` +
     '</tr>'
+  );
+}
+
+/**
+ * Asking everyone at once, in two passes (D-024). The first pass is a link,
+ * so nothing has happened yet and nothing can happen by accident; the second
+ * names the number out loud, twice, and only then offers the button. The
+ * number the confirm prints travels with the form, and workflows/files.ts
+ * guards on it — a board that said twelve can never quietly do fourteen.
+ */
+function askEveryoneBlock(
+  slug: string,
+  basePath: string,
+  filters: Filters,
+  waiting: number,
+  dueOn: string,
+  confirming: boolean
+): string {
+  if (waiting < 1) return '';
+  const here = { day: filters.day || null, room: filters.room || null };
+
+  if (!confirming) {
+    return (
+      '<div class="sec attn">' +
+      `<div class="n">${esc(num(waiting))}</div>` +
+      '<div><div class="lab">Still to come, across the conference.</div>' +
+      '<div class="why">Each of these was asked for and has not arrived.</div></div>' +
+      `<a class="btn go" href="${esc(withQuery(basePath, { ...here, ask: 'all' }))}">` +
+      'Ask everyone at once →</a></div>'
+    );
+  }
+
+  return (
+    '<div class="sec attn">' +
+    `<div class="n">${esc(num(waiting))}</div>` +
+    `<div><div class="lab">Ask all ${esc(num(waiting))} again</div>` +
+    `<div class="why">This puts ${esc(dayShort(dueOn))} on all ${esc(num(waiting))} of the ` +
+    'requests still outstanding. Each speaker sees the new date in their portal; nothing ' +
+    'goes out from here.</div></div>' +
+    `<div class="btnrow go"><form method="post" action="/admin/${encodeURIComponent(slug)}/slides/ask-all" style="margin:0">` +
+    `<input type="hidden" name="count" value="${esc(String(waiting))}">` +
+    (filters.day ? `<input type="hidden" name="day" value="${esc(filters.day)}">` : '') +
+    (filters.room ? `<input type="hidden" name="room" value="${esc(filters.room)}">` : '') +
+    `<button class="btn btn-primary" type="submit">Ask all ${esc(num(waiting))}</button></form>` +
+    `<a class="btn" href="${esc(withQuery(basePath, here))}">${esc(label('pane.leave', 'backstage'))}</a>` +
+    '</div></div>'
   );
 }
 
@@ -441,9 +574,13 @@ function slidesPage(
   ev: AdminEvent,
   gr: GreenRoom,
   rows: { s: GreenRoomSession; day: string }[],
-  filters: { day: string; room: string },
+  filters: Filters,
   allDays: string[],
-  allRooms: string[]
+  allRooms: string[],
+  asked: Map<string, DeckAsked>,
+  waiting: number,
+  confirming: boolean,
+  note: string | undefined
 ): string {
   const slug = ev.slug;
   const tzLabel = gr.tzLabel ?? gr.timezone;
@@ -480,10 +617,15 @@ function slidesPage(
     `<span class="sep">·</span>${esc(tzLabel)}</p></div>` +
     `<div class="filters scrollx daybar" style="margin-top:14px">${dayChips}</div>` +
     (roomChips ? `<div class="filters scrollx daybar">${roomChips}</div>` : '') +
+    noteLine(note) +
     (total && inCount === total
       ? '<div class="sec attn" style="background:var(--go-wash);border-color:#CBE0D1">' +
         `<div><div class="lab">Every deck is in. ${esc(num(inCount))} of ${esc(num(total))}.</div></div></div>`
-      : '');
+      : '') +
+    // The banner above counts what is on the board, which a day or a room
+    // filter can narrow; this counts what the conference is waiting on, and
+    // says so, so the two numbers can differ without either being a lie.
+    askEveryoneBlock(slug, basePath, filters, waiting, aWeekOut(gr.timezone), confirming);
 
   let body: string;
   if (total === 0) {
@@ -499,8 +641,12 @@ function slidesPage(
     body =
       '<div class="tablewrap" style="margin-top:16px"><table class="t"><thead><tr>' +
       '<th>When</th><th>Room</th><th>Session</th><th>Slides</th><th>Detail</th></tr></thead><tbody>' +
-      rows.map((r) => slidesRow(r.s, r.day, gr.timezone, todayKey)).join('') +
-      '</tbody></table></div>';
+      rows
+        .map((r) => slidesRow(r.s, r.day, gr.timezone, todayKey, asked.get(r.s.id), slug, filters))
+        .join('') +
+      '</tbody></table></div>' +
+      '<p class="hint" style="margin-top:12px">Asking again moves the date on the request. The ' +
+      'speaker sees the new date in their portal.</p>';
   }
 
   return page({
@@ -575,9 +721,95 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
       const allDays = [...new Set(withDay.map((r) => r.day))].sort();
       const allRooms = [...new Set(withDay.map((r) => r.s.roomName).filter((x): x is string => !!x))].sort();
 
+      const [asked, waiting] = await Promise.all([
+        decksAsked(c.env.DB, ev.id),
+        stillWaitingCount(c.env.DB, ev.id),
+      ]);
+      // The confirm is a place, not a piece of state: an address an organizer
+      // can back out of with the browser's own button.
+      const confirming = c.req.query('ask') === 'all' && hasScope(principal, ev.id, EDIT_ROLES);
+
       return c.html(
-        slidesPage(principal, ev, all.event, rows, { day: dayParam, room: roomParam }, allDays, allRooms)
+        slidesPage(
+          principal,
+          ev,
+          all.event,
+          rows,
+          { day: dayParam, room: roomParam },
+          allDays,
+          allRooms,
+          asked,
+          waiting,
+          confirming,
+          c.req.query('note')
+        )
       );
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  /* ---------------------------------------------------------------- *
+   * Asking again — S-18's one act, in its two forms. Both write the
+   * same single column through workflows/files.ts, both are undone by
+   * pressing the same thing again, and neither sends anything: the
+   * outbox is somebody else's screen and this one does not pretend
+   * otherwise.
+   * ---------------------------------------------------------------- */
+
+  const boardPath = (slug: string, form: Record<string, string | File>, note: string): string =>
+    withQuery(`/admin/${encodeURIComponent(slug)}/slides`, {
+      day: String(form['day'] ?? '') || null,
+      room: String(form['room'] ?? '') || null,
+      note,
+    });
+
+  const said = (outcome: FileOutcome, done: string): string =>
+    outcome === 'done' ? done : outcome === 'moved' ? 'moved' : 'trouble';
+
+  app.post('/admin/:eventSlug/slides/ask-again', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    try {
+      const ev = await eventFor(c.env.DB, principal, slug);
+      if (!ev) return c.html(deniedPage(), 403);
+      requireScope(principal, ev.id, EDIT_ROLES);
+
+      const form = await c.req.parseBody();
+      const taskId = String(form['task'] ?? '');
+      if (!taskId) return c.redirect(boardPath(slug, form, 'moved'), 303);
+
+      const outcome = await askAgain(c.env.DB, ev.id, taskId, aWeekOut(ev.timezone));
+      return c.redirect(boardPath(slug, form, said(outcome, 'asked')), 303);
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  app.post('/admin/:eventSlug/slides/ask-all', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    try {
+      const ev = await eventFor(c.env.DB, principal, slug);
+      if (!ev) return c.html(deniedPage(), 403);
+      requireScope(principal, ev.id, EDIT_ROLES);
+
+      const form = await c.req.parseBody();
+      // The number the confirm printed. The guard in workflows/files.ts holds
+      // the batch to exactly it, so a stale page cannot act on a stale count.
+      const counted = Number(String(form['count'] ?? ''));
+      if (!Number.isInteger(counted) || counted < 1) {
+        return c.redirect(boardPath(slug, form, 'moved'), 303);
+      }
+
+      const outcome = await askEveryoneWaiting(c.env.DB, ev.id, aWeekOut(ev.timezone), counted);
+      return c.redirect(boardPath(slug, form, said(outcome, 'asked-all')), 303);
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;

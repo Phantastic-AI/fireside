@@ -136,7 +136,40 @@ function keptAnswers(
   return out;
 }
 
-type EventRow = { max_submissions: number; cfp_opens_at: number | null; cfp_closes_at: number | null };
+type EventRow = {
+  name: string;
+  max_submissions: number;
+  cfp_opens_at: number | null;
+  cfp_closes_at: number | null;
+  decide_by: string | null;
+};
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+  'September', 'October', 'November', 'December'];
+
+/** "20 August" — a calendar day is a date, not an instant, so no zone applies.
+ *  Same rendering the portal gives the same fact, so the letter and the screen
+ *  it lands on say the day the same way. */
+function isoLong(iso: string): string {
+  const m = Number(iso.slice(5, 7));
+  return `${Number(iso.slice(8, 10))} ${MONTHS[m - 1] ?? ''}`.trim();
+}
+
+/**
+ * The receipt. It is delivered the moment it is written — this is the one
+ * message in the product that never sits in the outbox, because nobody decides
+ * whether a proposal arrived. It is the answer to "did that go through", and it
+ * is waiting in their portal before they think to ask.
+ */
+function receipt(title: string, eventName: string, decideBy: string | null): { subject: string; body: string } {
+  const when = decideBy
+    ? `Decisions go out by ${isoLong(decideBy)}.`
+    : 'We will write the moment there is news.';
+  return {
+    subject: 'Your proposal is in',
+    body: `“${title}” is with the committee at ${eventName}. ${when} Your portal has the latest, and the way back into your words is there too.`,
+  };
+}
 
 /**
  * Send one proposal.
@@ -216,7 +249,7 @@ export async function submitProposal(
   }
 
   const ev = await db
-    .prepare('SELECT max_submissions, cfp_opens_at, cfp_closes_at FROM event WHERE id = ?')
+    .prepare('SELECT name, max_submissions, cfp_opens_at, cfp_closes_at, decide_by FROM event WHERE id = ?')
     .bind(eventId)
     .first<EventRow>();
   if (!ev) return { ok: false, field: null, message: 'This call is not taking proposals.' };
@@ -318,6 +351,22 @@ export async function submitProposal(
          VALUES (?,?,'speaker',0,1)`
       )
       .bind(submissionId, personId)
+  );
+  expect.push(1);
+
+  // CFP-08: the receipt, written and delivered in the same breath as the
+  // proposal it is about. delivered_at is set here and nowhere else in the
+  // product's writing path — a decision is told in a second act, but an arrival
+  // is not something anybody has to decide to tell you.
+  const note = receipt(title, ev.name, ev.decide_by);
+  statements.push(
+    db
+      .prepare(
+        `INSERT INTO message
+           (id, event_id, person_id, submission_id, kind, subject, body, created_at, delivered_at)
+         VALUES (?,?,?,?,'received',?,?,?,?)`
+      )
+      .bind(newId('msg'), eventId, personId, submissionId, note.subject, note.body, nowMs, nowMs)
   );
   expect.push(1);
 

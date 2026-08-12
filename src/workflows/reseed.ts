@@ -42,8 +42,10 @@ export async function reseed(db: D1Database): Promise<{ facts: string; inserted:
   const data = buildSeed();
   const facts = assertDistribution(data); // refuse to wipe if the new world is wrong
 
-  const wipe = [...INSERT_ORDER].reverse().map((t) => db.prepare(`DELETE FROM ${t}`));
-  for (const t of WIPE_EXTRA) wipe.push(db.prepare(`DELETE FROM ${t}`));
+  // The extras go first: they are leaves that reference the core tables
+  // (file.uploaded_by_person_id → person taught us this the hard way).
+  const wipe = WIPE_EXTRA.map((t) => db.prepare(`DELETE FROM ${t}`));
+  for (const t of [...INSERT_ORDER].reverse()) wipe.push(db.prepare(`DELETE FROM ${t}`));
   await db.batch(wipe);
 
   const inserted: Record<string, number> = {};

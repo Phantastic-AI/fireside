@@ -32,6 +32,8 @@ import {
   type EventRole,
   type EventSettings,
   type SettingsQuestion,
+  type SettingsRoom,
+  type SettingsTrack,
 } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import {
@@ -41,6 +43,10 @@ import {
   changeStanding,
   takeOffTeam,
   newGreenRoomLink,
+  addRoom,
+  renameRoom,
+  addTrack,
+  renameTrack,
   type Said,
   type QuestionDraft,
 } from '../../workflows/settings';
@@ -142,10 +148,11 @@ function callSentence(ev: EventSettings, nowMs: number): string {
  * What the last press did — one closed set, one sentence each
  * ------------------------------------------------------------------ */
 
-type Section = 'event' | 'questions' | 'team' | 'link';
+type Section = 'event' | 'rooms' | 'questions' | 'team' | 'link';
 
 const ANCHOR: Record<Section, string> = {
   event: 'the-event',
+  rooms: 'the-rooms-and-the-tracks',
   questions: 'the-questions',
   team: 'the-team',
   link: 'the-link',
@@ -217,6 +224,31 @@ const SAID: Record<Said, Outcome> = {
   },
   team_standing_unknown: { where: 'team', line: 'That is not one of the four standings. Nothing was changed.', refused: true },
   team_moved: { where: 'team', line: 'The list changed while this page was open. This is how it stands now.', refused: true },
+
+  room_added: { where: 'rooms', line: 'Added. It is ready to hold a session.', refused: false },
+  room_name_needed: { where: 'rooms', line: 'A room needs a name. Nothing was changed.', refused: true },
+  room_name_taken: {
+    where: 'rooms',
+    line: 'Another room on this conference already has that name. Nothing was changed.',
+    refused: true,
+  },
+  room_renamed: {
+    where: 'rooms',
+    line: 'Renamed. Every session already placed on it moved with the name.',
+    refused: false,
+  },
+  room_moved: { where: 'rooms', line: 'This conference moved while the page was open. Nothing was changed.', refused: true },
+  room_gone: { where: 'rooms', line: 'That room is no longer on this conference. Nothing was changed.', refused: true },
+
+  track_added: { where: 'rooms', line: 'Added. It is ready to sort a proposal onto.', refused: false },
+  track_name_needed: { where: 'rooms', line: 'A track needs a name. Nothing was changed.', refused: true },
+  track_renamed: {
+    where: 'rooms',
+    line: 'Renamed. Every proposal already sorted onto it moved with the name.',
+    refused: false,
+  },
+  track_moved: { where: 'rooms', line: 'This conference moved while the page was open. Nothing was changed.', refused: true },
+  track_gone: { where: 'rooms', line: 'That track is no longer on this conference. Nothing was changed.', refused: true },
 
   link_made: { where: 'link', line: 'The link is live. Give it to the crew.', refused: false },
   link_rotated: { where: 'link', line: 'The link is new. The old one stopped working the moment you pressed it.', refused: false },
@@ -388,6 +420,82 @@ function eventSection(ev: EventSettings, said: Said | null, nowMs: number): stri
     `<a class="btn" href="/${encodeURIComponent(ev.slug)}/cfp">See the call ↗</a>` +
     `<a class="btn" href="/${encodeURIComponent(ev.slug)}">See the public page ↗</a></div>` +
     '</form></div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * 1b — the rooms and the tracks (AIA-02)
+ * ------------------------------------------------------------------ */
+
+function roomRow(r: SettingsRoom, settings: string): string {
+  return (
+    '<tr><td>' +
+    `<form method="post" action="${settings}/rooms/rename" style="display:flex;gap:8px;align-items:center">` +
+    `<input type="hidden" name="id" value="${esc(r.id)}">` +
+    `<input type="text" name="name" value="${esc(r.name)}" aria-label="Rename ${esc(r.name)}" style="max-width:20em">` +
+    '<button class="btn btn-sm" type="submit">Save</button>' +
+    '</form></td>' +
+    `<td class="t-sub">${r.capacity !== null ? esc(String(r.capacity)) : 'No capacity on file'}</td></tr>`
+  );
+}
+
+function trackRow(t: SettingsTrack, settings: string): string {
+  const dot =
+    `<span aria-hidden="true" style="display:inline-block;width:11px;height:11px;border-radius:50%;` +
+    `background:${/^#[0-9a-fA-F]{6}$/.test(t.colour) ? esc(t.colour) : 'transparent'};margin-right:9px;` +
+    'vertical-align:middle;flex:none"></span>';
+  return (
+    '<tr><td>' +
+    `<form method="post" action="${settings}/tracks/rename" style="display:flex;gap:8px;align-items:center">` +
+    dot +
+    `<input type="hidden" name="id" value="${esc(t.id)}">` +
+    `<input type="text" name="name" value="${esc(t.name)}" aria-label="Rename ${esc(t.name)}" style="max-width:20em">` +
+    '<button class="btn btn-sm" type="submit">Save</button>' +
+    '</form></td></tr>'
+  );
+}
+
+function roomsTracksSection(ev: EventSettings, said: Said | null): string {
+  const settings = `/admin/${encodeURIComponent(ev.slug)}/settings`;
+
+  const roomsTable = ev.rooms.length
+    ? '<div class="tablewrap" style="margin-top:10px"><table class="t">' +
+      '<thead><tr><th>Room</th><th>Capacity</th></tr></thead>' +
+      `<tbody>${ev.rooms.map((r) => roomRow(r, settings)).join('')}</tbody></table></div>`
+    : '<div class="state-out"><p>No rooms yet. Add the stage the first session goes on.</p></div>';
+
+  const tracksTable = ev.tracks.length
+    ? '<div class="tablewrap" style="margin-top:10px"><table class="t">' +
+      '<thead><tr><th>Track</th></tr></thead>' +
+      `<tbody>${ev.tracks.map((t) => trackRow(t, settings)).join('')}</tbody></table></div>`
+    : '<div class="state-out"><p>No tracks yet. A proposal sorts fine without one.</p></div>';
+
+  const addRoomForm =
+    `<form method="post" action="${settings}/rooms/add" ` +
+    'style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">' +
+    '<input type="text" name="name" placeholder="Room 2" aria-label="New room name" maxlength="120" required>' +
+    '<button class="btn btn-sm" type="submit">Add a room</button></form>';
+
+  const addTrackForm =
+    `<form method="post" action="${settings}/tracks/add" ` +
+    'style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">' +
+    '<input type="text" name="name" placeholder="Platform" aria-label="New track name" maxlength="120" required>' +
+    '<button class="btn btn-sm" type="submit">Add a track</button></form>';
+
+  return (
+    `<div class="sec card card-pad" style="max-width:46em" id="${ANCHOR.rooms}">` +
+    '<h3 class="serif" style="font-size:21px;font-weight:600">The rooms and the tracks</h3>' +
+    '<p class="sub" style="margin:6px 0 14px">Where a session happens, and how proposals sort by subject. ' +
+    'Neither comes off this list — a room with sessions already placed on it is the conference’s own ' +
+    'history, so renaming is the whole of what this page does to either one.</p>' +
+    saidIn('rooms', said) +
+    '<h4 class="serif" style="font-size:15.5px;font-weight:600">Rooms</h4>' +
+    roomsTable +
+    addRoomForm +
+    '<h4 class="serif" style="font-size:15.5px;font-weight:600;margin-top:24px">Tracks</h4>' +
+    tracksTable +
+    addTrackForm +
+    '</div>'
   );
 }
 
@@ -729,6 +837,7 @@ function settingsPage(o: {
     `<p class="counts">${esc(ev.name)}<span class="sep">·</span>${esc(datesOf(ev))}` +
     `<span class="sep">·</span>${esc(ev.tzLabel ?? ev.timezone)}</p></div>` +
     eventSection(ev, o.said, o.nowMs) +
+    roomsTracksSection(ev, o.said) +
     questionsSection(ev, o.said) +
     teamSection(ev, o.said, confirmOff) +
     linkSection(ev, o.said, o.origin, o.confirm === 'link');
@@ -921,6 +1030,34 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
     write(c, (principal, eventId, body) => {
       const { text } = reader(body);
       return newGreenRoomLink(c.env.DB, principal, eventId, text('seen'));
+    })
+  );
+
+  app.post('/admin/:eventSlug/settings/rooms/add', (c) =>
+    write(c, (principal, eventId, body) => {
+      const { text } = reader(body);
+      return addRoom(c.env.DB, principal, eventId, text('name'));
+    })
+  );
+
+  app.post('/admin/:eventSlug/settings/rooms/rename', (c) =>
+    write(c, (principal, eventId, body) => {
+      const { text } = reader(body);
+      return renameRoom(c.env.DB, principal, eventId, text('id'), text('name'));
+    })
+  );
+
+  app.post('/admin/:eventSlug/settings/tracks/add', (c) =>
+    write(c, (principal, eventId, body) => {
+      const { text } = reader(body);
+      return addTrack(c.env.DB, principal, eventId, text('name'));
+    })
+  );
+
+  app.post('/admin/:eventSlug/settings/tracks/rename', (c) =>
+    write(c, (principal, eventId, body) => {
+      const { text } = reader(body);
+      return renameTrack(c.env.DB, principal, eventId, text('id'), text('name'));
     })
   );
 }

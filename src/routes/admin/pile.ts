@@ -24,7 +24,7 @@
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { esc, page, backstageShell, deniedPage } from '../../lib/html';
-import { label, decidedNotToldPill, FORMAT_KEY, type LabelKey } from '../../lib/labels';
+import { label, decidedNotToldPill, FORMAT_KEY, LEVEL_KEY, type LabelKey } from '../../lib/labels';
 import {
   adminEvents,
   pile,
@@ -166,6 +166,88 @@ const ACCEPTABLE = new Set<SubmissionState>(['submitted', 'waitlisted']);
 const DECISIONS = new Set<string>(['accepted', 'waitlisted', 'rejected']);
 
 /* ------------------------------------------------------------------ *
+ * The review average — one extra prepared read, not owned by pile()
+ * ------------------------------------------------------------------ *
+ * queries/admin.ts's pile() belongs to a sibling and stays untouched. Its
+ * `score` column is the chair's own stored number (schema/0001_init.sql:
+ * "the chair's own call; averages derive") — a different fact from what the
+ * committee actually scored, and (ABS-6) the two disagreed on screen: the
+ * rail read a sum, "What the committee scored" read an average. This reads
+ * the same submitted-review scores that section does, so every surface says
+ * the one number: a review's own average is the mean of its scorecard's
+ * numeric values, a submission's is the mean of its reviewers' averages. A
+ * review with an empty scorecard still counts toward review_count — SQLite's
+ * AVG skips the NULL it leaves behind, so the count never hides a committee
+ * that opened the form and scored nothing.
+ */
+
+type ReviewAverage = { average: number | null; count: number };
+
+async function reviewAverages(db: D1Database, ids: string[]): Promise<Map<string, ReviewAverage>> {
+  const out = new Map<string, ReviewAverage>();
+  if (ids.length === 0) return out;
+  const placeholders = ids.map(() => '?').join(',');
+  const res = await db
+    .prepare(
+      `SELECT submission_id, AVG(review_avg) AS average, COUNT(*) AS n
+       FROM (
+         SELECT rv.submission_id AS submission_id,
+                (SELECT AVG(CAST(je.value AS REAL))
+                 FROM json_each(CASE WHEN json_valid(rv.scores) THEN rv.scores ELSE '{}' END) je) AS review_avg
+         FROM review rv
+         WHERE rv.submitted_at IS NOT NULL AND rv.submission_id IN (${placeholders})
+       ) sub
+       GROUP BY submission_id`
+    )
+    .bind(...ids)
+    .all<{ submission_id: string; average: number | null; n: number }>();
+  for (const r of res.results ?? []) {
+    out.set(r.submission_id, { average: r.average, count: r.n });
+  }
+  return out;
+}
+
+/** decision_version and the submitter's own address — CSV-only facts pile()
+ *  does not carry (it shows a byline, not an address book). Same submitter
+ *  ordering pile() uses for its byline, so the two never name different
+ *  people for the same row. */
+type SubmitterFacts = { decisionVersion: number; email: string | null };
+
+async function submitterFacts(db: D1Database, ids: string[]): Promise<Map<string, SubmitterFacts>> {
+  const out = new Map<string, SubmitterFacts>();
+  if (ids.length === 0) return out;
+  const placeholders = ids.map(() => '?').join(',');
+  const res = await db
+    .prepare(
+      `SELECT s.id AS submission_id, s.decision_version AS decision_version,
+              (SELECT pe.email FROM participation pa JOIN person pe ON pe.id = pa.person_id
+               WHERE pa.submission_id = s.id
+               ORDER BY pa.is_submitter DESC, pa.position, pe.name LIMIT 1) AS submitter_email
+       FROM submission s
+       WHERE s.id IN (${placeholders})`
+    )
+    .bind(...ids)
+    .all<{ submission_id: string; decision_version: number; submitter_email: string | null }>();
+  for (const r of res.results ?? []) {
+    out.set(r.submission_id, { decisionVersion: r.decision_version, email: r.submitter_email });
+  }
+  return out;
+}
+
+/** One decimal, and no trailing '.0' — the same rule proposal.ts's own
+ *  oneDecimal uses, so the number reads the same on both screens. */
+function oneDecimal(n: number): string {
+  const r = Math.round(n * 10) / 10;
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
+}
+
+/** RFC 4180: a field is quoted, its own quotes doubled, whenever it holds a
+ *  comma, a quote or a line break — a title is free to hold any of the three. */
+function csvField(v: string): string {
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+/* ------------------------------------------------------------------ *
  * Rows
  * ------------------------------------------------------------------ */
 
@@ -233,7 +315,7 @@ function trackChip(r: PileRow): string {
   return `<span class="tk"${tint}>${esc(r.track.name)}</span>`;
 }
 
-function row(r: PileRow, base: string, say: Say, canDecide: boolean): string {
+function row(r: PileRow, base: string, say: Say, canDecide: boolean, scored: ReviewAverage | undefined): string {
   const title = r.title.trim() || 'Untitled draft';
   const open = `${base}/${esc(r.id)}`;
   const dot = '<span>·</span>';
@@ -249,9 +331,11 @@ function row(r: PileRow, base: string, say: Say, canDecide: boolean): string {
       ? `<span>${esc(say(r.submittedAt))}</span>`
       : '<span>Not sent yet</span>';
 
+  // The average of the committee's submitted reviews — the one number this
+  // screen, the proposal's own body, and the CSV all agree on (ABS-6).
   const score =
-    r.score !== null
-      ? `<span class="score" title="Score out of ten">${esc(r.score)}</span>`
+    scored && scored.average !== null
+      ? `<span class="score" title="Average of ${num(scored.count)} submitted ${scored.count === 1 ? 'review' : 'reviews'}">${esc(oneDecimal(scored.average))}</span>`
       : `<a class="link" style="font-size:13.5px" href="${open}">Score it</a>`;
 
   const act =
@@ -319,17 +403,26 @@ function pilePage(o: {
   principal: Principal;
   canDecide: boolean;
   told: string | null;
+  scores: Map<string, ReviewAverage>;
+  sortByScore: boolean;
 }): string {
   const { ev, p } = o;
   const base = `/admin/${esc(ev.slug)}/submissions`;
   const say = dateSayer(ev.timezone);
   const search = p.search;
+  const filterBits: string[] = [];
+  if (p.filter !== 'all') filterBits.push(`f=${p.filter}`);
+  if (search) filterBits.push(`q=${encodeURIComponent(search)}`);
   const qs = (f: PileFilter): string => {
     const bits: string[] = [];
     if (f !== 'all') bits.push(`f=${f}`);
     if (search) bits.push(`q=${encodeURIComponent(search)}`);
     return bits.length ? `${base}?${bits.join('&')}` : base;
   };
+  // The sort control and the CSV link both carry the same filter and search
+  // every other link on this screen does — one adds a param, the other a suffix.
+  const scoreSortHref = `${base}?${[...filterBits, 'sort=score'].join('&')}`;
+  const csvHref = filterBits.length ? `${base}.csv?${filterBits.join('&')}` : `${base}.csv`;
 
   // Counts. Every one of these comes off the list behind it: the header and
   // the chips read the same pass, so they cannot drift, and a search narrows
@@ -384,13 +477,17 @@ function pilePage(o: {
     `<div class="filters scrollx" style="margin:0">${chips}</div>` +
     '</div>';
 
+  const csvLink =
+    `<p class="sub" style="margin:8px 0 0"><a class="link" href="${csvHref}">Download these as CSV</a></p>`;
+
   const head =
     '<div style="padding:26px 0 0"><h1 class="display">Proposals</h1>' +
     counts +
     '</div>' +
     band +
     (o.told ?? '') +
-    searchbar;
+    searchbar +
+    csvLink;
 
   let body: string;
 
@@ -424,7 +521,29 @@ function pilePage(o: {
         '</div>';
     body = head + card;
   } else {
-    const rows = p.rows.map((r) => row(r, base, say, o.canDecide)).join('');
+    // ?sort=score reorders the page already fetched — it does not requery.
+    // Unscored rows sort to the bottom; ties (including two unscored rows)
+    // break on the title, so the order stays reproducible without a second
+    // sort key riding along in the query string.
+    const shown = o.sortByScore
+      ? [...p.rows].sort((a, b) => {
+          const sa = o.scores.get(a.id)?.average ?? null;
+          const sb = o.scores.get(b.id)?.average ?? null;
+          if (sa === null && sb === null) return a.title.localeCompare(b.title);
+          if (sa === null) return 1;
+          if (sb === null) return -1;
+          return sb !== sa ? sb - sa : a.title.localeCompare(b.title);
+        })
+      : p.rows;
+
+    const anyScored = p.rows.some((r) => (o.scores.get(r.id)?.count ?? 0) > 0);
+    const scoreColumnHead = anyScored
+      ? '<div style="display:flex;justify-content:flex-end;padding:0 6px 6px">' +
+        `<a class="link" style="font-size:13px" href="${scoreSortHref}" ` +
+        `aria-current="${o.sortByScore}">Score ↓</a></div>`
+      : '';
+
+    const rows = shown.map((r) => row(r, base, say, o.canDecide, o.scores.get(r.id))).join('');
     const more =
       p.rows.length >= ROOM && p.counts[p.filter] > p.rows.length
         ? `<p class="sub" style="margin-top:12px">The newest ${num(p.rows.length)} of ` +
@@ -454,7 +573,8 @@ function pilePage(o: {
       `<form method="post" action="${base}/decide" data-pile>` +
       `<input type="hidden" name="f" value="${p.filter}">` +
       `<input type="hidden" name="q" value="${esc(search ?? '')}">` +
-      '<div class="card" style="margin-top:14px;overflow:hidden">' +
+      scoreColumnHead +
+      `<div class="card" style="margin-top:${anyScored ? '0' : '14px'};overflow:hidden">` +
       rows +
       '</div>' +
       more +
@@ -535,6 +655,7 @@ export function registerPile(app: Hono<{ Bindings: Env }>): void {
       const filter = filterOf(c.req.query('f'));
       const search = searchOf(c.req.query('q'));
       const p = await pile(c.env.DB, principal, ev.id, filter, { search, limit: ROOM });
+      const scores = await reviewAverages(c.env.DB, p.rows.map((r) => r.id));
 
       const done = tally(c.req.query('done'));
       const held = tally(c.req.query('held'));
@@ -550,8 +671,83 @@ export function registerPile(app: Hono<{ Bindings: Env }>): void {
           principal,
           canDecide: ['organizer', 'owner', 'approver'].includes(ev.standing),
           told: said ? outcome(done, held, base) : null,
+          scores,
+          sortByScore: c.req.query('sort') === 'score',
         })
       );
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  // ABS-13: the same list, honouring the same ?f= and ?q=, as a file rather
+  // than a screen. No ROOM ceiling here — a download is read somewhere else,
+  // later, with nothing left on the page to page through.
+  app.get('/admin/:eventSlug/submissions.csv', async (c) => {
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in');
+
+    try {
+      const events = await adminEvents(c.env.DB, principal);
+      const ev = events.find((e) => e.slug === c.req.param('eventSlug'));
+      if (!ev) return c.html(deniedPage(), 403);
+
+      const filter = filterOf(c.req.query('f'));
+      const search = searchOf(c.req.query('q'));
+      const p = await pile(c.env.DB, principal, ev.id, filter, { search });
+      const ids = p.rows.map((r) => r.id);
+      const [scores, facts] = await Promise.all([
+        reviewAverages(c.env.DB, ids),
+        submitterFacts(c.env.DB, ids),
+      ]);
+
+      const header = [
+        'title',
+        'submitter',
+        'email',
+        'track',
+        'format',
+        'level',
+        'state',
+        'decision_version',
+        'review_average',
+        'review_count',
+        'submitted_at',
+      ];
+      const lines = [header.map(csvField).join(',')];
+      for (const r of p.rows) {
+        const sc = scores.get(r.id);
+        const inf = facts.get(r.id);
+        const levelKey = r.level ? LEVEL_KEY[r.level] : undefined;
+        const level = levelKey ? label(levelKey, 'backstage') : (r.level ?? '');
+        lines.push(
+          [
+            r.title,
+            r.speaker ?? '',
+            inf?.email ?? '',
+            r.track?.name ?? '',
+            formatWord(r.format),
+            level,
+            word(r.state),
+            inf !== undefined ? String(inf.decisionVersion) : '',
+            sc && sc.average !== null ? sc.average.toFixed(1) : '',
+            sc ? String(sc.count) : '0',
+            r.submittedAt !== null ? new Date(r.submittedAt).toISOString() : '',
+          ]
+            .map(csvField)
+            .join(',')
+        );
+      }
+
+      c.header('content-type', 'text/csv; charset=utf-8');
+      c.header('content-disposition', `attachment; filename="${ev.slug}-proposals.csv"`);
+      c.header('cache-control', 'private, no-store');
+      return c.body(lines.join('\r\n') + '\r\n');
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;

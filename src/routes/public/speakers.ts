@@ -6,6 +6,18 @@
 // history rather than one row behind one talk. Register: Onstage — warm,
 // second person absent (this is about a third person, the speaker), dates
 // not statuses, sentence case, no exclamation marks.
+//
+// Two things the gallery gained this pass:
+//  - Faces. A headshot is served from /files/{id}; the dashed initials mark
+//    stays exactly as it was for everybody who has not sent one, so a page of
+//    half-uploaded photographs still reads as one page.
+//  - A search (?q=) over names and organisations, applied here over the rows
+//    speakersGallery() already returned — no second read, no SQL.
+//
+// ?embed=1 gives the same grid with the chrome stripped, for a partner site to
+// frame. Links out of a frame open the event's own site in a new tab: an
+// embedded gallery should never swallow the page hosting it, nor open a whole
+// site inside a 600-pixel box.
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { esc, page, eventNav, onstageShell } from '../../lib/html';
@@ -34,6 +46,19 @@ const STATE_LABEL_KEY: Record<PublicState, 'submission.accepted' | 'submission.c
   cancelled: 'submission.cancelled',
 };
 
+const SEARCH_MAX = 80;
+
+/** Where a link goes from here — next door, or out of somebody else's frame. */
+type Outbound = { href: (path: string) => string; attrs: string };
+const NEXT_DOOR: Outbound = { href: (p) => p, attrs: '' };
+function outOfFrame(origin: string): Outbound {
+  return { href: (p) => `${origin}${p}`, attrs: ' target="_blank" rel="noopener"' };
+}
+
+function num(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
 /** The headshot placeholder: initials in a plain circle, no image request. */
 function avatar(initials: string, name: string, size: number): string {
   return (
@@ -41,6 +66,16 @@ function avatar(initials: string, name: string, size: number): string {
     '<circle cx="20" cy="20" r="20" fill="var(--paper-deep)"/>' +
     '<text x="20" y="21" text-anchor="middle" dominant-baseline="central" font-family="var(--serif)" ' +
     `font-weight="600" font-size="14" fill="var(--ink-soft)">${esc(initials)}</text></svg>`
+  );
+}
+
+/** The face itself where there is one. Decorative on purpose: the name is
+ *  written beside it, and a screen reader should hear it once, not twice. */
+function face(p: { name: string; initials: string; headshotFileId: string | null }, size: number): string {
+  if (!p.headshotFileId) return avatar(p.initials, p.name, size);
+  return (
+    `<img class="av" src="/files/${esc(p.headshotFileId)}" alt="" width="${size}" height="${size}" ` +
+    `loading="lazy" decoding="async" style="width:${size}px;height:${size}px;object-fit:cover">`
   );
 }
 
@@ -64,16 +99,36 @@ function placementLine(startsAt: number, timezone: string, roomName: string | nu
 }
 
 /* ------------------------------------------------------------------ *
+ * Searching — case-folded, every word typed has to turn up somewhere,
+ * over the two facts the card in front of you actually shows: who they
+ * are and where they work.
+ * ------------------------------------------------------------------ */
+
+function tokensOf(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t !== '');
+}
+
+function matches(p: GallerySpeaker, tokens: string[]): boolean {
+  if (!tokens.length) return true;
+  const hay = `${p.name} ${p.organisation ?? ''}`.toLowerCase();
+  return tokens.every((t) => hay.includes(t));
+}
+
+/* ------------------------------------------------------------------ *
  * The gallery — GET /:event/speakers
  * ------------------------------------------------------------------ */
 
-function speakerCard(eventSlug: string, p: GallerySpeaker): string {
+function speakerCard(eventSlug: string, p: GallerySpeaker, link: Outbound): string {
   const role = roleParts(p.jobTitle, p.organisation).join('<br>');
   const first = p.sessions[0];
   const more = p.sessions.length > 1 ? ` <span class="sub">+ ${p.sessions.length - 1} more</span>` : '';
   return (
-    `<a class="gcard" href="/${esc(eventSlug)}/speakers/${esc(p.personId)}">` +
-    avatar(p.initials, p.name, 54) +
+    `<a class="gcard" href="${esc(link.href(`/${eventSlug}/speakers/${p.personId}`))}"${link.attrs}>` +
+    face(p, 54) +
     `<div class="gname">${esc(p.name)}</div>` +
     (role ? `<div class="grole">${role}</div>` : '') +
     `<div class="gtalk">${first ? esc(first.title ?? '') : ''}${more}</div>` +
@@ -91,26 +146,92 @@ function emptyGallery(event: EventHome): string {
   );
 }
 
-function speakersGalleryPage(event: EventHome, gallery: GallerySpeaker[]): string {
+/** The search box, carrying the frame it sits in so a word typed inside an
+ *  embed does not quietly break out of it. */
+function searchForm(event: EventHome, q: string, embed: boolean): string {
+  const base = `/${event.slug}/speakers`;
+  const clear = embed ? `${base}?embed=1` : base;
+  return (
+    `<form method="get" action="${esc(base)}" class="filters" style="margin:18px 0 4px">` +
+    (embed ? '<input type="hidden" name="embed" value="1">' : '') +
+    `<input type="text" name="q" value="${esc(q)}" maxlength="${SEARCH_MAX}" autocomplete="off" ` +
+    'placeholder="Search names and organisations" aria-label="Search names and organisations" ' +
+    'style="flex:1 1 200px;max-width:min(100%,340px)">' +
+    '<button class="btn btn-sm" type="submit">Search</button>' +
+    (q ? `<a class="link" href="${esc(clear)}">Clear the search</a>` : '') +
+    '</form>'
+  );
+}
+
+function speakersGalleryPage(
+  event: EventHome,
+  gallery: GallerySpeaker[],
+  q: string,
+  embed: boolean,
+  link: Outbound
+): string {
   const nav = eventNav(event.slug, '/speakers', event.lifecycle === 'open');
+
+  if (gallery.length === 0 && !embed) {
+    return page({
+      title: `Speakers · ${event.name}`,
+      description: `Everyone confirmed to speak at ${event.name}.`,
+      register: 'onstage',
+      body: onstageShell(nav, emptyGallery(event)),
+    });
+  }
+
+  const tokens = tokensOf(q);
+  const shown = gallery.filter((p) => matches(p, tokens));
+
+  const noun = gallery.length === 1 ? '1 speaker' : `${num(gallery.length)} speakers`;
+  const more = event.lifecycle === 'happened' ? '' : ' More as decisions go out.';
+  const resultLine =
+    q && gallery.length ? `<p class="sub" style="margin:10px 0 0">${esc(`${num(shown.length)} of ${noun}.`)}</p>` : '';
+
+  let grid: string;
+  if (!gallery.length) {
+    // Only an embed reaches this: the gallery's own empty state is the page
+    // above, and it belongs on the event's site, not in somebody's sidebar.
+    grid =
+      '<div class="sec state-out"><h2>Nobody has been announced yet.</h2>' +
+      '<p>The program is being decided now.</p></div>';
+  } else if (!shown.length) {
+    grid =
+      '<div class="sec state-out"><h2>Nothing matches that — clear the search.</h2>' +
+      '<p>The search reads names and organisations.</p>' +
+      `<a class="btn btn-primary" href="${esc(
+        embed ? `/${event.slug}/speakers?embed=1` : `/${event.slug}/speakers`
+      )}">Clear the search →</a></div>`;
+  } else {
+    grid = `<div class="sec gal">${shown.map((p) => speakerCard(event.slug, p, link)).join('')}</div>`;
+  }
+
+  const head = embed
+    ? ''
+    : '<h1 class="display">Speakers</h1>' +
+      `<p class="sub" style="margin-top:8px">${esc(`${noun} confirmed at ${event.name}.`)}${esc(more)}</p>`;
+
+  const wayOut = embed
+    ? `<p class="sub" style="margin-top:16px"><a class="link" href="${esc(
+        link.href(`/${event.slug}/agenda`)
+      )}"${link.attrs}>See the whole program →</a></p>`
+    : '';
+
   const body =
-    gallery.length === 0
-      ? emptyGallery(event)
-      : (() => {
-          const noun = gallery.length === 1 ? '1 speaker' : `${gallery.length.toLocaleString('en-US')} speakers`;
-          const more = event.lifecycle === 'happened' ? '' : ' More as decisions go out.';
-          return (
-            '<div class="wrap" style="padding-top:44px"><h1 class="display">Speakers</h1>' +
-            `<p class="sub" style="margin-top:8px">${noun} confirmed at ${esc(event.name)}.${more}</p>` +
-            `<div class="sec gal">${gallery.map((p) => speakerCard(event.slug, p)).join('')}</div></div>`
-          );
-        })();
+    `<div class="wrap" style="padding-top:${embed ? '8px' : '44px'}">` +
+    head +
+    (gallery.length ? searchForm(event, q, embed) : '') +
+    resultLine +
+    grid +
+    wayOut +
+    '</div>';
 
   return page({
     title: `Speakers · ${event.name}`,
     description: `Everyone confirmed to speak at ${event.name}.`,
     register: 'onstage',
-    body: onstageShell(nav, body),
+    body: embed ? `<div class="stage onstage embed"><main>${body}</main></div>` : onstageShell(nav, body),
   });
 }
 
@@ -187,7 +308,7 @@ function speakerPersonPage(event: EventHome, sp: SpeakerPage): string {
   const header =
     `<p class="sub"><a class="link" href="/${esc(event.slug)}/speakers">← All speakers</a></p>` +
     '<div style="display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap;margin-top:16px">' +
-    avatar(p.initials, p.name, 96) +
+    face(p, 96) +
     '<div style="flex:1;min-width:min(100%,280px)">' +
     `<h1 class="display" style="font-size:clamp(28px,4.4vw,40px)">${esc(p.name)}</h1>` +
     (role ? `<p style="margin-top:6px;font-size:17px;color:var(--ink-soft)">${role}</p>` : '') +
@@ -221,7 +342,10 @@ export function registerSpeakers(app: Hono<{ Bindings: Env }>): void {
     const event = await eventBySlug(c.env.DB, c.req.param('event'));
     if (!event) return c.notFound();
     const gallery = await speakersGallery(c.env.DB, event.id);
-    return c.html(speakersGalleryPage(event, gallery));
+    const embed = c.req.query('embed') === '1';
+    const q = (c.req.query('q') || '').slice(0, SEARCH_MAX);
+    const link = embed ? outOfFrame(new URL(c.req.url).origin) : NEXT_DOOR;
+    return c.html(speakersGalleryPage(event, gallery, q, embed, link));
   });
 
   app.get('/:event/speakers/:personId', async (c) => {

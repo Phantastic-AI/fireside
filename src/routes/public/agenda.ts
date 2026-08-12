@@ -8,31 +8,51 @@
 // D-027). State words go through lib/labels.ts; every dynamic string through
 // esc(). No SQL here — reads go through queries/public.ts only.
 //
+// What a visitor can do here, and what each costs:
+//  - Search (?q=) and narrow by day, track and format. All four compose, all
+//    four survive in every chip href, and all four are applied in this file
+//    over the DTO the agenda query already returned — no second read, no SQL.
+//  - Star a session. Signed out that is localStorage under the same key
+//    src/islands/stars.js reads ('fireside.stars.' + slug), painted by the
+//    island below; with scripts off the star is a plain link to my schedule,
+//    which is where the promise is kept either way. Signed in it is a real
+//    form posting to /:event/my-schedule/star — one click, private, undone by
+//    the same click on the next screen (D-024).
+//  - Embedded (?embed=1) there are no star controls at all: an iframe on
+//    somebody else's page is a window onto the program, not a place to keep
+//    things. It gets one quiet way back to the event's own site instead (R-6).
+//
 // Scope notes (see report to the calling agent for the full list):
-//  - No star/schedule control anywhere on these two screens, embed or not.
-//    Starring is a different parcel; rendering one here would either fight
-//    that parcel's markup or 404 on JS it hasn't shipped yet.
-//  - Agenda cards render speaker names only, no avatar stack: AgendaSession's
-//    SpeakerRef carries no headshotFileId, only the session page's
-//    PublicSpeaker does.
+//  - AgendaSession carries no abstract, so the one-line description snippet
+//    EMB-09 asks for cannot be rendered on a row. The session page has the
+//    whole abstract and shows it. Flagged rather than faked.
+//  - Speaker job titles and organisations come from speakersGallery(), the
+//    public query the speakers page already uses — one more read on this
+//    screen, run alongside the agenda read, and no new SQL anywhere.
 //  - The session page drops the prototype's "Also on this program" rail —
 //    it needs a query this parcel's task did not name.
-//  - No embed-code-copy control — that is client script the prototype ships
-//    and this SSR page does not.
-//  - No .ics link anywhere — no route exists for it yet.
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { esc, page, onstageShell, eventNav } from '../../lib/html';
-import { label, type LabelKey } from '../../lib/labels';
+import { label, FORMAT_KEY, type LabelKey } from '../../lib/labels';
 import {
   agenda,
   eventBySlug,
   sessionBySlug,
+  speakersGallery,
   type Agenda,
   type AgendaSession,
   type EventHome,
   type PublicSpeaker,
+  type SpeakerRef,
 } from '../../queries/public';
+import { socialView } from '../../queries/social';
+import { principalFromCookie } from '../../workflows/account';
+
+// The star island's source, inlined into the page (the cfp.js convention —
+// it exports its own text). One fewer request on the screen most likely to be
+// opened on one bar of signal.
+import agendaStarsIsland from '../../islands/agenda-stars.js';
 
 /* ------------------------------------------------------------------ *
  * Formatting helpers. No shared lib.ts owns date/time formatting yet,
@@ -88,12 +108,30 @@ function timeOfDay(ms: number, timezone: string): string {
   return `${get('hour')}:${get('minute')}`;
 }
 
+/** EMB-08 — "15:00–15:30". A time on its own answers "when"; a range answers
+ *  "can I make the next one", which is the question a program is read with. */
+function timeRange(startsAt: number, minutes: number, timezone: string): string {
+  return `${timeOfDay(startsAt, timezone)}–${timeOfDay(startsAt + minutes * 60_000, timezone)}`;
+}
+
 function durationLabel(minutes: number): string {
   return minutes >= 90 && minutes % 60 === 0 ? `${minutes / 60} hr` : `${minutes} min`;
 }
 
+function num(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
 function plural(n: number, one: string, many: string): string {
-  return n === 1 ? `1 ${one}` : `${n.toLocaleString('en-US')} ${many}`;
+  return n === 1 ? `1 ${one}` : `${num(n)} ${many}`;
+}
+
+/** The timezone line. tz_label is written by the organizer and often already
+ *  says it ("All times ET"), so this adds the words only when they are missing
+ *  rather than printing "All times All times ET" at the top of the program. */
+function timesLine(tzLabel: string | null): string | null {
+  if (!tzLabel) return null;
+  return /^all times\b/i.test(tzLabel) ? tzLabel : `All times ${tzLabel}`;
 }
 
 function joinParts(parts: (string | null | undefined)[]): string {
@@ -116,16 +154,26 @@ function byline(names: string[]): string {
  * report — so the wash is computed with color-mix() at render time).
  * ------------------------------------------------------------------ */
 
-const FORMAT_KEY: Record<string, LabelKey> = {
+// FORMAT_KEY in lib/labels.ts maps the stored casing ('Talk', 'Lightning
+// talk'). The lowercase spellings below are the same four facts written the
+// way older rows and hand-typed addresses spell them, so one word never
+// reaches a reader unlabelled.
+const LOOSE_FORMAT_KEY: Record<string, LabelKey> = {
   talk: 'format.talk',
   workshop: 'format.workshop',
   panel: 'format.panel',
   lightning: 'format.lightning',
+  'lightning talk': 'format.lightning',
 };
 
 function formatLabel(fmt: string): string {
-  const key = FORMAT_KEY[fmt];
+  const key = FORMAT_KEY[fmt] ?? LOOSE_FORMAT_KEY[fmt.toLowerCase()];
   return key ? label(key, 'onstage') : fmt;
+}
+
+/** The format as it travels in an address: "lightning-talk", never "Lightning talk". */
+function formatSlug(fmt: string): string {
+  return fmt.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
 function trackStyle(colour: string): string {
@@ -139,9 +187,61 @@ function trackBadge(track: { name: string; colour: string } | null): string {
 }
 
 /* ------------------------------------------------------------------ *
- * Avatars: generated, deterministic, no network request — the same
- * promise the prototype makes. Session-page speakers only; see report
- * for why agenda cards render no avatar stack.
+ * Who the speakers are, beyond their names. AgendaSession's SpeakerRef
+ * carries a name and nothing else, so the one job title and employer a
+ * program is actually read for come from speakersGallery() — the same
+ * public query the speakers page runs, keyed by person.
+ * ------------------------------------------------------------------ */
+
+type Role = { jobTitle: string | null; organisation: string | null; headshotFileId: string | null };
+type RoleIndex = Map<string, Role>;
+
+function roleWords(r: Role | undefined): string {
+  if (!r) return '';
+  return [r.jobTitle, r.organisation].filter((x): x is string => !!x).join(' at ');
+}
+
+/** One line under the byline: what the one speaker does, or — when a session
+ *  has several — the places they have come from, each named once. */
+function roleLine(speakers: SpeakerRef[], roles: RoleIndex): string {
+  const first = speakers[0];
+  if (speakers.length === 1 && first) return roleWords(roles.get(first.personId));
+  const orgs: string[] = [];
+  for (const p of speakers) {
+    const org = roles.get(p.personId)?.organisation;
+    if (org && !orgs.includes(org)) orgs.push(org);
+  }
+  return orgs.join(' · ');
+}
+
+/* ------------------------------------------------------------------ *
+ * Searching. Case-folded, over exactly what the card in front of you
+ * says: title, who is speaking, where they work, track, format. Every
+ * word typed has to appear somewhere, so "priya latency" narrows rather
+ * than widens. Done here, over the DTO — the agenda read already has
+ * every session in hand, and a second query would be a slower way to
+ * learn nothing new.
+ * ------------------------------------------------------------------ */
+
+const SEARCH_MAX = 80;
+
+function tokensOf(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t !== '');
+}
+
+function haystack(s: AgendaSession, roles: RoleIndex): string {
+  const people = s.speakers.map((p) => `${p.name} ${roleWords(roles.get(p.personId))}`).join(' ');
+  return `${s.title} ${people} ${s.track?.name ?? ''} ${formatLabel(s.format)} ${s.format}`.toLowerCase();
+}
+
+/* ------------------------------------------------------------------ *
+ * Avatars: the speaker's own photograph where there is one (/files/ is
+ * the image door), and otherwise a generated, deterministic mark — no
+ * network request, the same promise the prototype makes.
  * ------------------------------------------------------------------ */
 
 const AV_PALETTE: [string, string][] = [
@@ -182,8 +282,19 @@ function avatarSvg(name: string, initials: string, size: number, hasPhoto: boole
   );
 }
 
+/** The face itself when there is one — decorative, because the name is
+ *  written beside it and a screen reader should hear it once, not twice. */
+function faceOf(p: { name: string; initials: string; headshotFileId: string | null }, size: number): string {
+  if (!p.headshotFileId) return avatarSvg(p.name, p.initials, size, false);
+  return (
+    `<img class="av" src="/files/${esc(p.headshotFileId)}" alt="" width="${size}" height="${size}" ` +
+    `loading="lazy" decoding="async" style="width:${size}px;height:${size}px;object-fit:cover">`
+  );
+}
+
 /* ------------------------------------------------------------------ *
- * URL building — day/track/embed query state, preserved across links.
+ * URL building — search, day, track, format and embed state, preserved
+ * across every chip and every form on the screen.
  * ------------------------------------------------------------------ */
 
 function withQuery(path: string, params: Record<string, string | null>): string {
@@ -196,119 +307,249 @@ function withQuery(path: string, params: Record<string, string | null>): string 
   return qs ? `${u.pathname}?${qs}` : u.pathname;
 }
 
+type Filters = { q: string; day: string; track: string; format: string; embed: boolean };
+
+/**
+ * Where a link goes from here. On the event's own site, next door. From inside
+ * somebody else's page, out to the event's own site in a new tab: an embedded
+ * program that swallows a partner's page whole, or that opens a full site
+ * inside a 600-pixel frame, is a bad guest either way.
+ */
+type Outbound = { href: (path: string) => string; attrs: string };
+const NEXT_DOOR: Outbound = { href: (p) => p, attrs: '' };
+function outOfFrame(origin: string): Outbound {
+  return { href: (p) => `${origin}${p}`, attrs: ' target="_blank" rel="noopener"' };
+}
+
 /* ------------------------------------------------------------------ *
- * Session card — mirrors the prototype's seshCard, minus the star
- * button (a different parcel) and the avatar stack (see report).
+ * The star. Three shapes of the same act, and which one a row gets is
+ * decided once, in the route.
  * ------------------------------------------------------------------ */
 
-function seshCard(slug: string, timezone: string, s: AgendaSession): string {
-  const href = s.publicSlug ? `/${esc(slug)}/s/${esc(s.publicSlug)}` : null;
+const STAR_PATH =
+  '<path d="M12 3.2l2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.7l6.1-.9z"/>';
+
+function starSvg(on: boolean): string {
+  return (
+    `<svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true" fill="${on ? 'currentColor' : 'none'}" ` +
+    `stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">${STAR_PATH}</svg>`
+  );
+}
+
+type Stars =
+  /** Embedded: somebody else's page, so nothing to keep here (R-6). */
+  | { kind: 'none' }
+  /** Signed out: this browser's own list, painted by islands/agenda-stars.js. */
+  | { kind: 'local' }
+  /** Signed in: a real write, and the same click takes it off again. */
+  | { kind: 'account'; starred: Set<string> };
+
+/* ------------------------------------------------------------------ *
+ * Session card — mirrors the prototype's seshCard.
+ * ------------------------------------------------------------------ */
+
+function seshCard(
+  slug: string,
+  timezone: string,
+  s: AgendaSession,
+  roles: RoleIndex,
+  stars: Stars,
+  link: Outbound
+): string {
+  const href = s.publicSlug ? esc(link.href(`/${slug}/s/${s.publicSlug}`)) : null;
   const strike = s.cancelled ? ' style="text-decoration:line-through;text-decoration-color:var(--muted-2)"' : '';
   const titleHtml = href
-    ? `<a href="${href}"${strike}>${esc(s.title)}</a>`
+    ? `<a href="${href}"${link.attrs}${strike}>${esc(s.title)}</a>`
     : `<span${strike}>${esc(s.title)}</span>`;
   const names = s.speakers.map((p) => p.name);
-  return (
+  const role = roleLine(s.speakers, roles);
+
+  const card =
     `<article class="sesh" style="${s.track ? trackStyle(s.track.colour) : ''}">` +
     '<div class="sesh-main">' +
-    `<div class="sesh-when"><span class="time">${esc(timeOfDay(s.startsAt, timezone))}</span>` +
+    `<div class="sesh-when"><span class="time">${esc(timeRange(s.startsAt, s.minutes, timezone))}</span>` +
     (s.roomName ? `<span class="room">${esc(s.roomName)}</span>` : '') +
     '</div>' +
     `<h3>${titleHtml}</h3>` +
     (names.length ? `<div class="sesh-by"><span>${byline(names)}</span></div>` : '') +
+    (role ? `<div class="sub" style="margin-top:3px">${esc(role)}</div>` : '') +
     `<div class="sesh-meta">${trackBadge(s.track)}<span>${esc(formatLabel(s.format))} · ${esc(durationLabel(s.minutes))}</span>` +
     (s.cancelled ? `<span class="sub">· ${esc(label('submission.cancelled', 'onstage'))}</span>` : '') +
-    '</div></div></article>'
+    '</div></div>';
+
+  // A cancelled talk stays on the program, struck through — but it is not
+  // something anyone should be invited to plan around.
+  if (stars.kind === 'none' || s.cancelled) return `${card}</article>`;
+
+  if (stars.kind === 'local') {
+    // Scripts off, this is a link to the page that explains the whole idea.
+    // Scripts on, islands/agenda-stars.js takes the click and keeps the id
+    // in this browser under the key my schedule already reads.
+    return (
+      card +
+      `<a class="starbtn" href="/${esc(slug)}/my-schedule" data-star="${esc(s.id)}" ` +
+      `aria-label="Star this session">${starSvg(false)}</a></article>`
+    );
+  }
+
+  const on = stars.starred.has(s.id);
+  // The form wraps the card rather than sitting inside it: .slot is a column
+  // flex box, so a form is a perfectly good flex item and the card inside it
+  // lays out exactly as it does everywhere else (schedule.ts does the same).
+  return (
+    `<form method="post" action="/${esc(slug)}/my-schedule/star">` +
+    card +
+    `<input type="hidden" name="session" value="${esc(s.id)}">` +
+    `<input type="hidden" name="on" value="${on ? '0' : '1'}">` +
+    `<button class="starbtn" type="submit" aria-pressed="${on}" ` +
+    `aria-label="${on ? 'Take this off my schedule' : 'Star this session'}">${starSvg(on)}</button>` +
+    '</article></form>'
   );
 }
 
 /* ------------------------------------------------------------------ *
- * The published agenda body: header, day tabs, track legend, the
- * day-by-day list. Room lanes read as consecutive same-time cards,
- * each naming its own room — the prototype never used a literal
+ * The published agenda body: header, search, day / track / format
+ * chips, the day-by-day list. Room lanes read as consecutive same-time
+ * cards, each naming its own room — the prototype never used a literal
  * multi-column grid either.
  * ------------------------------------------------------------------ */
 
 function agendaBody(
   event: EventHome,
   ag: Agenda,
-  params: { day: string; track: string; embed: boolean },
-  slug: string
+  f: Filters,
+  slug: string,
+  roles: RoleIndex,
+  stars: Stars,
+  link: Outbound
 ): string {
   const allSessions = ag.days.flatMap((d) => d.slots.flatMap((sl) => sl.sessions));
 
   const trackList: { slug: string; name: string; colour: string }[] = [];
   const seenTracks = new Set<string>();
+  const formatList: { slug: string; name: string }[] = [];
+  const seenFormats = new Set<string>();
   for (const s of allSessions) {
     if (s.track && !seenTracks.has(s.track.slug)) {
       seenTracks.add(s.track.slug);
       trackList.push(s.track);
     }
+    const fslug = formatSlug(s.format);
+    if (fslug && !seenFormats.has(fslug)) {
+      seenFormats.add(fslug);
+      formatList.push({ slug: fslug, name: formatLabel(s.format) });
+    }
   }
   const roomNames = new Set(allSessions.map((s) => s.roomName).filter((x): x is string => !!x));
   const speakerIds = new Set(allSessions.flatMap((s) => s.speakers.map((sp) => sp.personId)));
 
-  const { day: dayParam, track: trackParam, embed } = params;
-
-  const hereUrl = (over: { day?: string | null; track?: string | null }) =>
-    withQuery(`/${slug}/agenda`, {
-      day: over.day !== undefined ? over.day : dayParam || null,
-      track: over.track !== undefined ? over.track : trackParam || null,
-      embed: embed ? '1' : null,
+  const base = `/${slug}/agenda`;
+  const hereUrl = (over: { q?: string | null; day?: string | null; track?: string | null; format?: string | null }) =>
+    withQuery(base, {
+      q: over.q !== undefined ? over.q : f.q || null,
+      day: over.day !== undefined ? over.day : f.day || null,
+      track: over.track !== undefined ? over.track : f.track || null,
+      format: over.format !== undefined ? over.format : f.format || null,
+      embed: f.embed ? '1' : null,
     });
 
+  const chip = (href: string, on: boolean, text: string, extra = '') =>
+    `<a class="fchip${extra ? ` ${extra}` : ''}" href="${esc(href)}" aria-pressed="${on}">${text}</a>`;
+
   const dayChips =
-    `<a class="fchip" href="${hereUrl({ day: null })}" aria-pressed="${!dayParam}">All days</a>` +
-    ag.days
-      .map(
-        (d) =>
-          `<a class="fchip" href="${hereUrl({ day: d.day })}" aria-pressed="${dayParam === d.day}">${esc(weekdayDate(d.day, 'short'))}</a>`
-      )
-      .join('');
+    chip(hereUrl({ day: null }), !f.day, 'All days') +
+    ag.days.map((d) => chip(hereUrl({ day: d.day }), f.day === d.day, esc(weekdayDate(d.day, 'short')))).join('');
 
   const trackChips = trackList.length
-    ? `<a class="fchip" href="${hereUrl({ track: null })}" aria-pressed="${!trackParam}">All tracks</a>` +
+    ? chip(hereUrl({ track: null }), !f.track, 'All tracks') +
       trackList
         .map(
           (t) =>
-            `<a class="fchip tkchip" style="${trackStyle(t.colour)}" href="${hereUrl({ track: t.slug })}" aria-pressed="${trackParam === t.slug}">${esc(t.name)}</a>`
+            `<a class="fchip tkchip" style="${trackStyle(t.colour)}" href="${esc(hereUrl({ track: t.slug }))}" aria-pressed="${f.track === t.slug}">${esc(t.name)}</a>`
         )
         .join('')
     : '';
 
+  const formatChips =
+    formatList.length > 1
+      ? chip(hereUrl({ format: null }), !f.format, 'Every kind') +
+        formatList.map((x) => chip(hereUrl({ format: x.slug }), f.format === x.slug, esc(x.name))).join('')
+      : '';
+
+  // The search box carries whatever is already narrowed, so typing a word
+  // never quietly throws away the day somebody had picked.
+  const hidden = (name: string, value: string) =>
+    value ? `<input type="hidden" name="${name}" value="${esc(value)}">` : '';
+  const searchForm =
+    `<form method="get" action="${esc(base)}" class="filters" style="margin:18px 0 4px">` +
+    hidden('day', f.day) +
+    hidden('track', f.track) +
+    hidden('format', f.format) +
+    (f.embed ? '<input type="hidden" name="embed" value="1">' : '') +
+    `<input type="text" name="q" value="${esc(f.q)}" maxlength="${SEARCH_MAX}" autocomplete="off" ` +
+    'placeholder="Search talks and speakers" aria-label="Search talks and speakers" ' +
+    'style="flex:1 1 200px;max-width:min(100%,340px)">' +
+    '<button class="btn btn-sm" type="submit">Search</button>' +
+    (f.q ? `<a class="link" href="${esc(hereUrl({ q: null }))}">Clear the search</a>` : '') +
+    '</form>';
+
+  const tokens = tokensOf(f.q);
+  const keep = (s: AgendaSession, day: string): boolean => {
+    if (f.day && f.day !== day) return false;
+    if (f.track && s.track?.slug !== f.track) return false;
+    if (f.format && formatSlug(s.format) !== f.format) return false;
+    if (tokens.length) {
+      const hay = haystack(s, roles);
+      if (!tokens.every((t) => hay.includes(t))) return false;
+    }
+    return true;
+  };
+
   let listHtml = '';
-  let anyMatched = false;
+  let shown = 0;
   for (const d of ag.days) {
-    const inDay = d.slots
-      .flatMap((sl) => sl.sessions)
-      .filter((s) => (!trackParam || s.track?.slug === trackParam) && (!dayParam || dayParam === d.day));
+    const inDay = d.slots.flatMap((sl) => sl.sessions).filter((s) => keep(s, d.day));
     if (!inDay.length) continue;
-    anyMatched = true;
+    shown += inDay.length;
     listHtml +=
       `<div class="dayhead">${esc(weekdayDate(d.day, 'short'))} · ${esc(plural(inDay.length, 'session', 'sessions'))}</div>` +
-      `<div class="slot">${inDay.map((s) => seshCard(slug, ag.timezone, s)).join('')}</div>`;
+      `<div class="slot">${inDay.map((s) => seshCard(slug, ag.timezone, s, roles, stars, link)).join('')}</div>`;
   }
+
+  const narrowed = Boolean(f.q || f.day || f.track || f.format);
 
   if (!allSessions.length) {
     listHtml =
       '<div class="state-out" style="margin-top:26px"><h2>Nothing on the agenda yet.</h2>' +
       '<p>Speakers already confirmed are on the speakers page while the schedule comes together.</p>' +
       `<a class="btn btn-primary" href="/${esc(slug)}/speakers">See who's speaking →</a></div>`;
-  } else if (!anyMatched) {
+  } else if (!shown && f.q) {
+    listHtml =
+      '<div class="state-out" style="margin-top:26px"><h2>Nothing matches that — clear the search.</h2>' +
+      '<p>The search reads titles, speakers, tracks and the kind of session.</p>' +
+      `<a class="btn btn-primary" href="${esc(hereUrl({ q: null }))}">Clear the search →</a></div>`;
+  } else if (!shown) {
     listHtml =
       '<div class="state-out" style="margin-top:26px"><h2>Nothing here with those filters.</h2>' +
       '<p>The other days and tracks still have plenty.</p>' +
-      `<a class="btn btn-primary" href="${hereUrl({ day: null, track: null })}">Show the whole agenda →</a></div>`;
+      `<a class="btn btn-primary" href="${esc(hereUrl({ q: null, day: null, track: null, format: null }))}">Show the whole agenda →</a></div>`;
   }
 
   const headLine = joinParts([
     dateRangeLabel(event.startsOn, event.endsOn),
     event.venueName,
-    event.tzLabel ? `All times ${event.tzLabel}` : null,
+    timesLine(event.tzLabel),
   ]);
   const countsLine = roomNames.size
     ? `${plural(allSessions.length, 'session', 'sessions')} across ${plural(roomNames.size, 'room', 'rooms')} · ${plural(speakerIds.size, 'speaker', 'speakers')}`
     : `${plural(allSessions.length, 'session', 'sessions')} · ${plural(speakerIds.size, 'speaker', 'speakers')}`;
+
+  // Once anything is narrowed, the honest headline is the arithmetic: how
+  // much of the program is in front of you, out of how much there is.
+  const resultLine =
+    narrowed && allSessions.length
+      ? `<p class="sub" style="margin:10px 0 0">${esc(`${num(shown)} of ${plural(allSessions.length, 'session', 'sessions')}.`)}</p>`
+      : '';
 
   // A plain link — no JS, no download button — to the whole agenda as a
   // calendar file (registerIcs, src/routes/public/ics.ts). Only worth
@@ -317,33 +558,61 @@ function agendaBody(
     ? `<p class="sub" style="margin-top:6px"><a class="link" href="/${esc(slug)}/agenda.ics">Add to calendar →</a></p>`
     : '';
 
+  const chipRow = (inner: string) => (inner ? `<div class="filters scrollx daybar">${inner}</div>` : '');
+
   const head =
     `<h1 class="display">${esc(event.name)}</h1>` +
     `<p class="sub" style="margin-top:8px">${esc(headLine)}</p>` +
     (allSessions.length ? `<p class="sub">${esc(countsLine)}</p>` : '') +
     icsLink +
-    `<div class="filters scrollx daybar">${dayChips}</div>` +
-    (trackChips ? `<div class="filters scrollx daybar">${trackChips}</div>` : '');
+    (allSessions.length ? searchForm : '') +
+    chipRow(dayChips) +
+    chipRow(trackChips) +
+    chipRow(formatChips) +
+    resultLine;
 
-  // Embed mirrors the prototype exactly: day tabs are dropped, only the
-  // track legend survives, because an embedded widget is already scoped
-  // by whatever page it sits on. The calendar link stays — it's a plain
-  // link, not a control the embed needs to hide.
+  // Embed mirrors the prototype: day tabs are dropped, because an embedded
+  // widget is already scoped by whatever page it sits on. The search and the
+  // track and format chips stay — a program somebody else is hosting is still
+  // a program you have to find your talk in. R-6: the one way out is a plain
+  // link back to the event's own site, opened out of the frame.
   const embedBar =
-    embed && (trackChips || icsLink)
-      ? (trackChips ? `<div class="filters scrollx daybar">${trackChips}</div>` : '') + icsLink
-      : '';
+    (allSessions.length ? searchForm : '') +
+    chipRow(trackChips) +
+    chipRow(formatChips) +
+    resultLine +
+    (allSessions.length
+      ? '<p class="sub" style="margin-top:6px">' +
+        `<a class="link" href="${esc(link.href(`/${slug}/agenda.ics`))}">Add to calendar →</a> · ` +
+        `<a class="link" href="${esc(link.href(`/${slug}/my-schedule`))}"${link.attrs}>Plan your day →</a></p>`
+      : '');
 
+  // Signed out, the count comes from the browser and the island writes it in;
+  // signed in, the server already knows it. Either way the bar is the way out
+  // of the program and into the plan.
+  const startedWith = stars.kind === 'account' ? stars.starred.size : 0;
+  const starBar =
+    stars.kind === 'none' || !allSessions.length
+      ? ''
+      : '<div class="starcount">' +
+        `<span data-starcount>${esc(
+          startedWith ? plural(startedWith, 'session starred', 'sessions starred') : 'Star what you want to see.'
+        )}</span>` +
+        `<a class="link" style="margin-left:auto" href="/${esc(slug)}/my-schedule">My schedule →</a></div>`;
+
+  // data-stars is the island's whole handshake: the event slug it keys the
+  // browser's list by. It is written only when the island is coming.
   return (
-    `<div class="wrap" style="padding-top:${embed ? '8px' : '44px'}">` +
-    (embed ? embedBar : head) +
+    `<div class="wrap"${stars.kind === 'local' ? ` data-stars="${esc(slug)}"` : ''} style="padding-top:${f.embed ? '8px' : '44px'}">` +
+    (f.embed ? embedBar : head) +
     listHtml +
+    starBar +
     '</div>'
   );
 }
 
 /* ------------------------------------------------------------------ *
- * One speaker, on the session page: avatar, name, title/org, bio.
+ * One speaker, on the session page: face, name, title/org, bio.
  * ------------------------------------------------------------------ */
 
 function speakerBlock(slug: string, p: PublicSpeaker): string {
@@ -351,7 +620,7 @@ function speakerBlock(slug: string, p: PublicSpeaker): string {
   const href = `/${esc(slug)}/speakers/${esc(p.personId)}`;
   return (
     '<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;margin-bottom:20px">' +
-    `<a href="${href}" tabindex="-1" aria-hidden="true">${avatarSvg(p.name, p.initials, 56, p.headshotFileId !== null)}</a>` +
+    `<a href="${href}" tabindex="-1" aria-hidden="true">${faceOf(p, 56)}</a>` +
     '<div style="flex:1;min-width:min(100%,240px)">' +
     `<h3 style="margin:0;font-family:var(--serif);font-size:19px;font-weight:600">` +
     `<a href="${href}" style="text-decoration:none;color:inherit">${esc(p.name)}</a></h3>` +
@@ -371,13 +640,43 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
     const db = c.env.DB;
     const event = await eventBySlug(db, slug);
     if (!event) return c.notFound();
-    const ag = await agenda(db, event.id);
-    if (!ag) return c.notFound();
 
     const embed = c.req.query('embed') === '1';
-    const dayParam = c.req.query('day') || '';
-    const trackParam = c.req.query('track') || '';
+    // An embedded program is a stranger's window: no cookie is read, so an
+    // iframe on somebody's blog can be cached and can never be personal.
+    const principal = embed
+      ? null
+      : await principalFromCookie(db, c.env.SESSION_SECRET, c.req.header('cookie'));
+
+    const [ag, gallery, mine] = await Promise.all([
+      agenda(db, event.id),
+      speakersGallery(db, event.id),
+      principal ? socialView(db, event.id, principal.personId) : Promise.resolve(null),
+    ]);
+    if (!ag) return c.notFound();
+
+    const roles: RoleIndex = new Map(
+      gallery.map((p) => [
+        p.personId,
+        { jobTitle: p.jobTitle, organisation: p.organisation, headshotFileId: p.headshotFileId },
+      ])
+    );
+
+    const stars: Stars = embed
+      ? { kind: 'none' }
+      : mine
+        ? { kind: 'account', starred: new Set(mine.mine.starred) }
+        : { kind: 'local' };
+
+    const f: Filters = {
+      q: (c.req.query('q') || '').slice(0, SEARCH_MAX),
+      day: c.req.query('day') || '',
+      track: c.req.query('track') || '',
+      format: c.req.query('format') || '',
+      embed,
+    };
     const nav = eventNav(slug, '/agenda', event.lifecycle === 'open');
+    const link = embed ? outOfFrame(new URL(c.req.url).origin) : NEXT_DOOR;
 
     let inner: string;
     if (!ag.published) {
@@ -387,7 +686,7 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
       const headLine = joinParts([
         dateRangeLabel(event.startsOn, event.endsOn),
         event.venueName,
-        event.tzLabel ? `All times ${event.tzLabel}` : null,
+        timesLine(event.tzLabel),
       ]);
       inner =
         `<div class="wrap" style="padding-top:${embed ? '8px' : '44px'}">` +
@@ -400,10 +699,16 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
         `<a class="btn btn-primary" href="/${esc(slug)}/speakers">See who's speaking →</a></div>` +
         '</div>';
     } else {
-      inner = agendaBody(event, ag, { day: dayParam, track: trackParam, embed }, slug);
+      inner = agendaBody(event, ag, f, slug, roles, stars, link);
     }
 
-    const body = embed ? `<div class="stage onstage embed"><main>${inner}</main></div>` : onstageShell(nav, inner);
+    const body =
+      (embed ? `<div class="stage onstage embed"><main>${inner}</main></div>` : onstageShell(nav, inner)) +
+      (stars.kind === 'local' && ag.published ? `<script>${String(agendaStarsIsland)}</script>` : '');
+
+    // Signed in, the stars on this page are one person's own: never held in a
+    // shared cache anywhere (the same rule my schedule keeps).
+    if (principal) c.header('cache-control', 'private, no-store');
 
     return c.html(
       page({
@@ -429,7 +734,7 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
 
     const strike = session.cancelled ? ' style="text-decoration:line-through;text-decoration-color:var(--muted-2)"' : '';
     const roomLine = joinParts([
-      `${weekdayDate(session.day, 'long')}, ${timeOfDay(session.startsAt, session.timezone)}`,
+      `${weekdayDate(session.day, 'long')}, ${timeRange(session.startsAt, session.minutes, session.timezone)}`,
       session.roomName,
     ]);
     const cancelledNote = session.cancelled
