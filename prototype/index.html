@@ -2885,7 +2885,12 @@ function paintChat(){
       '<p class="cc-hand">Doing something bigger? Connect your own agent: <span class="code">npx fireside mcp</span> — same tools, your scope.</p>' +
     '</div></div>';
   var b = document.getElementById('cc-body');
-  if (b) b.scrollTop = b.scrollHeight;
+  if (b){
+    /* land the reader at the start of the newest exchange, not the bottom of it */
+    var yours = b.querySelectorAll('.cc-you'), last = yours[yours.length - 1];
+    if (last) b.scrollTop = Math.max(0, last.offsetTop - b.offsetTop - 6);
+    else b.scrollTop = b.scrollHeight;
+  }
 }
 function ccAsk(q){
   CHAT.msgs.push({ you: true, text: q });
