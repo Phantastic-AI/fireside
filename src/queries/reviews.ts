@@ -1,0 +1,364 @@
+// The reviewer's read layer (R-11) — round-scoped, and blind by construction.
+//
+// BLIND IS A PROPERTY OF THIS FILE, not of the template that renders it. No
+// statement below joins `participation` or `person`, and none selects a name,
+// an employer, an address or a headshot. A screen built on this query cannot
+// show a reviewer who wrote a proposal, because the fact never reaches it.
+// That is the same discipline queries/admin.ts applies to scope: the read is
+// the chokepoint, and a template's good intentions are not a security model.
+//
+// GAP, flagged rather than invented: the schema has no per-event blind toggle,
+// so blind is unconditional here. An event that wants names visible during
+// round 2 has no way to say so. The fix is a column on `event` plus a settings
+// control, both of which belong to the settings parcel — not to a route file
+// quietly selecting names when a query string asks it to.
+//
+// GAP, the second: there is no assignment table. "Which of these are mine?"
+// therefore answers "every proposal still undecided on this event". Until
+// review assignment exists (person × submission × round), a committee of six
+// all see the same pile, and `review.assign` in the label map has no screen.
+//
+// Scope is READ_ROLES: viewers review. Lena Fischer holds 'viewer' on AI
+// Engineer New York and this is the one backstage screen that is hers.
+
+import type { Principal } from '../workflows/account';
+import { requireScope, READ_ROLES } from './admin';
+
+/* ------------------------------------------------------------------ *
+ * The canonical expressions
+ * ------------------------------------------------------------------ */
+
+/**
+ * THE ONE EXPRESSION for "staged, mine, not yet submitted" — the D-024 half
+ * of a review's life. A row with no scores in it is not staged: it is a row
+ * somebody opened and left, and counting it would put a number on the masthead
+ * that means nothing. Every count, every cohort and every guard in the review
+ * path derives from this string, so the number a person confirms and the number
+ * that goes cannot differ by one (the law release.ts holds for letters).
+ *
+ * Requires the review to be aliased `rv`.
+ */
+export const MY_STAGED_SQL =
+  "rv.submitted_at IS NULL AND EXISTS (SELECT 1 FROM json_each(rv.scores))";
+
+/* ------------------------------------------------------------------ *
+ * DTOs
+ * ------------------------------------------------------------------ */
+
+/** One line of the round's scorecard: a key, its words, and its top mark. */
+export type ScorecardKey = { key: string; label: string; max: number };
+
+export type QueueRow = {
+  id: string;
+  title: string;
+  abstract: string | null;
+  format: string;
+  minutes: number;
+  level: string | null;
+  track: { slug: string; name: string; colour: string } | null;
+  /** When the speaker sent it in — the only date on the row that is not mine. */
+  waitingSince: number | null;
+  /** My marks for this round, key by key. Empty when I have not scored it. */
+  myScores: Record<string, number>;
+  myNote: string | null;
+  /** Set once I have submitted: this round's marks are fixed from then on. */
+  mySubmittedAt: number | null;
+  /** Mine, scored, and still only mine. */
+  staged: boolean;
+};
+
+export type ReviewQueue = {
+  eventId: string;
+  round: number;
+  scorecard: ScorecardKey[];
+  rows: QueueRow[];
+  /** Every undecided proposal on this event. */
+  total: number;
+  /** How many of `total` are on screen right now. */
+  shown: number;
+  /** Mine, scored, not yet submitted — the two-pass number. */
+  staged: number;
+  /** Mine, submitted, this round. */
+  submitted: number;
+  /** Still owed a mark from me: total less what I have already submitted. */
+  left: number;
+};
+
+/** A staged review as the confirm pass reads it back, before it goes. */
+export type StagedReview = {
+  submissionId: string;
+  title: string;
+  scores: Record<string, number>;
+  note: string | null;
+};
+
+export type ReviewEvent = {
+  id: string;
+  slug: string;
+  name: string;
+  timezone: string;
+  tzLabel: string | null;
+  round: number;
+  scorecard: ScorecardKey[];
+};
+
+/* ------------------------------------------------------------------ *
+ * Shapes and helpers
+ * ------------------------------------------------------------------ */
+
+function rowsOf<T>(res: D1Result<Record<string, unknown>> | undefined): T[] {
+  return (res?.results ?? []) as unknown as T[];
+}
+
+function asObject(text: string | null): Record<string, unknown> {
+  if (!text) return {};
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function asScores(text: string | null): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(asObject(text))) {
+    if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The window a reviewer reads in one sitting, and its ceiling.
+ *
+ * The ceiling is not a limit on the work — it is a limit on one page. The
+ * order below puts finished reviews last, so submitting a batch drops those
+ * rows out of the window and the next oldest proposals move up into it: the
+ * queue walks the whole pile a sitting at a time without ever building a
+ * thousand-row screen.
+ */
+export const PAGE = 20;
+export const MOST = 100;
+
+export function windowSize(raw: string | undefined): number {
+  const n = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n)) return PAGE;
+  return Math.max(PAGE, Math.min(MOST, Math.floor(n / PAGE) * PAGE || PAGE));
+}
+
+/**
+ * The scorecard for one round, out of event.round_scorecards.
+ *
+ * Stored shape: `{"1":[{"key":"fit","label":"Fit for this room","max":5}]}`.
+ * An event that has never written one — DevOps Days Charlotte stores `{}` —
+ * falls back to a single overall mark, because a committee with no scorecard
+ * still has an opinion, and a screen with no scales is a screen that cannot
+ * be used.
+ */
+export function scorecardFor(stored: string | null, round: number): ScorecardKey[] {
+  const raw = asObject(stored)[String(round)];
+  const out: ScorecardKey[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item !== 'object' || item === null) continue;
+      const o = item as Record<string, unknown>;
+      const key = typeof o.key === 'string' ? o.key.trim() : '';
+      if (!/^[A-Za-z0-9_-]{1,40}$/.test(key) || seen.has(key)) continue;
+      seen.add(key);
+      const words = typeof o.label === 'string' && o.label.trim() ? o.label.trim() : key;
+      const max =
+        typeof o.max === 'number' && o.max >= 2 && o.max <= 10 ? Math.floor(o.max) : 5;
+      out.push({ key, label: words, max });
+    }
+  }
+  if (out.length === 0) out.push({ key: 'overall', label: 'Overall', max: 5 });
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
+ * Queries
+ * ------------------------------------------------------------------ */
+
+type EventSqlRow = {
+  id: string;
+  slug: string;
+  name: string;
+  timezone: string;
+  tz_label: string | null;
+  current_round: number;
+  round_scorecards: string | null;
+};
+
+/**
+ * The event a reviewer is scoring, by its address, with this round's scorecard
+ * already parsed. Throws ScopeError when the person holds no standing here;
+ * returns null when there is no such event, which the screen answers with the
+ * same refusal — an address that is not yours and an address that is not
+ * anybody's should not read differently from outside.
+ */
+export async function reviewEvent(
+  db: D1Database,
+  principal: Principal,
+  slug: string
+): Promise<ReviewEvent | null> {
+  const row = await db
+    .prepare(
+      `SELECT id, slug, name, timezone, tz_label, current_round, round_scorecards
+         FROM event WHERE slug = ?`
+    )
+    .bind(slug)
+    .first<EventSqlRow>();
+  if (!row) return null;
+  requireScope(principal, row.id, READ_ROLES);
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    timezone: row.timezone,
+    tzLabel: row.tz_label,
+    round: row.current_round,
+    scorecard: scorecardFor(row.round_scorecards, row.current_round),
+  };
+}
+
+type QueueSqlRow = {
+  id: string;
+  title: string;
+  abstract: string | null;
+  format: string;
+  requested_min: number;
+  level: string | null;
+  submitted_at: number | null;
+  track_slug: string | null;
+  track_name: string | null;
+  track_colour: string | null;
+  my_scores: string | null;
+  my_note: string | null;
+  my_submitted_at: number | null;
+  staged: number;
+};
+
+type QueueCountRow = { total: number; submitted: number; staged: number };
+
+/**
+ * My queue for this round: every undecided proposal, mine-first.
+ *
+ * The order is the evening's own: what I have staged and not finished sits at
+ * the top, then what I have not touched, then what I have already submitted —
+ * so the boundary between "done for now" and "next" is one line on the screen,
+ * and finished work sinks out of the way instead of being scrolled past twice.
+ * Within each group the longest-waiting proposal comes first.
+ *
+ * Windowed, because a reviewer's queue on a thousand-proposal call is three
+ * hundred rows and page weight is a product requirement. `total` is always the
+ * truth; `shown` is what came back.
+ */
+export async function reviewQueue(
+  db: D1Database,
+  principal: Principal,
+  event: ReviewEvent,
+  opts: { show?: number } = {}
+): Promise<ReviewQueue> {
+  requireScope(principal, event.id, READ_ROLES);
+  const show = Math.max(PAGE, Math.min(MOST, Math.floor(opts.show ?? PAGE)));
+
+  const MINE = 'rv.reviewer_person_id = ?2 AND rv.round = ?3';
+
+  const [rowRes, countRes] = await db.batch<Record<string, unknown>>([
+    db
+      .prepare(
+        `SELECT s.id, s.title, s.abstract, s.format, s.requested_min, s.level, s.submitted_at,
+                t.slug AS track_slug, t.name AS track_name, t.colour AS track_colour,
+                rv.scores AS my_scores, rv.note AS my_note,
+                rv.submitted_at AS my_submitted_at,
+                CASE WHEN rv.id IS NOT NULL AND ${MY_STAGED_SQL} THEN 1 ELSE 0 END AS staged
+           FROM submission s
+           LEFT JOIN track t ON t.id = s.track_id
+           LEFT JOIN review rv ON rv.submission_id = s.id AND ${MINE}
+          WHERE s.event_id = ?1 AND s.state = 'submitted'
+          ORDER BY staged DESC,
+                   CASE WHEN rv.submitted_at IS NOT NULL THEN 1 ELSE 0 END,
+                   s.submitted_at IS NULL, s.submitted_at, s.id
+          LIMIT ?4`
+      )
+      .bind(event.id, principal.personId, event.round, show),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS total,
+                COUNT(CASE WHEN rv.submitted_at IS NOT NULL THEN 1 END) AS submitted,
+                COUNT(CASE WHEN rv.id IS NOT NULL AND ${MY_STAGED_SQL} THEN 1 END) AS staged
+           FROM submission s
+           LEFT JOIN review rv ON rv.submission_id = s.id AND ${MINE}
+          WHERE s.event_id = ?1 AND s.state = 'submitted'`
+      )
+      .bind(event.id, principal.personId, event.round),
+  ]);
+
+  const c = rowsOf<QueueCountRow>(countRes)[0];
+  const total = c?.total ?? 0;
+  const submitted = c?.submitted ?? 0;
+  const rows = rowsOf<QueueSqlRow>(rowRes).map((r) => ({
+    id: r.id,
+    title: r.title,
+    abstract: r.abstract,
+    format: r.format,
+    minutes: r.requested_min,
+    level: r.level,
+    track:
+      r.track_slug && r.track_name && r.track_colour
+        ? { slug: r.track_slug, name: r.track_name, colour: r.track_colour }
+        : null,
+    waitingSince: r.submitted_at,
+    myScores: asScores(r.my_scores),
+    myNote: r.my_note,
+    mySubmittedAt: r.my_submitted_at,
+    staged: r.staged === 1,
+  }));
+
+  return {
+    eventId: event.id,
+    round: event.round,
+    scorecard: event.scorecard,
+    rows,
+    total,
+    shown: rows.length,
+    staged: c?.staged ?? 0,
+    submitted,
+    left: total - submitted,
+  };
+}
+
+/**
+ * Exactly what the confirm pass reads back — the staged cohort, whole, in the
+ * order it will go. Same predicate as the count on the masthead and the same
+ * predicate as the update in workflows/review.ts, so the three cannot drift.
+ */
+export async function stagedReviews(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  round: number
+): Promise<StagedReview[]> {
+  requireScope(principal, eventId, READ_ROLES);
+  const res = await db
+    .prepare(
+      `SELECT rv.submission_id, s.title, rv.scores, rv.note
+         FROM review rv
+         JOIN submission s ON s.id = rv.submission_id
+        WHERE s.event_id = ?1 AND s.state = 'submitted'
+          AND rv.reviewer_person_id = ?2 AND rv.round = ?3
+          AND ${MY_STAGED_SQL}
+        ORDER BY s.submitted_at IS NULL, s.submitted_at, s.id`
+    )
+    .bind(eventId, principal.personId, round)
+    .all<{ submission_id: string; title: string; scores: string | null; note: string | null }>();
+  return res.results.map((r) => ({
+    submissionId: r.submission_id,
+    title: r.title,
+    scores: asScores(r.scores),
+    note: r.note,
+  }));
+}
