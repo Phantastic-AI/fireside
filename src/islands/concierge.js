@@ -67,8 +67,9 @@ function conciergeIsland() {
       '<input type="text" data-cc-in autocomplete="off" placeholder="Ask about the program" ' +
       'aria-label="Ask about the program">' +
       '<button type="button" data-cc-send>Ask</button></div>' +
-      '<p class="cc-hand">Bringing your own agent? Fireside speaks MCP — ' +
-      'details in the README.</p>' +
+      '<p class="cc-hand">Your agent can work this program too: ' +
+      '<span class="code">POST /mcp</span> speaks MCP — tools, the submit action, ' +
+      'and connect strings at <a class="link" href="/agents">/agents</a>.</p>' +
       '</div></div>'
     );
   }

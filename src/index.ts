@@ -11,6 +11,7 @@ import { registerEditProposal } from './routes/public/edit';
 import { registerIcs } from './routes/public/ics';
 import { registerAsk } from './routes/public/ask';
 import { registerMcp } from './mcp';
+import { registerAgents } from './routes/public/agents';
 import { registerFiles } from './routes/files';
 import { registerAdminHome } from './routes/admin/home';
 import { registerPile } from './routes/admin/pile';
@@ -281,6 +282,7 @@ registerEmbeds(app);
 // registerIcs sits before registerAgenda so /:event/s/:slug.ics wins the
 // match before the session page's bare :slug can swallow the suffix.
 registerMcp(app);
+registerAgents(app);
 registerFiles(app);
 registerCfp(app);
 registerEditProposal(app);
