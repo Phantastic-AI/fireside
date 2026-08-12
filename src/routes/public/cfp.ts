@@ -35,11 +35,14 @@ import {
 import { principalFromCookie } from '../../workflows/account';
 import {
   submitProposal,
+  coRowsFrom,
   tracksOfEvent,
   visibleQuestions,
   ABSTRACT_MAX,
+  CO_ROWS,
   FORMATS,
   LEVELS,
+  type CoRow,
   type TrackOption,
 } from '../../workflows/submit';
 // The island is hand-written browser JS, deliberately outside the TypeScript
@@ -96,11 +99,18 @@ type FormValues = {
   org: string;
   email: string;
   answers: Record<string, string | boolean>;
+  /** The people speaking with them, row by row, exactly as typed. */
+  co: CoRow[];
 };
+
+/** As many empty rows as the block draws — a row is a row whether it has been
+ *  typed into or not, so a refusal can point at the third one and be right. */
+const emptyRows = (): CoRow[] =>
+  Array.from({ length: CO_ROWS }, () => ({ name: '', email: '' }));
 
 const blank = (): FormValues => ({
   title: '', abstract: '', track: '', format: '', level: '',
-  name: '', org: '', email: '', answers: {},
+  name: '', org: '', email: '', answers: {}, co: emptyRows(),
 });
 
 const answerText = (v: FormValues, id: string): string => {
@@ -320,6 +330,47 @@ function question(q: CfpQuestion, values: FormValues, shown: boolean): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * The people speaking with you.
+ *
+ * Two boxes each, and no cleverness: three rows are already drawn, so a
+ * talk with two presenters costs one tap more than a talk with one, and
+ * nothing on this screen depends on a script that may not have loaded.
+ * The address is what matters — it is how a name becomes somebody with a
+ * portal of their own, and it is why this block is not just a text box
+ * with commas in it.
+ * ------------------------------------------------------------------ */
+
+function coRow(i: number, row: CoRow): string {
+  const n = i + 1;
+  return (
+    '<div class="fw" style="display:flex;gap:14px;flex-wrap:wrap">' +
+    `<label class="f" for="f-co-name-${n}" style="flex:1 1 14em;margin-bottom:0">` +
+    '<span class="f-lab">Name</span>' +
+    `<input type="text" id="f-co-name-${n}" name="co_name_${n}" value="${esc(row.name)}" ` +
+    'autocomplete="off"></label>' +
+    `<label class="f" for="f-co-email-${n}" style="flex:1 1 14em;margin-bottom:0">` +
+    '<span class="f-lab">Email</span>' +
+    `<input type="email" id="f-co-email-${n}" name="co_email_${n}" value="${esc(row.email)}" ` +
+    'autocomplete="off"></label>' +
+    '</div>'
+  );
+}
+
+function coBlock(rows: readonly CoRow[]): string {
+  return (
+    '<hr class="rule">' +
+    '<div role="group" aria-labelledby="co-head">' +
+    '<h2 class="display" id="co-head" style="font-size:28px;display:flex;align-items:baseline;' +
+    'gap:12px;flex-wrap:wrap">Co-presenters' +
+    '<span style="font-size:13px;font-weight:400;color:var(--muted)">optional</span></h2>' +
+    '<p class="hint" style="margin:6px 0 18px">They appear on the program beside you, and the ' +
+    'talk shows in their portal too.</p>' +
+    rows.map((r, i) => coRow(i, r)).join('') +
+    '</div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * The page.
  * ------------------------------------------------------------------ */
 
@@ -519,6 +570,7 @@ function cfpPage(o: {
       required: true,
     }) +
     '</div>' +
+    coBlock(values.co) +
     '<div class="btnrow" style="margin-top:8px">' +
     '<button type="submit" class="btn btn-primary btn-lg">Send my proposal</button>' +
     '<button type="button" class="btn btn-lg" data-save>Save and finish later</button>' +
@@ -709,6 +761,10 @@ export function registerCfp(app: Hono<{ Bindings: Env }>): void {
     for (const q of questions) {
       answers[q.id] = q.kind === 'checkbox' ? body[`q:${q.id}`] !== undefined : text(`q:${q.id}`);
     }
+    // The block as posted, back to the rows the form draws — never fewer, so a
+    // refusal comes back with three rows and every typed word still in place.
+    const co = coRowsFrom(text);
+    const typedTo = co.reduce((n, r, i) => (r.name || r.email ? i + 1 : n), 0);
     const values: FormValues = {
       title: text('title'),
       abstract: text('abstract'),
@@ -719,6 +775,7 @@ export function registerCfp(app: Hono<{ Bindings: Env }>): void {
       org: text('org'),
       email: text('email'),
       answers,
+      co: co.slice(0, Math.max(CO_ROWS, typedTo)),
     };
 
     const outcome = await submitProposal(c.env.DB, ev.id, {
@@ -732,6 +789,7 @@ export function registerCfp(app: Hono<{ Bindings: Env }>): void {
       organisation: values.org,
       answers,
       questions,
+      co,
     });
 
     if (!outcome.ok) {

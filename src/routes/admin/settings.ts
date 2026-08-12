@@ -1,6 +1,7 @@
-// S-20 — Settings. The event's own controls, in four sections, in the order a
-// person actually needs them: what the conference is, what the call asks, who
-// may touch it, and the one link that is handed to strangers with lanyards.
+// S-20 — Settings. The event's own controls, in the order a person actually
+// needs them: what the conference is, where its sessions happen, what the call
+// asks, what the committee marks by, who may touch any of it, and the one link
+// that is handed to strangers with lanyards.
 //
 // Hat (11-hats.md, the organizer register, worn as Marcus Delacroix — eleven
 // years of DevOps Days Charlotte on volunteer time): careful with other
@@ -35,6 +36,11 @@ import {
   type SettingsRoom,
   type SettingsTrack,
 } from '../../queries/settings';
+import {
+  MOST_CRITERIA,
+  type ScorecardKey,
+  type ScorecardKind,
+} from '../../queries/reviews';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import {
   saveEventFacts,
@@ -47,8 +53,10 @@ import {
   renameRoom,
   addTrack,
   renameTrack,
+  saveScorecard,
   type Said,
   type QuestionDraft,
+  type CriterionDraft,
 } from '../../workflows/settings';
 
 /* ------------------------------------------------------------------ *
@@ -148,12 +156,13 @@ function callSentence(ev: EventSettings, nowMs: number): string {
  * What the last press did — one closed set, one sentence each
  * ------------------------------------------------------------------ */
 
-type Section = 'event' | 'rooms' | 'questions' | 'team' | 'link';
+type Section = 'event' | 'rooms' | 'questions' | 'scorecard' | 'team' | 'link';
 
 const ANCHOR: Record<Section, string> = {
   event: 'the-event',
   rooms: 'the-rooms-and-the-tracks',
   questions: 'the-questions',
+  scorecard: 'the-scorecard',
   team: 'the-team',
   link: 'the-link',
 };
@@ -203,6 +212,52 @@ const SAID: Record<Said, Outcome> = {
   questions_moved: {
     where: 'questions',
     line: 'Somebody else changed the questions while this page was open. These are the ones on the call now.',
+    refused: true,
+  },
+
+  scorecard_saved: {
+    where: 'scorecard',
+    line: 'Saved. Every mark already given still counts for what it counted for.',
+    refused: false,
+  },
+  scorecard_words_needed: {
+    where: 'scorecard',
+    line: 'A line needs its words. To take one off, press Take it off instead. Nothing was changed.',
+    refused: true,
+  },
+  scorecard_kind: {
+    where: 'scorecard',
+    line: 'That is not one of the three ways to answer a line. Nothing was changed.',
+    refused: true,
+  },
+  scorecard_choices_needed: {
+    where: 'scorecard',
+    line: 'Pick one needs at least two choices to pick from. Nothing was changed.',
+    refused: true,
+  },
+  scorecard_weight: {
+    where: 'scorecard',
+    line: 'A line counts light, normal or heavy. Nothing was changed.',
+    refused: true,
+  },
+  scorecard_last: {
+    where: 'scorecard',
+    line: 'A round keeps at least one line to mark by. Nothing was changed.',
+    refused: true,
+  },
+  scorecard_too_many: {
+    where: 'scorecard',
+    line: 'A scorecard holds twelve lines at the most. Nothing was changed.',
+    refused: true,
+  },
+  scorecard_scored: {
+    where: 'scorecard',
+    line: 'Reviews have come in on this round, so nothing comes off the card until the next round opens. Nothing was changed.',
+    refused: true,
+  },
+  scorecard_moved: {
+    where: 'scorecard',
+    line: 'The scorecard or the round moved while this page was open. This is how it stands now.',
     refused: true,
   },
 
@@ -671,6 +726,183 @@ function questionsSection(ev: EventSettings, said: Said | null): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * 2b — the round's scorecard (R-11)
+ * ------------------------------------------------------------------ */
+
+// GAP, same shelf as STANDING_WORD above: 02 §6 has rows for the four ways a
+// call question is answered, and none for the three ways a scorecard line is.
+// Until it does, these are the words this screen says. §1.23 owns the review
+// register, so they go there when the doc pass reaches it.
+const CRITERION_KIND_WORD: Record<ScorecardKind, string> = {
+  scale: 'A mark out of five',
+  select: 'One word from a list',
+  text: 'A line or two',
+};
+
+const WEIGHT_WORD: Record<string, string> = {
+  '1': 'Light',
+  '2': 'Normal',
+  '3': 'Heavy',
+};
+
+function criterionKindSelect(name: string, chosen: string): string {
+  const options = (Object.keys(CRITERION_KIND_WORD) as ScorecardKind[])
+    .map(
+      (k) =>
+        `<option value="${esc(k)}"${k === chosen ? ' selected' : ''}>` +
+        `${esc(CRITERION_KIND_WORD[k])}</option>`
+    )
+    .join('');
+  return `<select name="${esc(name)}">${options}</select>`;
+}
+
+function weightSelect(name: string, chosen: number): string {
+  const options = Object.keys(WEIGHT_WORD)
+    .map(
+      (w) =>
+        `<option value="${esc(w)}"${Number(w) === chosen ? ' selected' : ''}>` +
+        `${esc(WEIGHT_WORD[w] ?? '')}</option>`
+    )
+    .join('');
+  return `<select name="${esc(name)}">${options}</select>`;
+}
+
+/** One line of the card, with its two ways to move and its one way to leave. */
+function criterionCard(k: ScorecardKey, i: number, last: number, silent: boolean): string {
+  const n = `c:${i}`;
+  const moves =
+    (i > 0
+      ? `<button class="btn btn-sm" type="submit" name="move" value="up:${i}">${esc(label('question.up', 'backstage'))}</button>`
+      : '') +
+    (i < last
+      ? `<button class="btn btn-sm" type="submit" name="move" value="down:${i}">${esc(label('question.down', 'backstage'))}</button>`
+      : '');
+
+  // Taking a line off is one press, because it is backstage, private and put
+  // back by adding it again — but only while the round has heard nothing. Once
+  // marks are in under this key, the button is not there and the sentence in
+  // the section header says why, rather than a control that refuses on press.
+  const off =
+    silent && last > 0
+      ? `<button class="btn btn-sm btn-danger" type="submit" name="remove" value="${esc(k.key)}">Take it off</button>`
+      : '';
+
+  return (
+    '<div class="card card-pad" style="margin-bottom:14px">' +
+    `<input type="hidden" name="${n}:key" value="${esc(k.key)}">` +
+    '<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px">' +
+    `<span class="t-sub">Line ${num(i + 1)}</span>` +
+    `<span class="btnrow" style="margin-left:auto">${moves}${off}</span>` +
+    '</div>' +
+    field({ name: `${n}:label`, labelText: 'What the committee marks', value: k.label }) +
+    `<label class="f"><span class="f-lab">How it is answered</span>` +
+    `${criterionKindSelect(`${n}:kind`, k.kind)}</label>` +
+    field({
+      name: `${n}:options`,
+      labelText: 'The choices',
+      value: k.options.join('\n'),
+      area: true,
+      rows: 3,
+      optional: true,
+      hint: `One per line. Only used by ${CRITERION_KIND_WORD.select.toLowerCase()}.`,
+    }) +
+    `<label class="f" style="margin-bottom:0"><span class="f-lab">How much it counts` +
+    '<span class="opt">heavy counts three times light</span></span>' +
+    `${weightSelect(`${n}:weight`, k.weight)}</label>` +
+    '</div>'
+  );
+}
+
+function addCriterionCard(): string {
+  return (
+    '<div class="card card-pad">' +
+    '<h4 class="serif" style="font-size:18px;font-weight:600;margin-bottom:12px">Add a line</h4>' +
+    field({
+      name: 'new:label',
+      labelText: 'What the committee marks',
+      value: '',
+      placeholder: 'Would this room learn something?',
+      hint: 'Fill this in and save. It joins the end of the card, and you can move it from there.',
+    }) +
+    `<label class="f"><span class="f-lab">How it is answered</span>` +
+    `${criterionKindSelect('new:kind', 'scale')}</label>` +
+    field({
+      name: 'new:options',
+      labelText: 'The choices',
+      value: '',
+      area: true,
+      rows: 3,
+      optional: true,
+      hint: `One per line. Only used by ${CRITERION_KIND_WORD.select.toLowerCase()}.`,
+    }) +
+    `<label class="f" style="margin-bottom:0"><span class="f-lab">How much it counts</span>` +
+    `${weightSelect('new:weight', 2)}</label>` +
+    '</div>'
+  );
+}
+
+function scorecardSection(ev: EventSettings, said: Said | null): string {
+  const round = label('review.round', 'backstage').replace('{n}', num(ev.currentRound));
+  const silent = ev.scoredThisRound === 0;
+  const cards = ev.scorecard
+    .map((k, i) => criterionCard(k, i, ev.scorecard.length - 1, silent))
+    .join('');
+
+  // Two different silences, and they are not the same news: a round nobody has
+  // read yet is a card that can still be rearranged freely, and a round with
+  // marks in it is a card whose lines are load-bearing.
+  const standing = silent
+    ? `<p class="hint" style="margin-bottom:14px">Nothing has been marked in ${esc(round.toLowerCase())} yet, ` +
+      'so the card is yours to rearrange. Once reviews start coming in, lines stop coming off it.</p>'
+    : `<div class="standing" style="margin-bottom:14px">${esc(
+        `${plural(ev.scoredThisRound, 'review is', 'reviews are')} in on ${round.toLowerCase()}` +
+          (ev.steppedThisRound > 0
+            ? `, and ${plural(ev.steppedThisRound, 'reader', 'readers')} stepped aside`
+            : '') +
+          '. Words and weights can still change; lines stay until the next round opens.'
+      )}</div>`;
+
+  const weightNote =
+    ev.scoredThisRound > 0
+      ? '<p class="hint" style="margin-bottom:14px">Changing what a line counts for changes every ' +
+        'average drawn from the marks already given, including the ones on screens somebody is ' +
+        'reading right now.</p>'
+      : '';
+
+  return (
+    `<div class="sec" id="${ANCHOR.scorecard}">` +
+    '<div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">' +
+    '<h3 class="serif" style="font-size:21px;font-weight:600">The scorecard</h3>' +
+    `<span class="t-sub" style="margin-left:auto">${esc(round)}` +
+    `<span class="sep">·</span>${esc(plural(ev.scorecard.length, 'line', 'lines'))}</span>` +
+    '</div>' +
+    '<p class="hint" style="margin-bottom:14px">What every reader is asked about a proposal. ' +
+    'Renaming a line never moves a mark already given — marks are kept under the line they were ' +
+    'given for, not under what it was called.</p>' +
+    saidIn('scorecard', said) +
+    standing +
+    weightNote +
+    `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/settings/scorecard">` +
+    // Enter inside a field must save, never move or remove a line: the browser
+    // presses the first submit button in the form, so this is it.
+    '<button type="submit" hidden aria-hidden="true" tabindex="-1"></button>' +
+    `<input type="hidden" name="c:count" value="${esc(String(ev.scorecard.length))}">` +
+    `<input type="hidden" name="round" value="${esc(String(ev.currentRound))}">` +
+    `<input type="hidden" name="seen" value="${esc(ev.scorecardRaw)}">` +
+    cards +
+    (ev.scorecard.length < MOST_CRITERIA
+      ? addCriterionCard()
+      : `<p class="hint">A scorecard holds ${esc(num(MOST_CRITERIA))} lines at the most. ` +
+        'Take one off before adding another.</p>') +
+    '<div class="btnrow" style="margin-top:16px">' +
+    '<button class="btn btn-primary" type="submit">Save the scorecard</button>' +
+    `<a class="btn" href="/admin/${encodeURIComponent(ev.slug)}/reviews">See the reading room</a></div>` +
+    '<p class="hint">Moving a line saves the rest of your changes with it.</p>' +
+    '</form></div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * 3 — the team (D-026)
  * ------------------------------------------------------------------ */
 
@@ -839,6 +1071,7 @@ function settingsPage(o: {
     eventSection(ev, o.said, o.nowMs) +
     roomsTracksSection(ev, o.said) +
     questionsSection(ev, o.said) +
+    scorecardSection(ev, o.said) +
     teamSection(ev, o.said, confirmOff) +
     linkSection(ev, o.said, o.origin, o.confirm === 'link');
 
@@ -995,6 +1228,56 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
       });
 
       return saveQuestions(c.env.DB, principal, eventId, text('seen'), drafts);
+    })
+  );
+
+  app.post('/admin/:eventSlug/settings/scorecard', (c) =>
+    write(c, (principal, eventId, body) => {
+      const { text } = reader(body);
+      const count = Math.min(Math.max(0, Math.floor(Number(text('c:count')) || 0)), MOST_CRITERIA);
+      const drafts: CriterionDraft[] = [];
+      for (let i = 0; i < count; i++) {
+        drafts.push({
+          key: text(`c:${i}:key`),
+          label: text(`c:${i}:label`),
+          kind: text(`c:${i}:kind`),
+          options: text(`c:${i}:options`).split('\n'),
+          weight: text(`c:${i}:weight`),
+        });
+      }
+
+      // Move up / move down are submits on the same form, exactly as they are
+      // for the questions — so a move carries every pending edit with it.
+      const move = /^(up|down):(\d+)$/.exec(text('move'));
+      if (move) {
+        const i = Number(move[2]);
+        const j = move[1] === 'up' ? i - 1 : i + 1;
+        const a = drafts[i];
+        const b = drafts[j];
+        if (a && b) {
+          drafts[i] = b;
+          drafts[j] = a;
+        }
+      }
+
+      drafts.push({
+        key: '',
+        label: text('new:label'),
+        kind: text('new:kind'),
+        options: text('new:options').split('\n'),
+        weight: text('new:weight') || '2',
+      });
+
+      const round = Math.floor(Number(text('round')) || 0);
+      return saveScorecard(
+        c.env.DB,
+        principal,
+        eventId,
+        round,
+        text('seen'),
+        drafts,
+        text('remove')
+      );
     })
   );
 

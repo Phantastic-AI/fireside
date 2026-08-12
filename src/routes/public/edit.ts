@@ -11,10 +11,18 @@
 //   card, not in an email and not on the thanks page — the thanks page sends
 //   people to their portal, which is where signing in happens.
 //
-//   THE READ IS queries/portal.ts. That query is scoped to one person and it
-//   owns the not-told invariant, so a decision that has been made but not sent
-//   is invisible here exactly as it is invisible in the portal. This file never
-//   reads the real state, so it can never say a decision out loud early.
+//   THE WORDS COME FROM queries/portal.ts. That query is scoped to one person
+//   and it owns the not-told invariant, so a decision that has been made but
+//   not sent is invisible in what this page renders, exactly as it is in the
+//   portal. Nothing drawn here is read from anywhere else.
+//
+//   THE DOOR IS THE SHAPE OF THE LOCK. Which of the pages to draw is decided
+//   from the real state instead (workflows/edit.ts, `trueStanding`), because a
+//   form drawn over a proposal the write guard will refuse sends somebody away
+//   with the wrong sentence — and a wrong sentence about a decided proposal is
+//   worse than wrong, it is a tell. What that read returns is never printed:
+//   the not-told case gets a page that says only what is true of every
+//   proposal the committee is still holding.
 //
 //   THE WINDOW IS THE WRITER'S. workflows/edit.ts re-checks both the call and
 //   the state inside the batch; what this screen checks is only what to draw.
@@ -28,8 +36,19 @@ import { label } from '../../lib/labels';
 import { cfpQuestions, eventBySlug, type CfpQuestion, type EventHome } from '../../queries/public';
 import { portalView, type PortalSubmission } from '../../queries/portal';
 import { principalFromCookie } from '../../workflows/account';
-import { ABSTRACT_MAX, FORMATS, LEVELS, tracksOfEvent, visibleQuestions, type TrackOption } from '../../workflows/submit';
-import { editProposal } from '../../workflows/edit';
+import {
+  ABSTRACT_MAX,
+  CO_ROWS,
+  FORMATS,
+  LEVELS,
+  coRowsFrom,
+  peopleOnTalk,
+  tracksOfEvent,
+  visibleQuestions,
+  type CoRow,
+  type TrackOption,
+} from '../../workflows/submit';
+import { editProposal, trueStanding } from '../../workflows/edit';
 // The island is hand-written browser JS, deliberately outside the TypeScript
 // program (tsconfig has no allowJs, and types.d.ts declares only '*.css').
 // @ts-ignore -- plain-JS island; the call's form and this one run the same one.
@@ -66,7 +85,18 @@ type FormValues = {
   format: string;
   level: string;
   answers: Record<string, string | boolean>;
+  /** The people speaking with them, row by row, exactly as the form holds them. */
+  co: CoRow[];
 };
+
+/** The rows the block draws: everyone already on the talk, and then empty ones
+ *  until there are three. Every person it shows is a person it can also take
+ *  off, which is the whole reason the number is not fixed at three. */
+function coRowsOf(existing: readonly CoRow[]): CoRow[] {
+  const rows = existing.map((r) => ({ name: r.name, email: r.email }));
+  while (rows.length < CO_ROWS) rows.push({ name: '', email: '' });
+  return rows;
+}
 
 /** The stored answers, narrowed to what a control can hold. */
 function answersOf(stored: Record<string, unknown>): Record<string, string | boolean> {
@@ -78,7 +108,7 @@ function answersOf(stored: Record<string, unknown>): Record<string, string | boo
   return out;
 }
 
-function valuesOf(s: PortalSubmission): FormValues {
+function valuesOf(s: PortalSubmission, co: readonly CoRow[]): FormValues {
   return {
     title: s.title,
     abstract: s.abstract ?? '',
@@ -86,6 +116,7 @@ function valuesOf(s: PortalSubmission): FormValues {
     format: s.format,
     level: s.level ?? '',
     answers: answersOf(s.answers),
+    co: coRowsOf(co),
   };
 }
 
@@ -267,6 +298,43 @@ function question(q: CfpQuestion, values: FormValues, shown: boolean): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * The people speaking with you. The call's own block, word for word and
+ * box for box — a speaker who added somebody on the way in should find
+ * the same two boxes here, already full, and taking a name out should be
+ * rubbing it out rather than hunting for a control that does it.
+ * ------------------------------------------------------------------ */
+
+function coRow(i: number, row: CoRow): string {
+  const n = i + 1;
+  return (
+    '<div class="fw" style="display:flex;gap:14px;flex-wrap:wrap">' +
+    `<label class="f" for="f-co-name-${n}" style="flex:1 1 14em;margin-bottom:0">` +
+    '<span class="f-lab">Name</span>' +
+    `<input type="text" id="f-co-name-${n}" name="co_name_${n}" value="${esc(row.name)}" ` +
+    'autocomplete="off"></label>' +
+    `<label class="f" for="f-co-email-${n}" style="flex:1 1 14em;margin-bottom:0">` +
+    '<span class="f-lab">Email</span>' +
+    `<input type="email" id="f-co-email-${n}" name="co_email_${n}" value="${esc(row.email)}" ` +
+    'autocomplete="off"></label>' +
+    '</div>'
+  );
+}
+
+function coBlock(rows: readonly CoRow[]): string {
+  return (
+    '<hr class="rule">' +
+    '<div role="group" aria-labelledby="co-head">' +
+    '<h2 class="display" id="co-head" style="font-size:28px;display:flex;align-items:baseline;' +
+    'gap:12px;flex-wrap:wrap">Co-presenters' +
+    '<span style="font-size:13px;font-weight:400;color:var(--muted)">optional</span></h2>' +
+    '<p class="hint" style="margin:6px 0 18px">They appear on the program beside you, and the ' +
+    'talk shows in their portal too. Clearing a row takes that person off this talk.</p>' +
+    rows.map((r, i) => coRow(i, r)).join('') +
+    '</div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * The pages
  * ------------------------------------------------------------------ */
 
@@ -369,6 +437,28 @@ function settledPage(ev: EventHome, s: PortalSubmission): string {
           'of where things stand.'
       );
   }
+}
+
+/**
+ * Decided, and the letter has not gone yet.
+ *
+ * This is the one page in the product a speaker can reach while something is
+ * true about their talk that they have not been told. So it says nothing a
+ * proposal still being read would not say: no state word, no date, no hint
+ * that anything has happened at all. Every sentence here is equally true of a
+ * proposal sitting in the middle of the pile, which is exactly what makes it
+ * safe — read it beside a friend's and there is nothing to compare.
+ *
+ * If a sentence is ever added to this page, it has to pass that test first.
+ */
+function inHandPage(ev: EventHome): string {
+  return shutPage(
+    ev,
+    'The committee has this one in hand.',
+    'While they read, the words stay as you sent them. Anything you need them to know, add a ' +
+      'note from your portal.',
+    'Open your portal →'
+  );
 }
 
 /** Signed in, but this is somebody else's talk — or nobody's. */
@@ -481,6 +571,7 @@ function editPage(o: {
     }) +
     o.questions.map((q) => question(q, values, shownIds.has(q.id))).join('') +
     '</div>' +
+    coBlock(values.co) +
     '<div class="btnrow" style="margin-top:8px">' +
     '<button type="submit" class="btn btn-primary btn-lg">Save these words</button>' +
     `<a class="btn btn-lg" href="/${esc(ev.slug)}/portal">${esc(label('pane.leave', 'onstage'))}</a>` +
@@ -515,16 +606,39 @@ function editPage(o: {
  * ------------------------------------------------------------------ */
 
 /** What the screen is allowed to draw. Everything past 'ok' is a refusal with
- *  a reason; the reasons are told-gated because the read is. */
+ *  a reason, and every reason is one a speaker may hear. */
 type Standing =
   | { kind: 'signed-out' }
   | { kind: 'not-yours' }
   | { kind: 'call-shut' }
+  /** Decided, and not yet told. Named for what the speaker is shown, never
+   *  for what is true — nothing downstream of this word may print it. */
+  | { kind: 'in-hand' }
   | { kind: 'settled'; s: PortalSubmission }
   | { kind: 'ok'; s: PortalSubmission; personId: string };
 
-const EDITABLE = new Set(['draft', 'submitted']);
-
+/**
+ * What to draw, and what to draw it from.
+ *
+ * The words on the page come from the portal's read, which is told-gated: it
+ * cannot see a decision that has not been sent, and that is the product's
+ * promise, not an oversight. But the door has to be the same shape as the lock
+ * behind it — a form drawn over a proposal the write guard will refuse ends in
+ * a sentence about the proposal moving, which is both wrong and, to somebody
+ * re-reading it later, a hint. So the *choice* is made from the real state
+ * (workflows/edit.ts, `trueStanding`), and none of what it read is printed.
+ *
+ * The order of the three closed doors is deliberate:
+ *
+ *   Told first — "you are on the program" is a truer reason than "the call has
+ *   closed", and by then the speaker already knows it.
+ *
+ *   Then the call. A proposal nobody has been told about reads the same after
+ *   the call closes whether the committee has decided it or not, which is the
+ *   point: two speakers comparing screens see one sentence between them.
+ *
+ *   The quiet page last, for a decision made while the call is still open.
+ */
 async function standingOf(
   env: Env,
   cookie: string | undefined,
@@ -540,11 +654,16 @@ async function standingOf(
   const s = view?.submissions.find((x) => x.id === submissionId);
   if (!s) return { kind: 'not-yours' };
 
-  // The talk's own standing is read before the call's, because by the time a
-  // decision exists the call has almost always closed — and "you are on the
-  // program" is the truer reason than "the call has closed".
-  if (!EDITABLE.has(s.state)) return { kind: 'settled', s };
+  const truth = await trueStanding(env.DB, ev.id, submissionId, principal.personId);
+  if (!truth) return { kind: 'not-yours' };
+
+  const decided =
+    truth.state === 'accepted' || truth.state === 'waitlisted' || truth.state === 'rejected';
+  const over = truth.state === 'withdrawn' || truth.state === 'cancelled';
+
+  if (over || (decided && truth.told)) return { kind: 'settled', s };
   if (!callIsOpen(ev, nowMs)) return { kind: 'call-shut' };
+  if (decided) return { kind: 'in-hand' };
   return { kind: 'ok', s, personId: principal.personId };
 }
 
@@ -571,13 +690,21 @@ export function registerEditProposal(app: Hono<{ Bindings: Env }>): void {
     if (standing.kind === 'not-yours') return c.html(notYoursPage(ev), 404);
     if (standing.kind === 'call-shut') return c.html(callShutPage(ev), 403);
     if (standing.kind === 'settled') return c.html(settledPage(ev, standing.s), 403);
+    if (standing.kind === 'in-hand') return c.html(inHandPage(ev), 403);
 
-    const [tracks, questions] = await Promise.all([
+    const [tracks, questions, people] = await Promise.all([
       tracksOfEvent(c.env.DB, ev.id),
       cfpQuestions(c.env.DB, ev.id),
+      peopleOnTalk(c.env.DB, standing.s.id),
     ]);
+    // The block comes back full: everyone on the talk who has an address to
+    // come back to. Somebody an organizer put on without one is not shown and
+    // not touched — this form only takes off what it can put back.
+    const co = people
+      .filter((p) => p.role === 'co_speaker' && !p.isSubmitter && p.email !== null)
+      .map((p) => ({ name: p.name, email: p.email ?? '' }));
     return c.html(
-      editPage({ ev, s: standing.s, tracks, questions, values: valuesOf(standing.s) })
+      editPage({ ev, s: standing.s, tracks, questions, values: valuesOf(standing.s, co) })
     );
   });
 
@@ -599,6 +726,11 @@ export function registerEditProposal(app: Hono<{ Bindings: Env }>): void {
     // Nothing was written, and the screen says why in its own words.
     if (standing.kind === 'call-shut') return c.html(callShutPage(ev), 422);
     if (standing.kind === 'settled') return c.html(settledPage(ev, standing.s), 422);
+    // Nothing was written here either, and the sentence for it is the portal's
+    // — the same one the page above says, for the same reason.
+    if (standing.kind === 'in-hand') {
+      return c.redirect(backToPortal(ev.slug, 'note=in-hand'), 303);
+    }
 
     const body = await c.req.parseBody();
     const text = (k: string): string => {
@@ -610,6 +742,8 @@ export function registerEditProposal(app: Hono<{ Bindings: Env }>): void {
     for (const q of questions) {
       answers[q.id] = q.kind === 'checkbox' ? body[`q:${q.id}`] !== undefined : text(`q:${q.id}`);
     }
+    const co = coRowsFrom(text);
+    const typedTo = co.reduce((n, r, i) => (r.name || r.email ? i + 1 : n), 0);
     const values: FormValues = {
       title: text('title'),
       abstract: text('abstract'),
@@ -617,6 +751,9 @@ export function registerEditProposal(app: Hono<{ Bindings: Env }>): void {
       format: text('format'),
       level: text('level'),
       answers,
+      // A refusal comes back with the block as it was left — including the row
+      // somebody had just rubbed out.
+      co: co.slice(0, Math.max(CO_ROWS, typedTo)),
     };
 
     const outcome = await editProposal(
@@ -632,6 +769,7 @@ export function registerEditProposal(app: Hono<{ Bindings: Env }>): void {
         level: values.level,
         answers,
         questions,
+        co,
       }
     );
 

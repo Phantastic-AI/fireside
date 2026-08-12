@@ -27,6 +27,10 @@ import {
 } from '../../queries/portal';
 import { principalFromCookie } from '../../workflows/account';
 import { completeTask, withdrawProposal, type WriteOutcome } from '../../workflows/portal-actions';
+// Who else is on a talk. The read lives beside the writer that keeps it true
+// (workflows/submit.ts), the same way the call's own tracks do; queries/portal.ts
+// is its tidier long-term home.
+import { peopleOnTalks } from '../../workflows/submit';
 import {
   saveHeadshot,
   saveDeck,
@@ -218,6 +222,11 @@ const NOTES: Record<string, string> = {
     'written beside the picker.',
   nothing: 'Nothing came through. Choose a file and send it again.',
   moved: 'That had already moved before this page opened. What you see now is where it stands.',
+  // Sent here by the edit form when the words are no longer the speaker's to
+  // change. It says what is true of every proposal the committee is holding,
+  // and nothing that is true of only some of them — read the page it comes
+  // from (routes/public/edit.ts, inHandPage) before changing a word of it.
+  'in-hand': 'The committee has this one in hand. While they read, the words stay as you sent them.',
   refused: 'The committee has moved this one on, so it can no longer be withdrawn here.',
   trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
 };
@@ -318,10 +327,24 @@ function metaLine(s: PortalSubmission, tzLabel: string | null): string {
   return bits.length ? `<p class="sub" style="margin-top:4px">${bits.join(' · ')}</p>` : '';
 }
 
-function laneOf(view: PortalView, s: PortalSubmission): Lane {
+/** "Ana Ruiz and Tom Beckett" — a list a person would say out loud. */
+function saidList(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/** Everybody else on the talk, under its title. A speaker who is on a talk
+ *  with two other people should see both of them here, whichever of the three
+ *  of them sent it — so this names people, not standings. */
+function withLine(names: readonly string[]): string {
+  if (!names.length) return '';
+  return `<p class="sub" style="margin-top:4px">With ${esc(saidList(names))}.</p>`;
+}
+
+function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]): Lane {
   const ev = view.event;
   const tz = ev.timezone;
-  const title = `<h3>${esc(s.title)}</h3>`;
+  const title = `<h3>${esc(s.title)}</h3>` + withLine(others);
   const note = s.decision?.note ? committeeNote(s.decision.note) : '';
   const seeProgram = `<a class="btn" href="/${esc(ev.slug)}/agenda">See the program →</a>`;
 
@@ -422,8 +445,8 @@ function laneOf(view: PortalView, s: PortalSubmission): Lane {
   }
 }
 
-function proposalCard(view: PortalView, s: PortalSubmission): string {
-  const lane = laneOf(view, s);
+function proposalCard(view: PortalView, s: PortalSubmission, others: readonly string[]): string {
+  const lane = laneOf(view, s, others);
   return (
     `<div class="pcard ${lane.cls}"><div class="top">` +
     `<p style="margin:0;color:${lane.colour};font-weight:640">${esc(lane.head)}</p>` +
@@ -724,7 +747,9 @@ function profileCard(view: PortalView, onTheProgram: boolean): string {
 function portalPage(
   view: PortalView,
   note: string | undefined,
-  decks: Map<string, StoredFile>
+  decks: Map<string, StoredFile>,
+  /** Everyone else on each talk, by submission — names only, in program order. */
+  others: Map<string, string[]>
 ): string {
   const ev = view.event;
   const tz = ev.timezone;
@@ -763,7 +788,9 @@ function portalPage(
     });
   }
 
-  const cards = view.submissions.map((s) => proposalCard(view, s)).join('');
+  const cards = view.submissions
+    .map((s) => proposalCard(view, s, others.get(s.id) ?? []))
+    .join('');
 
   // Everything owed, in one list — the answer to "what do I owe" in one glance.
   const titles = new Map(view.submissions.map((s) => [s.id, s.title]));
@@ -873,14 +900,26 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     const asked = [...view.submissions.flatMap((s) => s.tasks), ...view.tasks]
       .filter((t) => t.kind === 'file_request')
       .map((t) => t.id);
-    const decks = await decksForTasks(c.env.DB, asked);
+    const [decks, people] = await Promise.all([
+      decksForTasks(c.env.DB, asked),
+      peopleOnTalks(c.env.DB, view.submissions.map((s) => s.id)),
+    ]);
+    // Everyone on each talk but the person reading it: the co-presenters they
+    // added, and — when they are the co-presenter — whoever sent it.
+    const others = new Map<string, string[]>();
+    for (const [submissionId, on] of people) {
+      others.set(
+        submissionId,
+        on.filter((p) => p.personId !== principal.personId).map((p) => p.name)
+      );
+    }
 
     // One speaker's own page: never held in a shared cache anywhere.
     c.header('cache-control', 'private, no-store');
     // A saved edit arrives under its own flag; its sentence still lives in
     // NOTES with the others, so there is one closed set and not two.
     const note = c.req.query('edited') === '1' ? 'edited' : c.req.query('note');
-    return c.html(portalPage(view, note, decks));
+    return c.html(portalPage(view, note, decks, others));
   });
 
   app.post('/:event/portal/done', async (c) => {

@@ -30,6 +30,19 @@
 //
 // Scope is READ_ROLES: viewers review. Lena Fischer holds 'viewer' on AI
 // Engineer New York and this is the one backstage screen that is hers.
+//
+// TWO FACTS THIS FILE ADDED WHEN THE ROOM GREW, both of them shapes rather
+// than columns, because the schema is the one thing a deadline should not be
+// allowed to move:
+//
+//   STEPPING ASIDE is a submitted review with nothing in it (RECUSED_SQL).
+//   Nothing else in the product can produce that shape, so it needs no flag —
+//   and because every average is taken over the marks themselves, a reviewer
+//   who knows the speaker removes her voice instead of adding a quiet zero.
+//
+//   WEIGHT is a number on a scorecard line, and it reaches arithmetic in
+//   exactly one place: weightedAverage below. Words are never averaged, and a
+//   line nobody marked is a missing opinion rather than a nought.
 
 import type { Principal } from '../workflows/account';
 import { requireScope, READ_ROLES } from './admin';
@@ -66,6 +79,39 @@ export const MY_STAGED_SQL =
 export const UNTOUCHED_SQL =
   "rv.submitted_at IS NULL AND NOT EXISTS (SELECT 1 FROM json_each(rv.scores))";
 
+/**
+ * THE ONE EXPRESSION for "stepped aside" — a review that was finished without
+ * a mark in it. A reviewer who knows the speaker says so, and the row is
+ * closed with nothing inside: no marks, a note that says what happened, and a
+ * finish time that fixes it for the round like any other submitted review.
+ *
+ * The shape is unambiguous on purpose. Submitting never sends an empty review
+ * — the cohort in workflows/review.ts requires MY_STAGED_SQL, which requires
+ * marks — so a submitted review with no marks in it can only have got there
+ * one way. It also means an empty review contributes nothing to any average,
+ * because every average is taken over the marks themselves: stepping aside
+ * removes a voice rather than adding a quiet zero.
+ *
+ * Requires the review to be aliased `rv`.
+ */
+export const RECUSED_SQL =
+  "rv.submitted_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM json_each(rv.scores))";
+
+/** The complement inside submitted_at: a review that was finished WITH marks. */
+export const SCORED_SQL =
+  "rv.submitted_at IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(rv.scores))";
+
+/**
+ * The one subject a nudge ever carries, and the window one lands in.
+ *
+ * Both live here rather than in the writer because the screen has to know them
+ * to answer "has this person been nudged today?" before it offers the button,
+ * and the writer has to know them to refuse a second one. One string, one
+ * number, both readers.
+ */
+export const NUDGE_SUBJECT = 'Your reviews are waiting';
+export const NUDGE_HOURS = 20;
+
 /** Whoever may decide may also hand the pile out, and reads all of it to do so. */
 export function seesEverything(principal: Principal, eventId: string): boolean {
   try {
@@ -80,8 +126,37 @@ export function seesEverything(principal: Principal, eventId: string): boolean {
  * DTOs
  * ------------------------------------------------------------------ */
 
-/** One line of the round's scorecard: a key, its words, and its top mark. */
-export type ScorecardKey = { key: string; label: string; max: number };
+/**
+ * How much one line of the scorecard counts when the marks are averaged:
+ * Light, Normal, Heavy. Stored as a number so the arithmetic is arithmetic.
+ */
+export type ScorecardWeight = 1 | 2 | 3;
+
+/** The three ways a committee answers one line. Only one of them is a number. */
+export type ScorecardKind = 'scale' | 'select' | 'text';
+
+/**
+ * One line of the round's scorecard: a key, its words, how it is answered, and
+ * how much it counts.
+ *
+ * `max` belongs to a scale and is left at 5 for the other two, where nothing
+ * reads it. `options` belongs to a select and is empty elsewhere. `weight`
+ * reaches the arithmetic only through a scale, because words are not numbers
+ * to average — see weightedAverage below, which is the only place the two
+ * facts meet.
+ */
+export type ScorecardKey = {
+  key: string;
+  label: string;
+  kind: ScorecardKind;
+  max: number;
+  options: string[];
+  weight: ScorecardWeight;
+};
+
+/** A mark: a number off a scale, or the words a select or a text answer left. */
+export type ScoreValue = number | string;
+export type Scores = Record<string, ScoreValue>;
 
 export type QueueRow = {
   id: string;
@@ -94,12 +169,14 @@ export type QueueRow = {
   /** When the speaker sent it in — the only date on the row that is not mine. */
   waitingSince: number | null;
   /** My marks for this round, key by key. Empty when I have not scored it. */
-  myScores: Record<string, number>;
+  myScores: Scores;
   myNote: string | null;
   /** Set once I have submitted: this round's marks are fixed from then on. */
   mySubmittedAt: number | null;
   /** Mine, scored, and still only mine. */
   staged: boolean;
+  /** Finished with nothing in it: I know this speaker and stepped aside. */
+  myRecused: boolean;
 };
 
 export type ReviewQueue = {
@@ -123,9 +200,11 @@ export type ReviewQueue = {
   everything: boolean;
   /** Mine, scored, not yet submitted — the two-pass number. */
   staged: number;
-  /** Mine, submitted, this round. */
+  /** Mine, sent in with marks in them, this round. */
   submitted: number;
-  /** Still owed a mark from me: total less what I have already submitted. */
+  /** Mine, finished by stepping aside, this round. Never called "scored". */
+  recused: number;
+  /** Still owed something from me: neither marked and sent, nor stepped away from. */
   left: number;
 };
 
@@ -141,20 +220,35 @@ export type TeamReader = {
   standing: string;
   /** Handed to them this round, on proposals still undecided. */
   assigned: number;
-  /** Of those, submitted to the committee. */
+  /** Of those, sent in with marks in them. */
   completed: number;
+  /** Of those, finished by stepping aside — done, and counted in no average. */
+  recused: number;
   /** Of those, marked but not yet submitted — somebody's evening in progress. */
   started: number;
   /** Of those, never opened: the only ones that can be taken back. */
   untouched: number;
+  /** When they were last nudged about this conference, if they have been. */
+  nudgedAt: number | null;
   isYou: boolean;
+};
+
+/** Where a round stands, as the chair reads it before opening the next one. */
+export type RoundStanding = {
+  round: number;
+  /** Reviews sent in with marks this round — what stays on the record. */
+  onRecord: number;
+  /** Reviews finished by stepping aside this round. */
+  stepped: number;
+  /** True when the next round already has a scorecard written for it. */
+  nextCardExists: boolean;
 };
 
 /** A staged review as the confirm pass reads it back, before it goes. */
 export type StagedReview = {
   submissionId: string;
   title: string;
-  scores: Record<string, number>;
+  scores: Scores;
   note: string | null;
 };
 
@@ -166,6 +260,8 @@ export type ReviewEvent = {
   tzLabel: string | null;
   round: number;
   scorecard: ScorecardKey[];
+  /** Every round's scorecard as stored, so the round panel can see ahead. */
+  scorecardsRaw: string;
   /** This person reads the whole pile and may hand it out. See seesEverything. */
   everything: boolean;
 };
@@ -190,13 +286,22 @@ function asObject(text: string | null): Record<string, unknown> {
   }
 }
 
-function asScores(text: string | null): Record<string, number> {
-  const out: Record<string, number> = {};
+/**
+ * The marks on one review. A number is a mark off a scale; a string is the
+ * word a select left or the line or two a text answer left. Anything else was
+ * never written by this product and is dropped rather than rendered.
+ */
+function asScores(text: string | null): Scores {
+  const out: Scores = {};
   for (const [k, v] of Object.entries(asObject(text))) {
     if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    else if (typeof v === 'string' && v.trim() !== '') out[k] = v.slice(0, TEXT_MARK_MAX);
   }
   return out;
 }
+
+/** How long one written mark may be — a line or two, not a second abstract. */
+export const TEXT_MARK_MAX = 600;
 
 /**
  * The window a reviewer reads in one sitting, and its ceiling.
@@ -216,10 +321,27 @@ export function windowSize(raw: string | undefined): number {
   return Math.max(PAGE, Math.min(MOST, Math.floor(n / PAGE) * PAGE || PAGE));
 }
 
+/** The most lines one round's scorecard may carry, and the most choices one. */
+export const MOST_CRITERIA = 12;
+export const MOST_CHOICES = 12;
+
+const KINDS: readonly ScorecardKind[] = ['scale', 'select', 'text'];
+
+/** A key that survives a form field name and a JSON key without escaping. */
+export const CRITERION_KEY = /^[A-Za-z0-9_-]{1,40}$/;
+
 /**
  * The scorecard for one round, out of event.round_scorecards.
  *
- * Stored shape: `{"1":[{"key":"fit","label":"Fit for this room","max":5}]}`.
+ * Stored shape, one entry per round:
+ *   `{"1":[{"key":"fit","label":"Fit for this room","kind":"scale","weight":2}]}`
+ *
+ * A 'select' carries its own `options`; a 'text' carries neither options nor a
+ * top mark. THE OLD SHAPE STILL READS: an entry written before there were
+ * kinds carries only `max`, and comes back as a scale of normal weight — the
+ * scorecards the seed wrote are that shape, and an editor that quietly dropped
+ * them would take a committee's own words off their screen.
+ *
  * An event that has never written one — DevOps Days Charlotte stores `{}` —
  * falls back to a single overall mark, because a committee with no scorecard
  * still has an opinion, and a screen with no scales is a screen that cannot
@@ -231,19 +353,68 @@ export function scorecardFor(stored: string | null, round: number): ScorecardKey
   const seen = new Set<string>();
   if (Array.isArray(raw)) {
     for (const item of raw) {
+      if (out.length >= MOST_CRITERIA) break;
       if (typeof item !== 'object' || item === null) continue;
       const o = item as Record<string, unknown>;
       const key = typeof o.key === 'string' ? o.key.trim() : '';
-      if (!/^[A-Za-z0-9_-]{1,40}$/.test(key) || seen.has(key)) continue;
+      if (!CRITERION_KEY.test(key) || seen.has(key)) continue;
       seen.add(key);
       const words = typeof o.label === 'string' && o.label.trim() ? o.label.trim() : key;
       const max =
         typeof o.max === 'number' && o.max >= 2 && o.max <= 10 ? Math.floor(o.max) : 5;
-      out.push({ key, label: words, max });
+      const kind =
+        typeof o.kind === 'string' && (KINDS as readonly string[]).includes(o.kind)
+          ? (o.kind as ScorecardKind)
+          : 'scale';
+      const options =
+        kind === 'select' && Array.isArray(o.options)
+          ? o.options
+              .filter((c): c is string => typeof c === 'string' && c.trim() !== '')
+              .map((c) => c.trim())
+              .slice(0, MOST_CHOICES)
+          : [];
+      // A weight nobody has said out loud is the ordinary one, which is what
+      // every scorecard written before weights existed meant by saying nothing.
+      const weight: ScorecardWeight =
+        o.weight === 1 || o.weight === 3 ? (o.weight as ScorecardWeight) : 2;
+      // A select with nothing to pick from is not answerable, so it reads as
+      // the words it was going to be — never as a broken control.
+      out.push({
+        key,
+        label: words,
+        kind: kind === 'select' && options.length < 2 ? 'text' : kind,
+        max,
+        options,
+        weight,
+      });
     }
   }
-  if (out.length === 0) out.push({ key: 'overall', label: 'Overall', max: 5 });
+  if (out.length === 0) {
+    out.push({ key: 'overall', label: 'Overall', kind: 'scale', max: 5, options: [], weight: 2 });
+  }
   return out;
+}
+
+/**
+ * The weighted average of one set of marks: sum of w·score over sum of w,
+ * across the numbered lines only.
+ *
+ * Words are not averaged. A select and a text answer say something the room
+ * reads, not something the room adds up, so they carry no weight into this —
+ * and neither does a line the reviewer left blank, because a missing mark is
+ * a missing opinion rather than a zero. Null when nothing numbered was marked.
+ */
+export function weightedAverage(card: ScorecardKey[], scores: Scores): number | null {
+  let top = 0;
+  let bottom = 0;
+  for (const k of card) {
+    if (k.kind !== 'scale') continue;
+    const v = scores[k.key];
+    if (typeof v !== 'number') continue;
+    top += k.weight * v;
+    bottom += k.weight;
+  }
+  return bottom === 0 ? null : top / bottom;
 }
 
 /* ------------------------------------------------------------------ *
@@ -289,6 +460,7 @@ export async function reviewEvent(
     tzLabel: row.tz_label,
     round: row.current_round,
     scorecard: scorecardFor(row.round_scorecards, row.current_round),
+    scorecardsRaw: row.round_scorecards ?? '{}',
     everything: seesEverything(principal, row.id),
   };
 }
@@ -308,9 +480,16 @@ type QueueSqlRow = {
   my_note: string | null;
   my_submitted_at: number | null;
   staged: number;
+  recused: number;
 };
 
-type QueueCountRow = { pile: number; assigned: number; submitted: number; staged: number };
+type QueueCountRow = {
+  pile: number;
+  assigned: number;
+  submitted: number;
+  recused: number;
+  staged: number;
+};
 
 /**
  * My queue for this round: what was handed to me, mine-first.
@@ -351,7 +530,8 @@ export async function reviewQueue(
                 t.slug AS track_slug, t.name AS track_name, t.colour AS track_colour,
                 rv.scores AS my_scores, rv.note AS my_note,
                 rv.submitted_at AS my_submitted_at,
-                CASE WHEN rv.id IS NOT NULL AND ${MY_STAGED_SQL} THEN 1 ELSE 0 END AS staged
+                CASE WHEN rv.id IS NOT NULL AND ${MY_STAGED_SQL} THEN 1 ELSE 0 END AS staged,
+                CASE WHEN rv.id IS NOT NULL AND ${RECUSED_SQL} THEN 1 ELSE 0 END AS recused
            FROM submission s
            LEFT JOIN track t ON t.id = s.track_id
            LEFT JOIN review rv ON rv.submission_id = s.id AND ${MINE}
@@ -368,7 +548,8 @@ export async function reviewQueue(
       .prepare(
         `SELECT COUNT(*) AS pile,
                 COUNT(rv.id) AS assigned,
-                COUNT(CASE WHEN rv.submitted_at IS NOT NULL THEN 1 END) AS submitted,
+                COUNT(CASE WHEN rv.id IS NOT NULL AND ${SCORED_SQL} THEN 1 END) AS submitted,
+                COUNT(CASE WHEN rv.id IS NOT NULL AND ${RECUSED_SQL} THEN 1 END) AS recused,
                 COUNT(CASE WHEN rv.id IS NOT NULL AND ${MY_STAGED_SQL} THEN 1 END) AS staged
            FROM submission s
            LEFT JOIN review rv ON rv.submission_id = s.id AND ${MINE}
@@ -380,7 +561,8 @@ export async function reviewQueue(
     // and those are two different silences (see the empty states).
     db
       .prepare(
-        `SELECT COUNT(*) AS mine, COUNT(rv.submitted_at) AS mine_done
+        `SELECT COUNT(*) AS mine,
+                COUNT(CASE WHEN ${SCORED_SQL} THEN 1 END) AS mine_done
            FROM review rv
            JOIN submission s ON s.id = rv.submission_id
           WHERE s.event_id = ?1 AND rv.reviewer_person_id = ?2 AND rv.round = ?3`
@@ -394,6 +576,7 @@ export async function reviewQueue(
   const assigned = c?.assigned ?? 0;
   const total = event.everything ? pile : assigned;
   const submitted = c?.submitted ?? 0;
+  const recused = c?.recused ?? 0;
   const rows = rowsOf<QueueSqlRow>(rowRes).map((r) => ({
     id: r.id,
     title: r.title,
@@ -410,6 +593,7 @@ export async function reviewQueue(
     myNote: r.my_note,
     mySubmittedAt: r.my_submitted_at,
     staged: r.staged === 1,
+    myRecused: r.recused === 1,
   }));
 
   return {
@@ -426,7 +610,12 @@ export async function reviewQueue(
     everything: event.everything,
     staged: c?.staged ?? 0,
     submitted,
-    left: total - submitted,
+    recused,
+    // Stepping aside finishes a proposal as surely as marking it does, so it
+    // comes out of what is left. A list that still said "1 to score" over a
+    // proposal she has recused herself from would be asking for a mark she is
+    // not allowed to give.
+    left: total - submitted - recused,
   };
 }
 
@@ -437,8 +626,10 @@ type TeamSqlRow = {
   internal_role: string | null;
   assigned: number;
   completed: number;
+  recused: number;
   started: number;
   untouched: number;
+  nudged_at: number | null;
 };
 
 /**
@@ -453,6 +644,11 @@ type TeamSqlRow = {
  * Counts are round-scoped and restricted to proposals still undecided: a
  * reviewer's work on a proposal the chair decided last night is finished
  * business, not a chore still owed.
+ *
+ * `completed` counts only reviews with marks in them, and stepping aside gets
+ * its own column, because they are not the same news: one reader is six
+ * proposals into an evening and another has recused herself from six. Reading
+ * them as one number would have the chair chasing a person who is finished.
  */
 export async function reviewTeam(
   db: D1Database,
@@ -464,9 +660,13 @@ export async function reviewTeam(
     .prepare(
       `SELECT p.id AS person_id, p.name, er.role AS event_role, p.internal_role,
               COUNT(rv.id) AS assigned,
-              COUNT(rv.submitted_at) AS completed,
+              COUNT(CASE WHEN rv.id IS NOT NULL AND ${SCORED_SQL} THEN 1 END) AS completed,
+              COUNT(CASE WHEN rv.id IS NOT NULL AND ${RECUSED_SQL} THEN 1 END) AS recused,
               COUNT(CASE WHEN rv.id IS NOT NULL AND ${MY_STAGED_SQL} THEN 1 END) AS started,
-              COUNT(CASE WHEN rv.id IS NOT NULL AND ${UNTOUCHED_SQL} THEN 1 END) AS untouched
+              COUNT(CASE WHEN rv.id IS NOT NULL AND ${UNTOUCHED_SQL} THEN 1 END) AS untouched,
+              (SELECT MAX(m.created_at) FROM message m
+                WHERE m.event_id = ?1 AND m.person_id = p.id
+                  AND m.kind = 'note' AND m.subject = ?3) AS nudged_at
          FROM person p
          LEFT JOIN event_role er ON er.event_id = ?1 AND er.person_id = p.id
          LEFT JOIN review rv ON rv.reviewer_person_id = p.id AND rv.round = ?2
@@ -478,7 +678,7 @@ export async function reviewTeam(
                    WHEN 'organizer' THEN 0 WHEN 'owner' THEN 1 WHEN 'approver' THEN 2
                    WHEN 'editor' THEN 3 ELSE 4 END, p.name`
     )
-    .bind(event.id, event.round)
+    .bind(event.id, event.round, NUDGE_SUBJECT)
     .all<TeamSqlRow>();
   return res.results.map((r) => ({
     personId: r.person_id,
@@ -486,10 +686,50 @@ export async function reviewTeam(
     standing: r.event_role ?? 'organizer',
     assigned: r.assigned,
     completed: r.completed,
+    recused: r.recused,
     started: r.started,
     untouched: r.untouched,
+    nudgedAt: r.nudged_at,
     isYou: r.person_id === principal.personId,
   }));
+}
+
+/**
+ * Where this round stands, in the two numbers the next one is opened against.
+ *
+ * Scoped to the round rather than to a person: opening round two is the
+ * committee's act, and the arithmetic the chair confirms is the committee's
+ * arithmetic. It counts work on every proposal, decided since or not, because
+ * a review written last week about a proposal accepted on Tuesday is still on
+ * the record — which is exactly what the sentence over the confirm claims.
+ *
+ * `nextCardExists` is read off the stored scorecards rather than guessed,
+ * because whether the next round already has its own lines decides whether
+ * opening it copies this round's or leaves what is already written.
+ */
+export async function roundStanding(
+  db: D1Database,
+  principal: Principal,
+  event: ReviewEvent
+): Promise<RoundStanding> {
+  requireScope(principal, event.id, READ_ROLES);
+  const row = await db
+    .prepare(
+      `SELECT COUNT(CASE WHEN ${SCORED_SQL} THEN 1 END) AS on_record,
+              COUNT(CASE WHEN ${RECUSED_SQL} THEN 1 END) AS stepped
+         FROM review rv
+         JOIN submission s ON s.id = rv.submission_id
+        WHERE s.event_id = ?1 AND rv.round = ?2`
+    )
+    .bind(event.id, event.round)
+    .first<{ on_record: number; stepped: number }>();
+  const next = asObject(event.scorecardsRaw)[String(event.round + 1)];
+  return {
+    round: event.round,
+    onRecord: row?.on_record ?? 0,
+    stepped: row?.stepped ?? 0,
+    nextCardExists: Array.isArray(next) && next.length > 0,
+  };
 }
 
 /**

@@ -30,6 +30,20 @@
 //   why the masthead answers with two counts before she scrolls, and why the
 //   evening's unfinished work sits at the top of the list rather than in it.
 //
+// Three acts joined the room afterwards, and each one landed on the side of
+// the law its consequences put it on:
+//
+//   STEPPING ASIDE — one confirm. It is a reviewer saying "I know this
+//     speaker", and it closes her row with nothing in it, permanently for the
+//     round. It binds the committee's coverage rather than a person's letter,
+//     so the confirm names the proposal and says out loud that it does not
+//     come back, and that is the whole of the ceremony.
+//   OPENING A ROUND — two passes. Every reader's list empties at once, so the
+//     first pass states the arithmetic and the second carries the number.
+//   NUDGING — one click, and the only act here that leaves the building. Being
+//     undoable is not the question for a note that says "these are waiting";
+//     being repeatable is, so a second one inside the day is refused.
+//
 // No client script. The scales are radios, the folds are links, the writes are
 // forms — a reviewer on a hotel wifi gets the whole screen in one round trip.
 
@@ -42,14 +56,20 @@ import {
   reviewEvent,
   reviewQueue,
   reviewTeam,
+  roundStanding,
   stagedReviews,
+  weightedAverage,
   windowSize,
+  NUDGE_HOURS,
   PAGE,
   MOST,
+  TEXT_MARK_MAX,
   type QueueRow,
   type ReviewEvent,
   type ReviewQueue,
+  type RoundStanding,
   type ScorecardKey,
+  type Scores,
   type StagedReview,
   type TeamReader,
 } from '../../queries/reviews';
@@ -59,10 +79,16 @@ import {
   submitReviews,
   handOutAssignments,
   takeBackAssignments,
+  stepAside,
+  openNextRound,
+  nudgeReviewer,
   MOST_EACH,
   HANDOUT_CAP,
   type ReviewOutcome,
   type AssignOutcome,
+  type NudgeOutcome,
+  type RoundOutcome,
+  type StepAsideOutcome,
 } from '../../workflows/review';
 
 /* ------------------------------------------------------------------ *
@@ -156,14 +182,32 @@ const NOTES: Record<ReviewOutcome, string> = {
   trouble: 'That did not save. Try it once more.',
 };
 
+/**
+ * Stepping aside gets its own closed set rather than a code in NOTES, because
+ * its sentences are about one proposal leaving a person's evening, and the
+ * queue's sentences are about marks. Same channel back to the screen, same
+ * discipline: the workflow says which one is true, this says it in words.
+ */
+const STEP_NOTES: Record<`aside_${StepAsideOutcome}`, string> = {
+  aside_stepped:
+    'You have stepped aside from that one. It is off your list for this round, and none of ' +
+    'your marks on it were kept.',
+  aside_already: 'That one was already finished this round, so it stays as it is.',
+  aside_gone:
+    'That one has been decided since you opened it. There is nothing left to step aside from.',
+  aside_moved: 'It was finished while you were looking. Nothing was changed.',
+  aside_trouble: 'That did not go through. Try it once more.',
+};
+
 // The code arrives in a query string, so it is a stranger's word until it
 // matches one of ours — and `in` would happily match 'constructor'.
 function noteFor(raw: string | undefined): string | null {
   if (!raw) return null;
-  const said: unknown = Object.prototype.hasOwnProperty.call(NOTES, raw)
-    ? NOTES[raw as ReviewOutcome]
-    : null;
-  return typeof said === 'string' ? said : null;
+  for (const set of [NOTES, STEP_NOTES] as Record<string, string>[]) {
+    const said: unknown = Object.prototype.hasOwnProperty.call(set, raw) ? set[raw] : null;
+    if (typeof said === 'string') return said;
+  }
+  return null;
 }
 
 /**
@@ -215,6 +259,59 @@ function assignSaid(code: AssignOutcome, gave: number, held: number, more: boole
   }
 }
 
+const ROUND_CODES: readonly RoundOutcome[] = ['opened', 'moved', 'refused', 'trouble'];
+
+function roundCode(raw: string | undefined): RoundOutcome | null {
+  return ROUND_CODES.find((c) => c === raw) ?? null;
+}
+
+/** `round` is the one the committee is on now — after opening, the new one. */
+function roundSaid(code: RoundOutcome, round: number): string {
+  switch (code) {
+    case 'opened':
+      return (
+        `${say('review.round', { n: num(round) })} is open. Every reading list starts empty, ` +
+        'and nothing written before it moved.'
+      );
+    case 'moved':
+      return 'Somebody opened it first. This is the round the committee is on.';
+    case 'refused':
+      return 'That is not the round after this one. Nothing was changed.';
+    case 'trouble':
+      return 'That did not go through. Try it once more.';
+  }
+}
+
+const NUDGE_CODES: readonly NudgeOutcome[] = [
+  'nudged',
+  'recent',
+  'nothing',
+  'nobody',
+  'moved',
+  'trouble',
+];
+
+function nudgeCode(raw: string | undefined): NudgeOutcome | null {
+  return NUDGE_CODES.find((c) => c === raw) ?? null;
+}
+
+function nudgeSaid(code: NudgeOutcome, name: string, open: number): string {
+  switch (code) {
+    case 'nudged':
+      return `${name} has a note about it. ${count(open, 'proposal is', 'proposals are')} still open on their list.`;
+    case 'recent':
+      return 'Nudged yesterday — give it a day.';
+    case 'nothing':
+      return `Nothing is open on ${name}'s list, so nothing was sent.`;
+    case 'nobody':
+      return 'That person does not read on this conference. Nothing was sent.';
+    case 'moved':
+      return 'The list moved while you were looking. Read it again, then nudge.';
+    case 'trouble':
+      return 'That did not go through. Try it once more.';
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Addresses
  * ------------------------------------------------------------------ */
@@ -247,13 +344,51 @@ const teamUrl = (
  * One row: a proposal, its scales, and where my marks stand
  * ------------------------------------------------------------------ */
 
-function scale(k: ScorecardKey, mark: number | undefined): string {
+/**
+ * One line of the card, in whichever of its three shapes the committee chose.
+ *
+ * The weight is said out loud on the heavy and light lines and left silent on
+ * the normal ones, because "Normal" on every line is nine words that tell a
+ * reviewer nothing — and a line that counts double is the one fact she needs
+ * before she marks it, not after.
+ */
+function criterion(k: ScorecardKey, mark: string | number | undefined): string {
+  const name = `score_${esc(k.key)}`;
+  const weight =
+    k.weight === 3
+      ? '<span class="opt">counts double</span>'
+      : k.weight === 1
+        ? '<span class="opt">counts light</span>'
+        : '';
+
+  if (k.kind === 'text') {
+    return (
+      '<label class="f" style="margin-bottom:14px"><span class="f-lab">' +
+      `${esc(k.label)}${weight}</span>` +
+      `<textarea name="${name}" rows="2" maxlength="${TEXT_MARK_MAX}">` +
+      `${esc(typeof mark === 'string' ? mark : '')}</textarea></label>`
+    );
+  }
+
+  if (k.kind === 'select') {
+    const options = [
+      `<option value=""${mark === undefined ? ' selected' : ''}>Not answered yet</option>`,
+      ...k.options.map(
+        (o) => `<option value="${esc(o)}"${o === mark ? ' selected' : ''}>${esc(o)}</option>`
+      ),
+    ].join('');
+    return (
+      '<label class="f" style="margin-bottom:14px"><span class="f-lab">' +
+      `${esc(k.label)}${weight}</span>` +
+      `<select name="${name}">${options}</select></label>`
+    );
+  }
+
   // .radio and .btnrow are the shared form vocabulary — the box, the border,
   // the accent colour and the tap target all come from the lifted CSS, so a
   // scale costs a few dozen bytes a mark instead of a paragraph of inline
   // style repeated on every proposal on the screen. Page weight is a product
   // requirement here, not an optimisation.
-  const name = `score_${esc(k.key)}`;
   const options = [
     `<label class="radio"><input type="radio" name="${name}" value=""` +
       `${mark === undefined ? ' checked' : ''} aria-label="No mark yet for ${esc(k.label)}">` +
@@ -267,21 +402,51 @@ function scale(k: ScorecardKey, mark: number | undefined): string {
   }
   return (
     '<fieldset style="border:0;padding:0;margin:0 0 14px;min-width:0">' +
-    `<legend class="f-lab" style="padding:0">${esc(k.label)}</legend>` +
+    `<legend class="f-lab" style="padding:0">${esc(k.label)}${weight}</legend>` +
     `<div class="btnrow">${options.join('')}</div>` +
     '</fieldset>'
   );
 }
 
-/** My marks, read back in the scorecard's own words and order. */
-function marksLine(card: ScorecardKey[], scores: Record<string, number>): string {
-  const parts = card
-    .filter((k) => typeof scores[k.key] === 'number')
+/** A weighted average, to one decimal. One number, one word for what it is. */
+function weighted(card: ScorecardKey[], scores: Scores): string {
+  const value = weightedAverage(card, scores);
+  return value === null
+    ? ''
+    : `<span class="score">${value.toFixed(1)}</span> <span class="sub">weighted</span>`;
+}
+
+/**
+ * My marks, read back in the scorecard's own words and order.
+ *
+ * A number reads as a number over its top mark; a word reads as the word. A
+ * line or two of writing is not folded in here — it is a sentence, and a
+ * sentence in a run-on list of marks is a sentence nobody reads.
+ */
+function marksLine(card: ScorecardKey[], scores: Scores): string {
+  const parts: string[] = [];
+  for (const k of card) {
+    const mark = scores[k.key];
+    if (mark === undefined) continue;
+    if (k.kind === 'scale' && typeof mark === 'number') {
+      parts.push(`<span class="score">${mark}/${k.max}</span> ${esc(k.label)}`);
+    } else if (k.kind === 'select' && typeof mark === 'string') {
+      parts.push(`${esc(k.label)} <span class="score">${esc(mark)}</span>`);
+    }
+  }
+  return parts.join('<span class="sep"> · </span>');
+}
+
+/** The written lines, if the card asked for any and the reviewer wrote them. */
+function writtenMarks(card: ScorecardKey[], scores: Scores): string {
+  return card
+    .filter((k) => k.kind === 'text' && typeof scores[k.key] === 'string')
     .map(
       (k) =>
-        `<span class="score">${scores[k.key]}/${k.max}</span> ${esc(k.label)}`
-    );
-  return parts.join('<span class="sep"> · </span>');
+        '<div class="notebox" style="margin-top:10px">' +
+        `<div class="t-sub">${esc(k.label)}</div>${esc(String(scores[k.key]))}</div>`
+    )
+    .join('');
 }
 
 function rowHead(row: QueueRow, ev: ReviewEvent): string {
@@ -322,14 +487,35 @@ function abstractBlock(row: QueueRow, slug: string, show: number, open: boolean)
   );
 }
 
-function queueRow(row: QueueRow, ev: ReviewEvent, show: number, open: boolean): string {
+function queueRow(
+  row: QueueRow,
+  ev: ReviewEvent,
+  show: number,
+  open: boolean,
+  stepping: boolean
+): string {
   const head =
     `<h2 class="display" style="font-size:22px;line-height:1.25">${esc(row.title)}</h2>` +
     abstractBlock(row, ev.slug, show, open);
 
+  // Stepped aside: finished, and finished with nothing in it. No marks to read
+  // back, because there are none — that is the whole point of the row.
+  if (row.myRecused) {
+    return (
+      `<div class="card card-pad" id="p-${esc(row.id)}" style="margin-top:14px">` +
+      rowHead(row, ev) +
+      head +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">' +
+      '<span class="chip s-withdrawn">Stepped aside</span>' +
+      '<span class="sub">Nothing you marked on this one counts towards its average.</span>' +
+      '</div></div>'
+    );
+  }
+
   // Submitted: fixed for this round. The marks stay legible, the controls go.
   if (row.mySubmittedAt !== null) {
     const marks = marksLine(ev.scorecard, row.myScores);
+    const mean = weighted(ev.scorecard, row.myScores);
     return (
       `<div class="card card-pad" id="p-${esc(row.id)}" style="margin-top:14px">` +
       rowHead(row, ev) +
@@ -337,7 +523,9 @@ function queueRow(row: QueueRow, ev: ReviewEvent, show: number, open: boolean): 
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">' +
       `<span class="chip s-accepted">Scored ${esc(onDay(row.mySubmittedAt, ev.timezone))}</span>` +
       (marks ? `<span class="sub">${marks}</span>` : '') +
+      (mean ? `<span class="sub">${mean}</span>` : '') +
       '</div>' +
+      writtenMarks(ev.scorecard, row.myScores) +
       (row.myNote
         ? `<div class="notebox" style="margin-top:10px">${esc(row.myNote)}</div>`
         : '') +
@@ -345,26 +533,55 @@ function queueRow(row: QueueRow, ev: ReviewEvent, show: number, open: boolean): 
     );
   }
 
-  const scales = ev.scorecard.map((k) => scale(k, row.myScores[k.key])).join('');
-  return (
+  const lines = ev.scorecard.map((k) => criterion(k, row.myScores[k.key])).join('');
+  const anchor = `#p-${encodeURIComponent(row.id)}`;
+  const aside = queueUrl(ev.slug, {
+    show: show > PAGE ? show : undefined,
+    stepaside: row.id,
+  }) + anchor;
+
+  const card =
     `<form class="card card-pad" id="p-${esc(row.id)}" method="post" style="margin-top:14px"` +
     ` action="/admin/${encodeURIComponent(ev.slug)}/reviews/stage">` +
     `<input type="hidden" name="on" value="${esc(row.id)}">` +
     `<input type="hidden" name="show" value="${show}">` +
     rowHead(row, ev) +
     head +
-    `<div style="margin-top:16px">${scales}</div>` +
+    `<div style="margin-top:16px">${lines}</div>` +
     '<label class="f" style="margin-bottom:0"><span class="f-lab">Your note' +
     '<span class="opt">only the committee reads this</span></span>' +
     '<textarea name="note" rows="2" maxlength="2000" placeholder="What would you tell the room about this one?">' +
     `${esc(row.myNote ?? '')}</textarea></label>` +
     '<div class="btnrow" style="margin-top:14px">' +
     `<button class="btn btn-primary" type="submit">${esc(say('review.save'))}</button>` +
+    // The quiet half of the pair. A reviewer who knows the speaker should not
+    // have to hunt for the way out, and should not trip over it either.
+    (stepping ? '' : `<a class="btn btn-quiet" href="${esc(aside)}">I know this speaker — step aside</a>`) +
     (row.staged
       ? '<span class="chip s-undecided">Staged — yours until you submit</span>'
       : '') +
     '</div>' +
-    '</form>'
+    '</form>';
+
+  if (!stepping) return card;
+
+  // The confirm sits under the card rather than inside it: the card is a form
+  // already, and a form inside a form is not a thing a browser will send.
+  const shut = queueUrl(ev.slug, { show: show > PAGE ? show : undefined }) + anchor;
+  return (
+    card +
+    '<div class="card card-pad" style="margin-top:10px;border-left:3px solid var(--danger)">' +
+    `<b>Step aside from ${esc(row.title)}?</b>` +
+    '<p style="margin:6px 0 0">This cannot be taken back this round. The proposal leaves your ' +
+    'list, nothing you marked on it is kept, and the committee reads it one voice short — so ' +
+    'tell whoever hands the pile out.</p>' +
+    `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/step-aside"` +
+    ' class="btnrow" style="margin-top:12px">' +
+    `<input type="hidden" name="on" value="${esc(row.id)}">` +
+    `<input type="hidden" name="show" value="${show}">` +
+    '<button class="btn btn-danger" type="submit">Step aside</button>' +
+    `<a class="btn btn-quiet" href="${esc(shut)}">Keep it on my list</a>` +
+    '</form></div>'
   );
 }
 
@@ -374,6 +591,12 @@ function queueRow(row: QueueRow, ev: ReviewEvent, show: number, open: boolean): 
 
 // D-026 tiers have no §6 entry, so no label key exists for them; the same
 // literal map the rest of backstage uses is the honest place for them.
+//
+// GAP, for the doc owner, on the same shelf: §1.23 gained three facts this
+// room now shows and §6 has a row for none of them — "Stepped aside" (a review
+// finished with nothing in it), "Nudge" (the chair's reminder), and the word
+// "weighted" beside an average. They are written as literals here and in
+// settings until §6 carries them; when it does, they move and these go.
 const STANDING: Record<string, string> = {
   organizer: 'Organizer',
   owner: 'Owner',
@@ -383,11 +606,18 @@ const STANDING: Record<string, string> = {
 };
 
 /** One reader's line: what they are carrying, and how far in they are. */
-function teamRow(r: TeamReader, ev: ReviewEvent): string {
+function teamRow(r: TeamReader, ev: ReviewEvent, nowMs: number): string {
+  // Two numbers where there used to be one. A reader six proposals into an
+  // evening and a reader who has recused herself from six are both "six
+  // finished", and telling them apart is the difference between a chair who
+  // chases the right person and one who chases the wrong one.
   const progress =
     r.assigned === 0
       ? `<span class="sub">Nothing handed to ${r.isYou ? 'you' : 'them'} yet.</span>`
-      : esc(say('review.progress', { n: num(r.completed), m: num(r.assigned) })) +
+      : (r.recused > 0
+          ? `${esc(num(r.completed))} scored<span class="sep"> · </span>` +
+            `${esc(num(r.recused))} stepped aside`
+          : esc(say('review.progress', { n: num(r.completed), m: num(r.assigned) }))) +
         (r.started > 0
           ? `<span class="sep"> · </span><span class="sub">${esc(num(r.started))} started</span>`
           : '');
@@ -405,14 +635,98 @@ function teamRow(r: TeamReader, ev: ReviewEvent): string {
         ? `<span class="sub">Every one of ${r.isYou ? 'yours' : 'theirs'} has been written in.</span>`
         : '';
 
+  // A nudge is for somebody who still owes the room something. Nudging
+  // yourself is a note to yourself, and nudging a person who is finished is
+  // noise, so neither turns up as a button.
+  const open = r.started + r.untouched;
+  const recent = r.nudgedAt !== null && nowMs - r.nudgedAt < NUDGE_HOURS * 3_600_000;
+  const nudge =
+    open === 0 || r.isYou
+      ? ''
+      : recent
+        ? `<span class="sub">Nudged ${esc(onDay(r.nudgedAt ?? nowMs, ev.timezone))}</span>`
+        : `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/nudge">` +
+          `<input type="hidden" name="who" value="${esc(r.personId)}">` +
+          `<button class="btn btn-sm" type="submit">Nudge</button></form>`;
+
   return (
     '<tr>' +
     `<td><div class="t-name">${esc(r.name)}${r.isYou ? '<span class="sub"> · you</span>' : ''}</div>` +
     `<div class="t-sub">${esc(STANDING[r.standing] ?? r.standing)}</div></td>` +
     `<td style="font-variant-numeric:tabular-nums">${esc(num(r.assigned))}</td>` +
     `<td>${progress}</td>` +
+    `<td>${nudge}</td>` +
     `<td>${back}</td>` +
     '</tr>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * The round — the widest act in the room, and the quietest panel
+ * ------------------------------------------------------------------ */
+
+/**
+ * Round n, and the door to n+1.
+ *
+ * TWO PASSES, because this one binds everybody: every reader's list empties at
+ * once. The first pass states the arithmetic — what stays on the record, and
+ * that the next round starts empty — and the second carries the number back,
+ * where a guard checks it against the round the database is actually on. Two
+ * chairs on two laptops: the first wins, the second is told, nothing happens
+ * twice.
+ *
+ * It is a panel rather than a banner on purpose. Most evenings nobody opens a
+ * round, and a control that shouts every time it is not needed teaches people
+ * to stop reading the screen.
+ */
+function roundPanel(ev: ReviewEvent, standing: RoundStanding, opening: boolean): string {
+  const here = say('review.round', { n: num(standing.round) });
+  const next = say('review.round', { n: num(standing.round + 1) });
+  const record =
+    standing.onRecord === 0
+      ? 'Nothing has been sent in yet.'
+      : `${count(standing.onRecord, 'review is', 'reviews are')} in.`;
+  const stepped =
+    standing.stepped > 0
+      ? ` ${count(standing.stepped, 'reader', 'readers')} stepped aside.`
+      : '';
+
+  const openHref = queueUrl(ev.slug, { open_round: standing.round + 1 }) + '#team';
+
+  const first =
+    '<div class="btnrow" style="margin-top:12px">' +
+    `<a class="btn" href="${esc(openHref)}">Open ${esc(next.toLowerCase())}</a>` +
+    '<span class="sub">Everyone starts again on the proposals that are still undecided.</span>' +
+    '</div>';
+
+  const confirm =
+    '<div class="notebox" style="margin-top:12px;border-left-color:var(--danger)">' +
+    `<b>Open ${esc(next.toLowerCase())}?</b>` +
+    `<p style="margin:6px 0 0">${esc(
+      `${count(standing.onRecord, 'review', 'reviews')} from ${here.toLowerCase()} ` +
+        `stay on the record. ${next} starts empty.`
+    )}</p>` +
+    `<p style="margin:6px 0 0" class="sub">${esc(
+      standing.nextCardExists
+        ? `${next} already has a scorecard of its own, and it is left exactly as it is.`
+        : `${here}'s scorecard is copied to ${next.toLowerCase()}, so nobody has to write it ` +
+          'out again. Settings is where it changes.'
+    )}</p>` +
+    `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/open-round"` +
+    ' class="btnrow" style="margin-top:12px">' +
+    `<input type="hidden" name="from" value="${standing.round}">` +
+    `<input type="hidden" name="to" value="${standing.round + 1}">` +
+    `<button class="btn btn-danger" type="submit">Open ${esc(next.toLowerCase())}</button>` +
+    `<a class="btn btn-quiet" href="${esc(queueUrl(ev.slug))}#team">Stay on ${esc(here.toLowerCase())}</a>` +
+    '</form></div>';
+
+  return (
+    '<div class="card card-pad" style="margin-top:16px">' +
+    `<h3 class="serif" style="font-size:19px;font-weight:600">${esc(here)}</h3>` +
+    `<p class="sub" style="margin:6px 0 0">${esc(`${record}${stepped}`)} ` +
+    'Every list on this page is this round&#39;s. Nothing written in an earlier one moves.</p>' +
+    (opening ? confirm : first) +
+    '</div>'
   );
 }
 
@@ -459,7 +773,10 @@ function whoReadsWhat(
   ev: ReviewEvent,
   team: TeamReader[],
   pile: number,
-  said: string | null
+  said: string | null,
+  standing: RoundStanding,
+  opening: boolean,
+  nowMs: number
 ): string {
   const heading =
     '<h2 class="display" style="font-size:26px">Who reads what</h2>' +
@@ -469,7 +786,8 @@ function whoReadsWhat(
 
   // A chair always appears in her own committee, so one row means she is it —
   // and handing a pile to yourself when you already read all of it is not an
-  // act. The next one is finding somebody to read with.
+  // act. The next one is finding somebody to read with. The round panel still
+  // belongs on the screen: a committee of one still finishes a round.
   if (team.length <= 1) {
     return (
       '<section class="sec" id="team">' +
@@ -478,7 +796,9 @@ function whoReadsWhat(
       '<p>Nobody else holds a standing on this program yet, so there is nobody to hand ' +
       'proposals to. Add readers from settings and they turn up here.</p>' +
       `<a class="btn btn-primary" href="/admin/${encodeURIComponent(ev.slug)}/settings">` +
-      'Add someone to the team →</a></div></section>'
+      'Add someone to the team →</a></div>' +
+      roundPanel(ev, standing, opening) +
+      '</section>'
     );
   }
 
@@ -486,14 +806,15 @@ function whoReadsWhat(
     '<section class="sec" id="team">' +
     heading +
     '<div class="tablewrap" style="margin-top:14px"><table class="t"><thead><tr>' +
-    '<th>Reader</th><th>Holding</th><th>Progress</th><th>Take back</th>' +
+    '<th>Reader</th><th>Holding</th><th>Progress</th><th>Nudge</th><th>Take back</th>' +
     '</tr></thead><tbody>' +
-    team.map((r) => teamRow(r, ev)).join('') +
+    team.map((r) => teamRow(r, ev, nowMs)).join('') +
     '</tbody></table></div>' +
     (pile > 0
       ? handOutForm(ev, team, pile)
       : '<p class="sub" style="margin-top:16px">Nothing is undecided on this program, ' +
         'so there is nothing to hand out.</p>') +
+    roundPanel(ev, standing, opening) +
     '</section>'
   );
 }
@@ -510,8 +831,13 @@ function queuePage(
     show: number;
     open: string | null;
     note: string | null;
+    stepaside: string | null;
     team: TeamReader[];
-    handed: string | null;
+    /** The sentence the last act on the chair's half of the room left behind. */
+    teamSaid: string | null;
+    standing: RoundStanding | null;
+    opening: boolean;
+    nowMs: number;
   }
 ): string {
   const note = noteFor(opts.note ?? undefined);
@@ -523,7 +849,18 @@ function queuePage(
   const said = note
     ? `<div class="sec standing" id="said" role="status">${esc(note)}</div>`
     : '<span id="said"></span>';
-  const team = ev.everything ? whoReadsWhat(ev, opts.team, q.pile, opts.handed) : '';
+  const team =
+    ev.everything && opts.standing
+      ? whoReadsWhat(
+          ev,
+          opts.team,
+          q.pile,
+          opts.teamSaid,
+          opts.standing,
+          opts.opening,
+          opts.nowMs
+        )
+      : '';
 
   // A screen with nothing on it says what the round is and nothing else. The
   // counts belong to a list; over an empty one they are two zeroes and a
@@ -576,12 +913,27 @@ function queuePage(
         '</div>'
       : '';
 
+  // "All 8 scored" over an evening that ended in a recusal would be the screen
+  // telling a reviewer she did something she deliberately did not do. Three
+  // endings, and each one names what actually happened.
   const done =
-    q.left === 0
-      ? `<div class="sec standing"><b>${esc(say('review.done', { n: num(q.total) }))}</b></div>`
-      : '';
+    q.left > 0
+      ? ''
+      : q.recused === 0
+        ? `<div class="sec standing"><b>${esc(say('review.done', { n: num(q.total) }))}</b></div>`
+        : q.submitted === 0
+          ? '<div class="sec standing"><b>' +
+            `${esc(`You stepped aside from ${q.recused === 1 ? 'the one proposal' : `all ${num(q.recused)}`} on your list.`)}` +
+            '</b></div>'
+          : '<div class="sec standing"><b>' +
+            `${esc(
+              `${count(q.submitted, 'proposal', 'proposals')} scored and ` +
+                `${num(q.recused)} stepped aside. That's everything on your list.`
+            )}</b></div>`;
 
-  const rows = q.rows.map((r) => queueRow(r, ev, opts.show, opts.open === r.id)).join('');
+  const rows = q.rows
+    .map((r) => queueRow(r, ev, opts.show, opts.open === r.id, opts.stepaside === r.id))
+    .join('');
 
   // Three honest endings, and never a button that would come back unchanged:
   // more to fetch, all of it already here, or a screenful that has reached its
@@ -622,6 +974,9 @@ function queuePage(
       ? `<b>${esc(say('review.queue', { n: num(q.left) }))}</b><span class="sep">·</span>`
       : '') +
     `${esc(say('review.progress', { n: num(q.submitted), m: num(q.total) }))}` +
+    (q.recused > 0
+      ? `<span class="sep">·</span>${esc(`${num(q.recused)} stepped aside`)}`
+      : '') +
     `<span class="sep">·</span>${round}</p>` +
     whose +
     `<p class="hint">${esc(say('review.blind'))}</p>` +
@@ -655,14 +1010,23 @@ function confirmPage(
   }
 
   const list = staged
-    .map(
-      (s) =>
+    .map((s) => {
+      const mean = weighted(ev.scorecard, s.scores);
+      const marks = marksLine(ev.scorecard, s.scores);
+      return (
         '<div style="padding:14px 18px;border-bottom:1px solid var(--line-soft)">' +
         `<div style="font-weight:640">${esc(s.title)}</div>` +
-        `<div class="sub" style="margin-top:4px">${marksLine(ev.scorecard, s.scores)}</div>` +
+        (marks || mean
+          ? '<div class="sub" style="margin-top:4px">' +
+            marks +
+            (marks && mean ? '<span class="sep"> · </span>' : '') +
+            mean +
+            '</div>'
+          : '') +
         (s.note ? `<div class="sub" style="margin-top:5px">${esc(s.note)}</div>` : '') +
         '</div>'
-    )
+      );
+    })
     .join('');
 
   const many = count(staged.length, 'review', 'reviews');
@@ -736,14 +1100,28 @@ async function enter(
 
 const HTML = { 'content-type': 'text/html; charset=utf-8' };
 
-function scoresFrom(
-  form: Record<string, unknown>,
-  card: ScorecardKey[]
-): Record<string, number> {
-  const out: Record<string, number> = {};
+/**
+ * What came back off the card, checked line by line against the card itself.
+ *
+ * A scale keeps a whole number inside its own range; a select keeps a word
+ * only if it is one of the words offered; a written line keeps what was
+ * written, trimmed and capped. Anything else is dropped rather than stored,
+ * so a hand-made form cannot put a mark on a line the committee never made.
+ */
+function scoresFrom(form: Record<string, unknown>, card: ScorecardKey[]): Scores {
+  const out: Scores = {};
   for (const k of card) {
     const raw = form[`score_${k.key}`];
     if (typeof raw !== 'string' || raw === '') continue;
+    if (k.kind === 'text') {
+      const written = raw.trim().slice(0, TEXT_MARK_MAX);
+      if (written !== '') out[k.key] = written;
+      continue;
+    }
+    if (k.kind === 'select') {
+      if (k.options.includes(raw)) out[k.key] = raw;
+      continue;
+    }
     const v = Number.parseInt(raw, 10);
     if (!Number.isInteger(v) || v < 1 || v > k.max) continue;
     out[k.key] = v;
@@ -767,23 +1145,41 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     }
 
     const show = windowSize(c.req.query('show'));
-    // The team read only happens for the standing that may hand the pile out,
-    // so a reviewer's screen costs exactly what it costed before.
-    const [q, team] = await Promise.all([
+    // The team read and the round read only happen for the standing that may
+    // hand the pile out, so a reviewer's screen costs what it costed before.
+    const [q, team, standing] = await Promise.all([
       reviewQueue(c.env.DB, principal, ev, { show }),
       ev.everything ? reviewTeam(c.env.DB, principal, ev) : Promise.resolve([]),
+      ev.everything ? roundStanding(c.env.DB, principal, ev) : Promise.resolve(null),
     ]);
 
+    // One act happened, so one sentence comes back. Each code is checked
+    // against its own closed set before it is allowed to mean anything.
     const did = ev.everything ? assignCode(c.req.query('did')) : null;
+    const rnd = ev.everything ? roundCode(c.req.query('round')) : null;
+    const nudged = ev.everything ? nudgeCode(c.req.query('nudged')) : null;
+    // A name off the address bar would be a stranger's word. This one is
+    // matched back to the committee the screen already read.
+    const nudgedWho = c.req.query('who');
+    const nudgedName = team.find((r) => r.personId === nudgedWho)?.name ?? 'That reader';
+
     return c.html(
       queuePage(principal, ev, q, {
         show,
         open: c.req.query('open') ?? null,
         note: c.req.query('note') ?? null,
+        stepaside: c.req.query('stepaside') ?? null,
         team,
-        handed: did
+        standing,
+        opening: ev.everything && c.req.query('open_round') === String(ev.round + 1),
+        nowMs: Date.now(),
+        teamSaid: did
           ? assignSaid(did, tally(c.req.query('gave')), tally(c.req.query('held')), c.req.query('more') === '1')
-          : null,
+          : rnd
+            ? roundSaid(rnd, ev.round)
+            : nudged
+              ? nudgeSaid(nudged, nudgedName, tally(c.req.query('open_left')))
+              : null,
       })
     );
   });
@@ -811,6 +1207,21 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
       note
     );
     return c.redirect(backTo(ev.slug, outcome, show), 303);
+  });
+
+  // ONE CONFIRM, AND IT DOES NOT COME BACK. The link put the sentence on the
+  // screen with the title in it; this is the press underneath it.
+  app.post('/admin/:eventSlug/reviews/step-aside', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const opened = await enter(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'), slug);
+    if (opened instanceof Response) return opened;
+    const { principal, ev } = opened;
+
+    const form = await c.req.parseBody();
+    const show = windowSize(typeof form['show'] === 'string' ? form['show'] : undefined);
+    const on = typeof form['on'] === 'string' ? form['on'] : '';
+    const outcome = await stepAside(c.env.DB, principal, ev.id, ev.round, on);
+    return c.redirect(backTo(ev.slug, `aside_${outcome}`, show), 303);
   });
 
   // SECOND PASS — the number the reviewer read rides in the form, and the
@@ -860,6 +1271,75 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     } catch (e) {
       if (e instanceof ScopeError) {
         return new Response(deniedPage('Handing this pile out is not yours to do.'), {
+          status: 403,
+          headers: HTML,
+        });
+      }
+      throw e;
+    }
+  });
+
+  // THE SECOND PASS ON THE WIDEST ACT — the round the confirm named rides in
+  // the form, and the guard in openNextRound checks it against the round the
+  // database is on. Two chairs, one round, one winner.
+  app.post('/admin/:eventSlug/reviews/open-round', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const opened = await enter(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'), slug);
+    if (opened instanceof Response) return opened;
+    const { principal, ev } = opened;
+
+    const form = await c.req.parseBody();
+    const from = Number.parseInt(typeof form['from'] === 'string' ? form['from'] : '', 10);
+    const to = Number.parseInt(typeof form['to'] === 'string' ? form['to'] : '', 10);
+
+    try {
+      const outcome = await openNextRound(c.env.DB, principal, ev.id, from, to);
+      return c.redirect(teamUrl(ev.slug, { round: outcome }), 303);
+    } catch (e) {
+      if (e instanceof ScopeError) {
+        return new Response(deniedPage('Opening a round is not yours to do.'), {
+          status: 403,
+          headers: HTML,
+        });
+      }
+      throw e;
+    }
+  });
+
+  // THE NUDGE — one click, and it leaves the building, so the workflow counts
+  // the hours since the last one and refuses a second inside the day.
+  app.post('/admin/:eventSlug/reviews/nudge', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const opened = await enter(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'), slug);
+    if (opened instanceof Response) return opened;
+    const { principal, ev } = opened;
+
+    const form = await c.req.parseBody();
+    const who = typeof form['who'] === 'string' ? form['who'] : '';
+
+    try {
+      const res = await nudgeReviewer(
+        c.env.DB,
+        principal,
+        ev.id,
+        ev.round,
+        who,
+        c.env.EMAIL && c.env.FROM_EMAIL
+          ? { binding: c.env.EMAIL, from: c.env.FROM_EMAIL }
+          : null,
+        (p) => c.executionCtx.waitUntil(p)
+      );
+      return c.redirect(
+        teamUrl(ev.slug, {
+          nudged: res.outcome,
+          who: who || undefined,
+          open_left: res.open || undefined,
+        }),
+        303
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) {
+        return new Response(deniedPage('Nudging a reader is not yours to do.'), {
           status: 403,
           headers: HTML,
         });

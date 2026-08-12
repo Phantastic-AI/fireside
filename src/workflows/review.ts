@@ -15,9 +15,16 @@
 
 import { checkedBatch, guard, newId, now } from '../lib/db';
 import { requireScope, READ_ROLES } from '../queries/admin';
-import { MY_STAGED_SQL, UNTOUCHED_SQL } from '../queries/reviews';
+import {
+  MY_STAGED_SQL,
+  UNTOUCHED_SQL,
+  NUDGE_SUBJECT,
+  NUDGE_HOURS,
+  type Scores,
+} from '../queries/reviews';
 import { requireDecider } from './decide';
 import type { Principal } from './account';
+import { isRealAddress } from './account';
 
 /**
  * The closed set of things that can happen to a review write. The screen owns
@@ -70,7 +77,9 @@ function outcomeOf(e: unknown, where: string): ReviewOutcome {
  * that has already read a review does not find it renamed underneath.
  *
  * `scores` arrives already checked against the round's scorecard — this
- * function is the writer, not the parser.
+ * function is the writer, not the parser. A mark is a number off a scale or
+ * the words a select or a written line left; which of the three it is was
+ * settled by the card before it got here.
  */
 export async function upsertReview(
   db: D1Database,
@@ -78,7 +87,7 @@ export async function upsertReview(
   eventId: string,
   round: number,
   submissionId: string,
-  scores: Record<string, number>,
+  scores: Scores,
   note: string | null
 ): Promise<ReviewOutcome> {
   requireScope(principal, eventId, READ_ROLES);
@@ -462,4 +471,396 @@ export async function takeBackAssignments(
     return { outcome: outcome === 'moved' ? 'moved' : 'trouble', freed: 0 };
   }
   return { outcome: 'freed', freed: expectedCount };
+}
+
+/* ------------------------------------------------------------------ *
+ * Stepping aside
+ * ------------------------------------------------------------------ */
+
+/**
+ * The closed set for a recusal.
+ *
+ *   'stepped' — the row is closed with nothing in it, and stays that way
+ *   'already' — that one was already finished this round, either way
+ *   'gone'    — decided since, or never on this event
+ *   'moved'   — it was finished between the reading and the click
+ *   'trouble' — something unexpected; nothing was written
+ */
+export type StepAsideOutcome = 'stepped' | 'already' | 'gone' | 'moved' | 'trouble';
+
+/** The note an empty review carries, so the row says out loud what it is. */
+export const STEPPED_ASIDE_NOTE = 'Stepped aside.';
+
+/**
+ * "I know this speaker" — one confirm, and it does not come back.
+ *
+ * D-024 asks two passes of an act that binds other people. This one binds the
+ * committee's coverage: a proposal that was going to be read three times will
+ * be read twice, and the chair may want to hand it to somebody else. But it
+ * binds nobody's letter and moves no decision, so the law is satisfied by one
+ * confirm carrying the fact — the title, and the plain sentence that it cannot
+ * be taken back this round — rather than a second screen.
+ *
+ * It cannot be taken back because the row is closed the way every finished
+ * review is closed: submitted_at set, fixed until the round changes. What is
+ * different is what is inside it, which is nothing — see RECUSED_SQL. An empty
+ * review joins no average, so a reviewer who steps aside subtracts her voice
+ * instead of leaving a zero behind that would read as an opinion.
+ *
+ * Marks already staged go with it, on purpose: a reviewer who realises halfway
+ * down the page that she knows the speaker is not leaving half an opinion on
+ * the record, and the screen says so before she presses it.
+ */
+export async function stepAside(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  round: number,
+  submissionId: string,
+  nowMs: number = now()
+): Promise<StepAsideOutcome> {
+  requireScope(principal, eventId, READ_ROLES);
+  if (!submissionId) return 'gone';
+
+  const existing = await db
+    .prepare(
+      `SELECT rv.id, rv.submitted_at, s.state
+         FROM submission s
+         LEFT JOIN review rv
+           ON rv.submission_id = s.id AND rv.reviewer_person_id = ? AND rv.round = ?
+        WHERE s.id = ? AND s.event_id = ?`
+    )
+    .bind(principal.personId, round, submissionId, eventId)
+    .first<{ id: string | null; submitted_at: number | null; state: string }>();
+
+  if (!existing || existing.state !== 'submitted') return 'gone';
+  if (existing.submitted_at !== null) return 'already';
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        // The same guard the staging path holds, for the same reason: a
+        // proposal decided in the last half-second, or a review finished in
+        // another tab, takes the whole batch down rather than closing a row
+        // twice.
+        guard(
+          db,
+          `SELECT 1 FROM submission s
+            WHERE s.id = ?1
+              AND (s.event_id <> ?2 OR s.state <> 'submitted'
+                   OR EXISTS (SELECT 1 FROM review rv
+                               WHERE rv.submission_id = s.id
+                                 AND rv.reviewer_person_id = ?3 AND rv.round = ?4
+                                 AND rv.submitted_at IS NOT NULL))`,
+          submissionId,
+          eventId,
+          principal.personId,
+          round
+        ),
+        db
+          .prepare(
+            `INSERT OR REPLACE INTO review
+               (id, submission_id, reviewer_person_id, round, scores, note, submitted_at)
+             VALUES (?, ?, ?, ?, '{}', ?, ?)`
+          )
+          .bind(
+            existing.id ?? newId('rev'),
+            submissionId,
+            principal.personId,
+            round,
+            STEPPED_ASIDE_NOTE,
+            nowMs
+          ),
+      ],
+      [0, { atLeast: 1 }],
+      STALE
+    );
+  } catch (e) {
+    const outcome = outcomeOf(e, 'stepAside');
+    return outcome === 'moved' ? 'moved' : 'trouble';
+  }
+  return 'stepped';
+}
+
+/* ------------------------------------------------------------------ *
+ * Opening the next round
+ * ------------------------------------------------------------------ */
+
+/**
+ * The closed set for opening a round.
+ *
+ *   'opened'  — the committee is reading round n+1, and n is on the record
+ *   'moved'   — somebody opened it first, or the round moved underneath
+ *   'refused' — that is not the next round, or there is no room past the last
+ *   'trouble' — something unexpected; nothing was written
+ */
+export type RoundOutcome = 'opened' | 'moved' | 'refused' | 'trouble';
+
+/** A conference that has read the same pile this many times has a problem
+ *  a new round will not fix. The ceiling exists so the number stays a number. */
+export const MOST_ROUNDS = 20;
+
+/**
+ * Open round n+1. TWO PASSES, and the second one carries the number.
+ *
+ * This is the widest act in the review room: every reviewer's list empties,
+ * every submitted review from round n stops being asked for and starts being
+ * history, and nothing that was written is deleted. The first pass states that
+ * arithmetic out loud — how many reviews stay on the record — and the second
+ * sends n+1 back with it, which the guard checks against the round the
+ * database is actually on. Two chairs opening the same round from two laptops:
+ * the first one wins, the second is told, and nothing happens twice.
+ *
+ * THE SCORECARD COMES WITH IT. A round that starts with no lines on its card
+ * would put every reviewer in front of the fallback single mark, which is not
+ * what the committee agreed the last time they talked about it — so round n's
+ * lines are copied to n+1 unless n+1 already has its own. Copied, not shared:
+ * editing round two's card afterwards leaves round one's marks meaning exactly
+ * what they meant when they were given.
+ */
+export async function openNextRound(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  fromRound: number,
+  toRound: number
+): Promise<RoundOutcome> {
+  requireDecider(principal, eventId);
+  if (!Number.isInteger(fromRound) || !Number.isInteger(toRound)) return 'refused';
+  if (toRound !== fromRound + 1 || toRound < 2 || toRound > MOST_ROUNDS) return 'refused';
+
+  const ev = await db
+    .prepare('SELECT current_round, round_scorecards FROM event WHERE id = ?')
+    .bind(eventId)
+    .first<{ current_round: number; round_scorecards: string }>();
+  if (!ev) return 'moved';
+  if (ev.current_round !== fromRound) return 'moved';
+
+  // Read, copy, write — rather than a json_set inside the statement — so the
+  // text the guard compares is the exact text this function read, and a
+  // scorecard saved in settings while the confirm was open aborts the batch
+  // instead of being quietly overwritten by an older shape of itself.
+  const stored = ev.round_scorecards ?? '{}';
+  let card: unknown;
+  try {
+    card = JSON.parse(stored);
+  } catch {
+    card = {};
+  }
+  const cards: Record<string, unknown> =
+    typeof card === 'object' && card !== null && !Array.isArray(card)
+      ? (card as Record<string, unknown>)
+      : {};
+  const already = cards[String(toRound)];
+  if (!(Array.isArray(already) && already.length > 0)) {
+    const previous = cards[String(fromRound)];
+    if (Array.isArray(previous) && previous.length > 0) cards[String(toRound)] = previous;
+  }
+  const written = JSON.stringify(cards);
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(
+          db,
+          'SELECT 1 FROM event WHERE id = ?1 AND (current_round <> ?2 OR round_scorecards <> ?3)',
+          eventId,
+          fromRound,
+          stored
+        ),
+        db
+          .prepare('UPDATE event SET current_round = ?2, round_scorecards = ?3 WHERE id = ?1')
+          .bind(eventId, toRound, written),
+      ],
+      [0, 1],
+      STALE
+    );
+  } catch (e) {
+    const outcome = outcomeOf(e, 'openNextRound');
+    return outcome === 'moved' ? 'moved' : 'trouble';
+  }
+  return 'opened';
+}
+
+/* ------------------------------------------------------------------ *
+ * The nudge
+ * ------------------------------------------------------------------ */
+
+/**
+ * The closed set for a nudge.
+ *
+ *   'nudged'  — a note is in their hands, and by email if they have a real one
+ *   'recent'  — they were nudged inside the last day; kindness is rate-limited
+ *   'nothing' — nothing is open on their list, so there was nothing to say
+ *   'nobody'  — they no longer read on this conference
+ *   'moved'   — a nudge landed between the reading and the click
+ *   'trouble' — something unexpected; nothing was written
+ */
+export type NudgeOutcome = 'nudged' | 'recent' | 'nothing' | 'nobody' | 'moved' | 'trouble';
+
+type EmailBinding = {
+  send(msg: {
+    to: string;
+    from: { email: string; name: string };
+    subject: string;
+    text: string;
+  }): Promise<unknown>;
+};
+
+/**
+ * One click, and it leaves the building — which is why it is the one act in
+ * this file that counts hours.
+ *
+ * ONE CLICK is right for it under D-024: it is undoable in the only sense that
+ * matters to the person on the other end, because a note that says "these are
+ * still waiting" is true until they are not, and nothing about it can be
+ * wrong later. What it cannot be is repeatable. A chair with a long list and a
+ * short evening could nudge the same reader four times before supper, and the
+ * fourth one is not a reminder, it is a complaint. So the second nudge inside
+ * NUDGE_HOURS refuses in the batch, not only on the screen, and says so
+ * plainly.
+ *
+ * The row is staged and delivered in the same statement. Everything else in
+ * the outbox is written first and released second, because a letter to a
+ * speaker is a decision somebody has to stand behind; this is a chair tapping
+ * a colleague on the shoulder, and holding it for review would be theatre.
+ *
+ * Email rides after the commit, exactly as release.ts does it: real addresses
+ * only, failures cost nothing, and the note stands whether or not it flew.
+ */
+export async function nudgeReviewer(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  round: number,
+  personId: string,
+  email: { binding: EmailBinding; from: string } | null,
+  waitUntil: (p: Promise<unknown>) => void
+): Promise<{ outcome: NudgeOutcome; open: number }> {
+  requireDecider(principal, eventId);
+  if (!personId) return { outcome: 'nobody', open: 0 };
+
+  const t = now();
+  const since = t - NUDGE_HOURS * 3_600_000;
+
+  const who = await db
+    .prepare(
+      // `IS` rather than `=`: internal_role is null for most people, and
+      // null = 'organizer' is null, which would come back as neither yes nor
+      // no. The three-valued answer is the bug people write by accident here.
+      `SELECT p.id, p.name, p.email,
+              (p.internal_role IS 'organizer'
+               OR EXISTS (SELECT 1 FROM event_role er
+                           WHERE er.event_id = ?2 AND er.person_id = p.id)) AS may_read,
+              (SELECT COUNT(*) FROM review rv
+                 JOIN submission s ON s.id = rv.submission_id
+                WHERE s.event_id = ?2 AND s.state = 'submitted'
+                  AND rv.reviewer_person_id = p.id AND rv.round = ?3
+                  AND rv.submitted_at IS NULL) AS still_open,
+              (SELECT MAX(m.created_at) FROM message m
+                WHERE m.event_id = ?2 AND m.person_id = p.id
+                  AND m.kind = 'note' AND m.subject = ?4) AS last_nudge
+         FROM person p WHERE p.id = ?1`
+    )
+    .bind(personId, eventId, round, NUDGE_SUBJECT)
+    .first<{
+      id: string;
+      name: string;
+      email: string | null;
+      may_read: number;
+      still_open: number;
+      last_nudge: number | null;
+    }>();
+
+  if (!who || who.may_read !== 1) return { outcome: 'nobody', open: 0 };
+  if (who.still_open === 0) return { outcome: 'nothing', open: 0 };
+  if (who.last_nudge !== null && who.last_nudge > since) {
+    return { outcome: 'recent', open: who.still_open };
+  }
+
+  const event = await db
+    .prepare('SELECT name FROM event WHERE id = ?')
+    .bind(eventId)
+    .first<{ name: string }>();
+  const eventName = event?.name ?? '';
+  const open = who.still_open;
+  const body =
+    `${open === 1 ? 'One proposal is' : `${open} proposals are`} still open on your ` +
+    `reading list for ${eventName}. Nobody else can read them for you, and the room ` +
+    'cannot talk about them until they are in.\n\n' +
+    'Open Reviews when you have an evening. Marks stay yours until you submit them.';
+  const messageId = newId('msg');
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        // Rate-kindness, held where it cannot be got round: a second nudge
+        // inside the window aborts the batch even if two chairs press at once.
+        guard(
+          db,
+          `SELECT 1 FROM message
+            WHERE event_id = ?1 AND person_id = ?2 AND kind = 'note'
+              AND subject = ?3 AND created_at > ?4`,
+          eventId,
+          personId,
+          NUDGE_SUBJECT,
+          since
+        ),
+        // And the standing, checked again in the batch the way the hand-out
+        // checks it: a person taken off the conference mid-click gets nothing.
+        guard(
+          db,
+          `SELECT 1 FROM person p
+            WHERE p.id = ?1 AND p.internal_role IS NOT 'organizer'
+              AND NOT EXISTS (SELECT 1 FROM event_role er
+                               WHERE er.event_id = ?2 AND er.person_id = p.id)`,
+          personId,
+          eventId
+        ),
+        db
+          .prepare(
+            `INSERT INTO message
+               (id, event_id, person_id, kind, subject, body, created_at, delivered_at)
+             VALUES (?1, ?2, ?3, 'note', ?4, ?5, ?6, ?6)`
+          )
+          .bind(messageId, eventId, personId, NUDGE_SUBJECT, body, t),
+      ],
+      [0, 0, 1],
+      STALE
+    );
+  } catch (e) {
+    // The rate guard is checked above as well, so a guard firing here means
+    // two people pressed at once or a standing was withdrawn mid-click —
+    // neither of which is "nudged yesterday", and neither should say so.
+    const outcome = outcomeOf(e, 'nudgeReviewer');
+    return { outcome: outcome === 'moved' ? 'moved' : 'trouble', open };
+  }
+
+  if (email && who.email && isRealAddress(who.email)) {
+    const to = who.email;
+    const name = who.name;
+    waitUntil(
+      (async () => {
+        try {
+          await email.binding.send({
+            to,
+            from: { email: email.from, name: 'Fireside' },
+            subject: NUDGE_SUBJECT,
+            text: `Hello ${name},\n\n${body}\n\n— sent from Fireside.`,
+          });
+          await db
+            .prepare('UPDATE message SET emailed_at = ? WHERE id = ?')
+            .bind(now(), messageId)
+            .run();
+        } catch {
+          // the note is in front of them in Fireside either way
+        }
+      })()
+    );
+  }
+
+  return { outcome: 'nudged', open };
 }

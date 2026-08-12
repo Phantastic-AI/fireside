@@ -9,10 +9,17 @@
 // call uses — so the editor cannot show a question the form would drop. What
 // it drops is counted (`unreadable`) rather than hidden, and the raw stored
 // text rides along so a save can refuse to clobber somebody else's edit.
+//
+// The scorecard comes back the same way, through scorecardFor — the reader the
+// reviewer's own card is built from — for the same reason: an editor showing a
+// line the committee will never be asked is editing a fiction. Its raw text
+// rides along too, and so does what this round has already heard, because a
+// line only comes off a scorecard while the round is still silent.
 
 import type { Principal } from '../workflows/account';
 import { requireScope, EDIT_ROLES } from './admin';
 import { cfpQuestions, type CfpQuestion } from './public';
+import { scorecardFor, SCORED_SQL, RECUSED_SQL, type ScorecardKey } from './reviews';
 
 /** Touching another person's standing is the owner's own act (D-026). */
 export const TEAM_ROLES: readonly string[] = ['owner'];
@@ -80,6 +87,17 @@ export type EventSettings = {
   unreadable: number;
   /** The stored text exactly as it stands, carried into the save as a guard. */
   questionsRaw: string;
+  /** Which round the committee is reading — the scorecard on screen is its. */
+  currentRound: number;
+  /** This round's scorecard, read through the same parser the reviewer's card
+   *  is built from, so the editor cannot show a line the room would not see. */
+  scorecard: ScorecardKey[];
+  /** Every round's scorecard as stored, carried into the save as its guard. */
+  scorecardRaw: string;
+  /** Reviews already sent in this round. Above zero, no line comes off. */
+  scoredThisRound: number;
+  /** Of this round, the ones finished by stepping aside. */
+  steppedThisRound: number;
   team: TeamMember[];
   teamCount: number;
   ownerCount: number;
@@ -110,6 +128,8 @@ type EventRow = {
   agenda_published: number;
   green_room_nonce: string | null;
   questions: string;
+  current_round: number;
+  round_scorecards: string;
 };
 
 type TeamRow = {
@@ -156,7 +176,7 @@ export async function eventSettings(
     .prepare(
       `SELECT id, slug, name, tagline, starts_on, ends_on, timezone, tz_label, venue_name,
               venue_address, cfp_intro, cfp_opens_at, cfp_closes_at, decide_by, max_submissions,
-              agenda_published, green_room_nonce, questions
+              agenda_published, green_room_nonce, questions, current_round, round_scorecards
        FROM event WHERE slug = ?`
     )
     .bind(slug)
@@ -197,6 +217,18 @@ export async function eventSettings(
       db
         .prepare('SELECT id, name, slug, colour, position FROM track WHERE event_id = ? ORDER BY position, name')
         .bind(ev.id),
+      // What this round has already heard. A line comes off the scorecard only
+      // while the round is silent — the same fact the writer guards on, read
+      // here so the screen can say why the button is not there.
+      db
+        .prepare(
+          `SELECT COUNT(CASE WHEN ${SCORED_SQL} THEN 1 END) AS scored,
+                  COUNT(CASE WHEN ${RECUSED_SQL} THEN 1 END) AS stepped
+             FROM review rv
+             JOIN submission s ON s.id = rv.submission_id
+            WHERE s.event_id = ?1 AND rv.round = ?2`
+        )
+        .bind(ev.id, ev.current_round),
     ]),
   ]);
 
@@ -237,6 +269,11 @@ export async function eventSettings(
     questionCount: questions.length,
     unreadable: Math.max(0, storedCount(ev.questions) - questions.length),
     questionsRaw: ev.questions,
+    currentRound: ev.current_round,
+    scorecard: scorecardFor(ev.round_scorecards, ev.current_round),
+    scorecardRaw: ev.round_scorecards ?? '{}',
+    scoredThisRound: rowsOf<{ scored: number; stepped: number }>(res[5])[0]?.scored ?? 0,
+    steppedThisRound: rowsOf<{ scored: number; stepped: number }>(res[5])[0]?.stepped ?? 0,
     team,
     teamCount: team.length,
     ownerCount: team.filter((m) => m.role === 'owner').length,

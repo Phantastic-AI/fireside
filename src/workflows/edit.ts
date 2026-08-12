@@ -19,9 +19,31 @@
 // Validation mirrors workflows/submit.ts field for field — same ceiling, same
 // vocabulary, same sentences — minus name and email, which are the person's,
 // not the proposal's, and live in the portal.
+//
+// It also owns `trueStanding` — the one read in the speaker's half of the
+// product that sees a decision before it is told. Nothing it returns is ever
+// printed: it exists so the door can be the same shape as the lock behind it.
 
-import { ChangesMismatchError, StaleStateError, checkedBatch, guard, newId } from '../lib/db';
-import { ABSTRACT_MAX, FORMATS, LEVELS, tracksOfEvent, visibleQuestions } from './submit';
+import {
+  ChangesMismatchError,
+  StaleStateError,
+  checkedBatch,
+  guard,
+  newId,
+  type Expected,
+} from '../lib/db';
+import {
+  ABSTRACT_MAX,
+  FORMATS,
+  LEVELS,
+  coParticipation,
+  peopleOnTalk,
+  planCoPresenters,
+  readCoPresenters,
+  tracksOfEvent,
+  visibleQuestions,
+  type CoRow,
+} from './submit';
 import type { CfpQuestion } from '../queries/public';
 
 /** What the edit form posts. Identity is not on it — only the talk. */
@@ -35,7 +57,57 @@ export type EditInput = {
   answers: Record<string, string | boolean>;
   /** The call's own questions, so visibility and required-ness are judged once. */
   questions: readonly CfpQuestion[];
+  /**
+   * The people speaking with them, as the form posted them — the whole block,
+   * because this writer reconciles: an address that has gone off the form goes
+   * off the talk. Absent means the form never asked, and then nobody moves.
+   */
+  co?: readonly CoRow[];
 };
+
+/** The states a submission can really be in. Kept here beside the one read
+ *  that is allowed to see them. */
+export type TrueState =
+  | 'draft'
+  | 'submitted'
+  | 'accepted'
+  | 'waitlisted'
+  | 'rejected'
+  | 'withdrawn'
+  | 'cancelled';
+
+/** Where a talk really stands, and whether the letter has gone. */
+export type TrueStanding = { state: TrueState; told: boolean };
+
+/**
+ * The submission's own standing, read straight.
+ *
+ * queries/portal.ts cannot answer this and should not: it hides a decision
+ * nobody has been told about, which is the product's own promise. But a door
+ * that reads the hidden state draws an editable form over a proposal the write
+ * guard will refuse, and then refuses it in the wrong words. So the screen
+ * reads the truth to decide what to draw, and prints none of it.
+ *
+ * Scoped to one event and to one person on the talk, so it answers only about
+ * a proposal that is already theirs.
+ */
+export async function trueStanding(
+  db: D1Database,
+  eventId: string,
+  submissionId: string,
+  personId: string
+): Promise<TrueStanding | null> {
+  const row = await db
+    .prepare(
+      `SELECT s.state, s.notified_at
+         FROM submission s
+         JOIN participation pa ON pa.submission_id = s.id AND pa.person_id = ?
+        WHERE s.id = ? AND s.event_id = ?`
+    )
+    .bind(personId, submissionId, eventId)
+    .first<{ state: TrueState; notified_at: number | null }>();
+  return row ? { state: row.state, told: row.notified_at !== null } : null;
+}
 
 export type EditOutcome =
   /** Saved. */
@@ -104,6 +176,10 @@ const refuse = (field: string | null, message: string): EditOutcome => ({
  * are still on the proposal, so a co-speaker taken off it mid-edit cannot
  * write. Refusals come back as sentences rather than exceptions, because being
  * told "a title is needed" is a normal thing for a form to say.
+ *
+ * The people on it move in the same batch as the words: an address typed into
+ * the block joins the talk, an address rubbed out leaves it, and both happen
+ * or neither does.
  */
 export async function editProposal(
   db: D1Database,
@@ -162,6 +238,32 @@ export async function editProposal(
       return refuse(`f-q-${q.id}`, `${q.label} is one the organizers ask everyone.`);
     }
   }
+
+  // Who is on it now, so a row already there is left alone and a row that has
+  // gone off the form can be taken off the talk. Everyone's address counts as
+  // taken, whatever their standing: a speaker cannot demote the person whose
+  // proposal it is by typing them into a co-presenter row.
+  const onIt = await peopleOnTalk(db, submissionId);
+  const coReading = readCoPresenters(
+    input.co ?? [],
+    onIt.map((p) => p.email ?? '')
+  );
+  if (!coReading.ok) return refuse(coReading.field, coReading.message);
+
+  // Reconciliation only happens when the form actually carried the block —
+  // a caller that says nothing about co-presenters removes none of them.
+  const asked = input.co !== undefined;
+  const stays = new Set(coReading.posted);
+  const goodbye = asked
+    ? onIt.filter(
+        (p) =>
+          p.role === 'co_speaker' &&
+          !p.isSubmitter &&
+          p.email !== null &&
+          !stays.has(p.email.toLowerCase())
+      )
+    : [];
+  const arrivals = await planCoPresenters(db, coReading.fresh, nowMs);
 
   // The words about to be replaced, read as late as possible so the copy kept
   // is the one that was really there.
@@ -235,12 +337,46 @@ export async function editProposal(
         eventId
       ),
   ];
+  // Two guards that touch nothing, the copy kept, the words replaced.
+  const expect: Expected[] = [0, 0, 1, 1];
+
+  // Anyone new on the talk: the person first, then the row pointing at them.
+  for (const mate of arrivals) {
+    if (mate.create) {
+      statements.push(mate.create);
+      expect.push(1);
+    }
+  }
+  for (const mate of arrivals) {
+    statements.push(
+      coParticipation(db, submissionId, mate.personId, coReading.posted.indexOf(mate.email) + 1)
+    );
+    expect.push(1);
+  }
+
+  // Anyone taken off it. Only a co-presenter's own row, and never the row that
+  // says whose proposal this is — the statement says so itself, so a posted
+  // address can never reach a standing this form does not hand out. Somebody
+  // an organizer put on without an address was never in the block to begin
+  // with, and does not fall out from behind it either.
+  for (const gone of goodbye) {
+    statements.push(
+      db
+        .prepare(
+          `DELETE FROM participation
+            WHERE submission_id = ? AND person_id = ?
+              AND role = 'co_speaker' AND is_submitter = 0`
+        )
+        .bind(submissionId, gone.personId)
+    );
+    expect.push(1);
+  }
 
   try {
     await checkedBatch(
       db,
       statements,
-      [0, 0, 1, 1],
+      expect,
       'that proposal moved while this page was open'
     );
   } catch (e) {
