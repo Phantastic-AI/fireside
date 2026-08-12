@@ -1,0 +1,45 @@
+{
+  // Fireside — one Worker, everything through it.
+  "name": "fireside",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": true,
+  "vars": {
+    "RESEED_ENABLED": "false"
+  },
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.css"],
+      "fallthrough": true
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fireside",
+      "database_id": "b52c4fa2-3ae7-4d6c-885f-bcde33b40437"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "fireside-files"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ],
+  "triggers": {
+    // Hourly: maintenance always; reseed only when RESEED_ENABLED flips true (R-2).
+    "crons": ["0 * * * *"]
+  },
+  "observability": {
+    "enabled": true
+  }
+}
