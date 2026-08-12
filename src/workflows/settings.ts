@@ -66,6 +66,11 @@ export type EventFacts = {
   cfpIntro: string;
   decideBy: string;
   maxSubmissions: string;
+  /** The call window, as days. Opens at the start of its day, closes at the
+   *  end of its own (UTC — the same within-a-day convention creation uses).
+   *  Both blank = the call is shut. */
+  callOpensOn: string;
+  callClosesOn: string;
 };
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -92,6 +97,14 @@ export async function saveEventFacts(
   const decideBy = trimmed(facts.decideBy);
   if (decideBy !== '' && !ISO_DAY.test(decideBy)) return 'event_date';
 
+  const opensOn = trimmed(facts.callOpensOn);
+  const closesOn = trimmed(facts.callClosesOn);
+  if (opensOn !== '' && !ISO_DAY.test(opensOn)) return 'event_date';
+  if (closesOn !== '' && !ISO_DAY.test(closesOn)) return 'event_date';
+  if (closesOn !== '' && opensOn !== '' && closesOn < opensOn) return 'event_date';
+  const opensAt = opensOn === '' ? null : Date.parse(`${opensOn}T00:00:00Z`);
+  const closesAt = closesOn === '' ? null : Date.parse(`${closesOn}T23:59:59Z`);
+
   try {
     await checkedBatch(
       db,
@@ -100,7 +113,8 @@ export async function saveEventFacts(
         db
           .prepare(
             `UPDATE event SET name = ?2, tagline = ?3, venue_name = ?4, venue_address = ?5,
-                    cfp_intro = ?6, decide_by = ?7, max_submissions = ?8
+                    cfp_intro = ?6, decide_by = ?7, max_submissions = ?8,
+                    cfp_opens_at = ?9, cfp_closes_at = ?10
              WHERE id = ?1`
           )
           .bind(
@@ -111,7 +125,9 @@ export async function saveEventFacts(
             orNull(facts.venueAddress),
             orNull(facts.cfpIntro),
             decideBy === '' ? null : decideBy,
-            cap
+            cap,
+            opensAt,
+            closesAt
           ),
       ],
       [0, 1]

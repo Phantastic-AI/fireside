@@ -116,6 +116,13 @@ const num = (n: number): string => n.toLocaleString('en-US');
 const plural = (n: number, one: string, many: string): string =>
   `${num(n)} ${n === 1 ? one : many}`;
 
+/** An instant back as the day the settings form would have typed (UTC day —
+ *  the same within-a-day convention the writer uses going the other way). */
+function callDayOf(ms: number | null): string {
+  if (ms === null) return '';
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
 /** The call's own state, in the organizer's register. */
 function callSentence(ev: EventSettings, nowMs: number): string {
   if (ev.cfpOpensAt !== null && ev.cfpOpensAt > nowMs) {
@@ -353,6 +360,22 @@ function eventSection(ev: EventSettings, said: Said | null, nowMs: number): stri
       labelText: 'How many proposals per person',
       value: String(ev.maxSubmissions),
       hint: 'Once somebody reaches it, the call stops taking new ones from them and points them at their portal.',
+    }) +
+    field({
+      name: 'call_opens',
+      labelText: 'The call opens',
+      value: callDayOf(ev.cfpOpensAt),
+      optional: true,
+      placeholder: '2026-08-01',
+      hint: 'Written as 2026-08-01. Leave both dates blank and the call is shut.',
+    }) +
+    field({
+      name: 'call_closes',
+      labelText: 'The call closes',
+      value: callDayOf(ev.cfpClosesAt),
+      optional: true,
+      placeholder: '2026-08-27',
+      hint: 'Proposals can be sent and edited until the end of this day.',
     }) +
     field({
       name: 'decide_by',
@@ -811,6 +834,8 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
         cfpIntro: text('intro'),
         decideBy: text('decide_by'),
         maxSubmissions: text('cap'),
+        callOpensOn: text('call_opens'),
+        callClosesOn: text('call_closes'),
       });
     })
   );
