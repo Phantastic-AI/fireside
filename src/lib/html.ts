@@ -56,6 +56,48 @@ export function eventNav(slug: string, here: string, callOpen: boolean): string 
   );
 }
 
+const BS_NAV: [path: string, label: string][] = [
+  ['', 'Program'],
+  ['/submissions', 'Proposals'],
+  ['/agenda', 'Agenda'],
+  ['/people', 'People'],
+  ['/green-room', 'Green room'],
+  ['/slides', 'Slides'],
+  ['/outbox', 'Outbox'],
+  ['/settings', 'Settings'],
+];
+
+/** The backstage chrome — dark top bar, event switch, section nav. */
+export function backstageShell(o: {
+  eventSlug: string;
+  eventName: string;
+  here: string; // '' | '/submissions' | ...
+  who: string; // "Naomi Adeyemi · Organizer"
+  whoInitials: string;
+  tzLabel: string;
+  body: string;
+  crumb?: string;
+}): string {
+  const nav = BS_NAV.map(([p, lab]) =>
+    p === o.here
+      ? `<span aria-current="page">${lab}</span>`
+      : `<a href="/admin/${o.eventSlug}${p}">${lab}</a>`
+  ).join('');
+  return (
+    '<div class="stage backstage">' +
+    `<div class="bs-top"><div class="wrap wrap-wide bs-top-in">${brand()}` +
+    `<a class="evt-switch" href="/admin">${esc(o.eventName)} <span style="opacity:.6">⌄</span></a>` +
+    `<div class="bs-me"><span style="width:26px;height:26px;border-radius:50%;display:inline-grid;place-items:center;background:var(--ember-wash);color:var(--ember);font-size:11px;font-weight:700">${esc(o.whoInitials)}</span><span>${esc(o.who)}</span></div>` +
+    '</div></div>' +
+    `<div class="bs-nav"><div class="wrap wrap-wide bs-nav-in">${nav}</div></div>` +
+    `<main><div class="wrap wrap-wide">${o.crumb ? `<div class="crumb">${o.crumb}</div>` : ''}${o.body}</div></main>` +
+    `<footer class="foot"><div class="wrap wrap-wide foot-in"><span class="fname">${NAME}</span>` +
+    `<span>${esc(o.tzLabel)}</span>` +
+    `<span style="margin-left:auto"><a class="link" href="/${o.eventSlug}">See the public page ↗</a></span>` +
+    '</div></footer></div>'
+  );
+}
+
 /** The onstage chrome: masthead, main, footer. `nav` is pre-built links. */
 export function onstageShell(nav: string, body: string, foot?: string): string {
   return (

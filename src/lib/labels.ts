@@ -378,3 +378,20 @@ export const BANNED_WORDS: string[] = [
 //     from `message.delivered`'s "Sent {date}" (that's an outbox message;
 //     this is the proposal-submission receipt). Same open question as above:
 //     enum value or one-off confirmation copy, and which register(s) see it.
+
+// Δ CP1 additions (provisional rulings, decision-log 2026-08-12): mappings
+// from STORED values to label keys, and the fourth call-lifecycle fact the
+// doc pass owes 02 §6. Stored casing follows the seed ('Talk', 'intro'…).
+export const FORMAT_KEY: Record<string, LabelKey> = {
+  Talk: 'format.talk',
+  'Lightning talk': 'format.lightning',
+  Workshop: 'format.workshop',
+  Panel: 'format.panel',
+};
+export const LEVEL_KEY: Record<string, LabelKey> = {
+  intro: 'level.new',
+  practitioner: 'level.working',
+  deep: 'level.deep',
+};
+/** The past event's call state, canonical from the prototype landing. */
+export const CALL_HAPPENED = 'Happened · recordings up';
