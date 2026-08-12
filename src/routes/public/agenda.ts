@@ -310,17 +310,29 @@ function agendaBody(
     ? `${plural(allSessions.length, 'session', 'sessions')} across ${plural(roomNames.size, 'room', 'rooms')} · ${plural(speakerIds.size, 'speaker', 'speakers')}`
     : `${plural(allSessions.length, 'session', 'sessions')} · ${plural(speakerIds.size, 'speaker', 'speakers')}`;
 
+  // A plain link — no JS, no download button — to the whole agenda as a
+  // calendar file (registerIcs, src/routes/public/ics.ts). Only worth
+  // offering once there's something in it.
+  const icsLink = allSessions.length
+    ? `<p class="sub" style="margin-top:6px"><a class="link" href="/${esc(slug)}/agenda.ics">Add to calendar →</a></p>`
+    : '';
+
   const head =
     `<h1 class="display">${esc(event.name)}</h1>` +
     `<p class="sub" style="margin-top:8px">${esc(headLine)}</p>` +
     (allSessions.length ? `<p class="sub">${esc(countsLine)}</p>` : '') +
+    icsLink +
     `<div class="filters scrollx daybar">${dayChips}</div>` +
     (trackChips ? `<div class="filters scrollx daybar">${trackChips}</div>` : '');
 
   // Embed mirrors the prototype exactly: day tabs are dropped, only the
   // track legend survives, because an embedded widget is already scoped
-  // by whatever page it sits on.
-  const embedBar = embed && trackChips ? `<div class="filters scrollx daybar">${trackChips}</div>` : '';
+  // by whatever page it sits on. The calendar link stays — it's a plain
+  // link, not a control the embed needs to hide.
+  const embedBar =
+    embed && (trackChips || icsLink)
+      ? (trackChips ? `<div class="filters scrollx daybar">${trackChips}</div>` : '') + icsLink
+      : '';
 
   return (
     `<div class="wrap" style="padding-top:${embed ? '8px' : '44px'}">` +
@@ -429,6 +441,10 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
     const recordingCta = session.recordingUrl
       ? `<a class="btn btn-primary" href="${esc(session.recordingUrl)}">${esc(label('session.recording', 'onstage'))} →</a>`
       : '';
+    // A plain link to this one session as a calendar file (registerIcs,
+    // src/routes/public/ics.ts) — quiet, next to the time and room it
+    // describes, same in embed mode since this block isn't embed-gated.
+    const icsLink = `<p class="sub" style="margin-top:6px"><a class="link" href="/${esc(slug)}/s/${esc(sessionSlug)}.ics">Add to calendar →</a></p>`;
 
     const speakerBlocks = session.speakers.map((p) => speakerBlock(slug, p)).join('');
 
@@ -452,6 +468,7 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
       cancelledNote +
       `<p style="margin-top:14px;font-size:19px;font-weight:600">${esc(roomLine)}</p>` +
       (session.tzLabel ? `<p class="sub">${esc(session.tzLabel)}</p>` : '') +
+      icsLink +
       '</div>' +
       (recordingCta ? `<div class="card card-pad" style="min-width:210px">${recordingCta}</div>` : '') +
       '</div>' +

@@ -8,6 +8,10 @@ import { registerAgenda } from './routes/public/agenda';
 import { registerSpeakers } from './routes/public/speakers';
 import { registerSchedule } from './routes/public/schedule';
 import { registerEventHome } from './routes/public/event';
+import { registerEditProposal } from './routes/public/edit';
+import { registerIcs } from './routes/public/ics';
+import { registerAsk } from './routes/public/ask';
+import { registerMcp } from './mcp';
 import { registerAdminHome } from './routes/admin/home';
 import { registerPile } from './routes/admin/pile';
 import { registerProposal } from './routes/admin/proposal';
@@ -240,11 +244,17 @@ registerReviews(app);
 // ---------- The event screens ----------
 // registerEventHome goes last: its GET /:eventSlug matches broadest, and it
 // calls next() for unknown slugs so the 404 below still owns the miss.
+// registerIcs sits before registerAgenda so /:event/s/:slug.ics wins the
+// match before the session page's bare :slug can swallow the suffix.
+registerMcp(app);
 registerCfp(app);
+registerEditProposal(app);
 registerPortal(app);
+registerIcs(app);
 registerAgenda(app);
 registerSpeakers(app);
 registerSchedule(app);
+registerAsk(app);
 registerEventHome(app);
 
 // The product 404 — its real copy, from the prototype, from day one.

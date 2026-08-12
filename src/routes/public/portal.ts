@@ -176,6 +176,7 @@ function committeeNote(text: string): string {
  * ------------------------------------------------------------------ */
 
 const NOTES: Record<string, string> = {
+  edited: 'Saved. Those are the words on it now.',
   withdrawn: 'That one is withdrawn. It has left the committee’s list.',
   'task-done': 'Marked done. Your list is one shorter.',
   moved: 'That had already moved before this page opened. What you see now is where it stands.',
@@ -233,6 +234,17 @@ type Lane = { cls: string; colour: string; head: string; body: string; bot: stri
  *  published, so its absence is exactly "not on a public agenda". */
 const withdrawable = (s: PortalSubmission): boolean =>
   s.state === 'submitted' || s.state === 'waitlisted' || (s.state === 'accepted' && !s.placement);
+
+/**
+ * May they still change the words? Only while the call is open, and only while
+ * the committee has not acted — the two facts the DTO already carries, read and
+ * not re-derived. The route behind the door checks the same window again.
+ */
+const editable = (view: PortalView, s: PortalSubmission): boolean =>
+  view.event.lifecycle === 'open' && (s.state === 'draft' || s.state === 'submitted');
+
+const editLink = (slug: string, s: PortalSubmission): string =>
+  `<a class="btn" href="/${esc(slug)}/cfp/edit/${esc(s.id)}">Edit this proposal →</a>`;
 
 function withdrawBlock(slug: string, s: PortalSubmission): string {
   return (
@@ -352,7 +364,7 @@ function laneOf(view: PortalView, s: PortalSubmission): Lane {
           title +
           '<p class="sub" style="margin-top:6px">You started this one and have not sent it. ' +
           'Nobody on the committee can see it yet.</p>',
-        bot: '',
+        bot: editable(view, s) ? editLink(ev.slug, s) : '',
       };
     default: {
       const sent = s.submittedAt
@@ -366,7 +378,7 @@ function laneOf(view: PortalView, s: PortalSubmission): Lane {
         colour: 'var(--ember)',
         head: `${label('submission.submitted', 'onstage')}.`,
         body: title + `<p class="sub" style="margin-top:6px">${sent}${by}</p>`,
-        bot: withdrawBlock(ev.slug, s),
+        bot: (editable(view, s) ? editLink(ev.slug, s) : '') + withdrawBlock(ev.slug, s),
       };
     }
   }
@@ -642,7 +654,10 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
 
     // One speaker's own page: never held in a shared cache anywhere.
     c.header('cache-control', 'private, no-store');
-    return c.html(portalPage(view, c.req.query('note')));
+    // A saved edit arrives under its own flag; its sentence still lives in
+    // NOTES with the others, so there is one closed set and not two.
+    const note = c.req.query('edited') === '1' ? 'edited' : c.req.query('note');
+    return c.html(portalPage(view, note));
   });
 
   app.post('/:event/portal/done', async (c) => {

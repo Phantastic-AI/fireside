@@ -605,9 +605,16 @@ function thanksPage(ev: EventHome, email: string, callOpen: boolean): string {
     '</p>' +
     `<p><b>${esc(email)}</b> is the address on it. The decision goes there, and it is how you ` +
     'get back into your speaker portal — no password to remember.</p>' +
+    // The promise this paragraph makes gets its door. It opens on the portal
+    // rather than on the form itself: changing a proposal means proving it is
+    // yours, and signing in is something the portal already knows how to ask.
     (closes
       ? `<p>The call closes on <b>${esc(closes)}</b>. Nothing you change after that reaches the ` +
-        'committee, so this is the moment to fix the title you are not sure about.</p>'
+        'committee, so this is the moment to fix the title you are not sure about. ' +
+        (callOpen
+          ? `<a class="link" href="/${esc(ev.slug)}/portal">Change a word from your portal →</a>`
+          : '') +
+        '</p>'
       : '') +
     '<div class="btnrow">' +
     `<a class="btn btn-primary btn-lg" href="/${esc(ev.slug)}/portal">Open your speaker portal</a>` +
