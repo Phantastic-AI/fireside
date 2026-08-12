@@ -1962,10 +1962,11 @@ function screenAdminEvents(){
       '<p class="lede" style="margin-top:8px">Two running. ' + n(counts('aie-nyc').all + counts('ddc-clt').all) + ' proposals between them.</p>' +
       '<div class="sec evcards">' + rows + '</div>' +
       '<div class="sec card card-pad" style="max-width:34em">' +
-        '<h3 class="serif" style="font-size:20px;font-weight:600">Someone else on the committee?</h3>' +
-        '<p class="sub" style="margin:6px 0 14px">Sign in with the address the chair added. Speakers never sign in — their link is in their email.</p>' +
-        '<label class="f" for="si"><span class="f-lab">Email</span><input type="email" id="si" placeholder="naomi@example.org"><span class="hint">We send a link back to this page. There is no password to forget.</span></label>' +
-        '<button class="btn btn-primary" onclick="toast(\'Link sent. Check naomi@example.org.\')">Send me a link</button>' +
+        '<h3 class="serif" style="font-size:20px;font-weight:600">On the committee?</h3>' +
+        '<p class="sub" style="margin:6px 0 14px">Type the email your invitation came to and we will send you a sign-in link.</p>' +
+        '<label class="f" for="si"><span class="f-lab">Email</span><input type="email" id="si" placeholder="lena@example.org"><span class="hint">The link signs you in. No password.</span></label>' +
+        '<button class="btn btn-primary" onclick="toast(\'Link sent. Check lena@example.org.\')">Send me a link</button>' +
+        '<p class="sub" style="margin-top:12px">Speaking at the event? You do not need this page — every email we send you already carries your portal link.</p>' +
       '</div>' +
       '<p class="sub" style="margin-top:26px"><a class="link" href="' + url('') + '">← The public site</a></p>' +
     '</div></main>' +
