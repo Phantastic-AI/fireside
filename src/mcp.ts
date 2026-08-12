@@ -87,8 +87,9 @@ import {
   queuePosition,
   reviewEvent,
   reviewQueue,
-  stagedReviews,
   type ReviewEvent,
+  type Scores,
+  type ScorecardKey,
 } from './queries/reviews';
 import {
   ABSTRACT_MAX,
@@ -99,12 +100,11 @@ import {
   type TrackOption,
 } from './workflows/submit';
 import { principalFromPersonId, type Principal } from './workflows/account';
-import { submitReviews, upsertReview } from './workflows/review';
-// scoresFrom and NOTES are the reviewer form's own value-shape check and its
-// own outcome sentences (routes/admin/reviews.ts). submit_review reuses both
-// rather than restating them, so a scale's range and a "you already sent
-// this in" sentence cannot say two different things in two places.
-import { NOTES, scoresFrom } from './routes/admin/reviews';
+import { submitOneReview } from './workflows/review';
+// NOTES is the reviewer form's own outcome sentences (routes/admin/reviews.ts).
+// submit_review reuses them rather than restating, so "you already sent this
+// in" cannot say two different things in two places.
+import { NOTES } from './routes/admin/reviews';
 
 const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'fireside', version: '1.0.0' };
@@ -343,6 +343,13 @@ const textArg = (args: Args, key: string): string => {
   return typeof v === 'string' ? v.trim() : '';
 };
 
+const numberArg = (args: Args, key: string): number | undefined => {
+  const v = args[key];
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return Number(v);
+  return undefined;
+};
+
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -437,6 +444,57 @@ async function reviewEventOr(
     if (e instanceof ScopeError) return { ok: false, says: noReviewerStanding(slug) };
     throw e;
   }
+}
+
+/** A submitted review is final, so its marks are checked strictly rather than
+ *  coerced: an unknown key or an out-of-range value stops the whole submit with
+ *  a sentence, instead of quietly dropping or rounding it. Returns the marks in
+ *  the shape the writer takes when every one is clean. */
+const REVIEW_NOTE_MAX = 2000;
+function validateMarks(
+  raw: Record<string, unknown>,
+  card: ScorecardKey[],
+  byKey: Map<string, ScorecardKey>
+): { ok: true; scores: Scores } | { ok: false; says: string } {
+  const scores: Scores = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const k = byKey.get(key);
+    if (!k) {
+      return {
+        ok: false,
+        says: `This round's scorecard has no mark called "${key}". review_proposal lists the keys it takes.`,
+      };
+    }
+    if (k.kind === 'text') {
+      if (typeof value !== 'string') {
+        return { ok: false, says: `The mark "${key}" takes a written line, not a number.` };
+      }
+      const written = value.trim().slice(0, REVIEW_NOTE_MAX);
+      if (written) scores[key] = written;
+      continue;
+    }
+    if (k.kind === 'select') {
+      if (typeof value !== 'string' || !k.options.includes(value)) {
+        return {
+          ok: false,
+          says: `The mark "${key}" takes one of: ${k.options.join(', ')}.`,
+        };
+      }
+      scores[key] = value;
+      continue;
+    }
+    // A scale: a whole number in its range, and nothing that has to be rounded
+    // to get there. 4.7 on a scale of 5 is a mistake worth naming, not fixing.
+    const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+    if (!Number.isInteger(n) || n < 1 || n > k.max) {
+      return {
+        ok: false,
+        says: `The mark "${key}" takes a whole number from 1 to ${k.max}.`,
+      };
+    }
+    scores[key] = n;
+  }
+  return { ok: true, scores };
 }
 
 /** The organizer's own extra questions, as the call asks them. */
@@ -1082,15 +1140,20 @@ const SIGNED_TOOLS: Record<string, Tool> = {
   },
 
   review_queue: {
-    title: 'Your reading list',
+    title: 'The reading list',
     description:
-      "This connection's own assigned reviews for the event's current round, still unsubmitted — id, " +
-      'title, format and track. No author name or employer: the round stays blind here exactly as it ' +
-      "does on the reviewer's own screen. review_proposal reads one of these whole, and submit_review " +
-      'sends a mark.',
+      "The proposals to score this round, still unsubmitted — id, title, format and track. A reviewer " +
+      'gets their own assigned reading; an organizer, who can see the whole room, gets every undecided ' +
+      'proposal, which is a longer list. No author name or employer either way: the round stays blind ' +
+      "here exactly as it does on the reviewer's own screen. The list is paged — read `left` for how " +
+      'many remain, `has_more` and `page`/`pages` to walk them, and pass `page` for the next. ' +
+      'review_proposal reads one whole, submit_review sends a mark to exactly one.',
     inputSchema: {
       type: 'object',
-      properties: EVENT_ARG,
+      properties: {
+        ...EVENT_ARG,
+        page: { type: 'number', description: 'Which page of the list, from 1. Optional; the first by default.' },
+      },
       required: ['event'],
       additionalProperties: false,
     },
@@ -1101,12 +1164,20 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       const found = await reviewEventOr(env, principal, slug);
       if (!found.ok) return refuse(found.says);
       const ev = found.ev;
-      const q = await reviewQueue(env.DB, principal, ev);
+      const pageArg = numberArg(args, 'page');
+      const page = Number.isFinite(pageArg) && pageArg! >= 1 ? Math.floor(pageArg!) : 1;
+      const q = await reviewQueue(env.DB, principal, ev, { page });
       const left = q.rows.filter((r) => r.mySubmittedAt === null && !r.myRecused);
       return answered({
         event: ev.slug,
         round: ev.round,
+        // Whose list this is, so `left` is never read as a personal debt an
+        // organizer does not owe.
+        list: ev.everything ? 'the whole undecided pile' : 'your assigned reading',
         left: q.left,
+        page: q.page,
+        pages: q.pages,
+        has_more: q.page < q.pages,
         proposals: left.map((r) => ({
           id: r.id,
           title: r.title,
@@ -1211,24 +1282,33 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       const spot = await queuePosition(env.DB, principal, ev, id);
       if (!spot) return refuse(NOT_ASSIGNED);
 
+      // A submitted review cannot be taken back, so a mark this tool cannot
+      // place exactly as the caller meant it is refused, never quietly fixed.
+      // Every key must be one the scorecard has, and every value must be in
+      // range — a scale takes a whole number in its span, a select one of its
+      // own words. An unknown key, or 4.7 on a scale of 5, stops the whole
+      // submit with a sentence naming what was wrong.
       const rawScores = isObject(args['scores']) ? args['scores'] : {};
-      const asForm: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(rawScores)) {
-        asForm[`score_${k}`] = typeof v === 'number' ? String(v) : v;
-      }
-      // The exact same value-shape check the reviewer's own form field goes
-      // through: a scale kept inside its range, a select kept to its own
-      // options, a written line trimmed and capped. Nothing else survives.
-      const scores = scoresFrom(asForm, ev.scorecard);
+      const cardByKey = new Map(ev.scorecard.map((k) => [k.key, k]));
+      const checked = validateMarks(rawScores, ev.scorecard, cardByKey);
+      if (!checked.ok) return refuse(checked.says);
+      const scores = checked.scores;
       if (Object.keys(scores).length === 0) {
         return refuse(
-          "None of those marks match this round's scorecard. review_proposal lists the exact keys, " +
-            'kinds and ranges it takes.'
+          "A review needs at least one mark from this round's scorecard. review_proposal lists the " +
+            'keys, kinds and ranges it takes.'
         );
       }
-      const comment = textArg(args, 'comment');
 
-      const staged = await upsertReview(
+      // The note is the committee's alone, and it is capped where the form caps
+      // it — a longer one is trimmed rather than refused, because the marks are
+      // the binding part and a wall of text is not worth losing them over.
+      const rawComment = textArg(args, 'comment');
+      const comment = rawComment ? rawComment.slice(0, REVIEW_NOTE_MAX) : '';
+
+      // One proposal, staged and submitted in one guarded batch — never the
+      // cohort. A refusal here means nothing was written.
+      const outcome = await submitOneReview(
         env.DB,
         principal,
         ev.id,
@@ -1237,21 +1317,17 @@ const SIGNED_TOOLS: Record<string, Tool> = {
         scores,
         comment || null
       );
-      if (staged !== 'saved') return refuse(NOTES[staged]);
-
-      // The confirm pass, immediately: the same two calls the reviewer's own
-      // "Submit N reviews" button makes, read fresh so the count that goes is
-      // the count actually staged, never a guess.
-      const cohort = await stagedReviews(env.DB, principal, ev.id, ev.round);
-      const sent = await submitReviews(env.DB, principal, ev.id, ev.round, cohort.length);
-      if (sent.outcome !== 'sent') return refuse(NOTES[sent.outcome]);
+      if (outcome !== 'sent') return refuse(NOTES[outcome]);
 
       return answered({
         id: spot.submissionId,
         submitted: true,
+        recorded: scores,
+        note_kept: comment ? comment.length : 0,
+        note_trimmed: !!rawComment && rawComment.length > REVIEW_NOTE_MAX,
         says:
           'Your review is in. It counts towards the average on this proposal now, and it is final ' +
-          'for this round.',
+          'for this round. Nothing else on your list was touched.',
       });
     },
   },

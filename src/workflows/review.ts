@@ -231,6 +231,97 @@ export async function submitReviews(
   return { outcome: 'sent', submitted: expectedCount };
 }
 
+/**
+ * Score one named proposal and submit it, in one act, touching nothing else.
+ *
+ * The reviewer's own form stages a whole evening's reading and then binds the
+ * cohort in one deliberate press, because the human read the count on a confirm
+ * screen first. An agent has no confirm screen, so this is the safe shape for
+ * it: exactly the proposal it named, staged and submitted inside one guarded
+ * batch. An agent that wants to submit five reviews calls this five times, and
+ * a mistake on one costs one review, never the four beside it that happened to
+ * be staged.
+ *
+ * The single INSERT OR REPLACE writes the row already submitted (submitted_at
+ * set), behind a guard that the proposal is still undecided and this reviewer
+ * has not already submitted it this round. Guard and write are one batch, so a
+ * guard that fires leaves nothing behind — a refusal here always means nothing
+ * was written, which is the promise the form's own two-pass path makes and the
+ * cohort sweep could not.
+ */
+export async function submitOneReview(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  round: number,
+  submissionId: string,
+  scores: Scores,
+  note: string | null,
+  nowMs: number = now()
+): Promise<ReviewOutcome> {
+  requireScope(principal, eventId, REVIEW_ROLES);
+
+  const existing = await db
+    .prepare(
+      `SELECT rv.id, rv.submitted_at, s.state
+         FROM submission s
+         LEFT JOIN review rv
+           ON rv.submission_id = s.id AND rv.reviewer_person_id = ? AND rv.round = ?
+        WHERE s.id = ? AND s.event_id = ?`
+    )
+    .bind(principal.personId, round, submissionId, eventId)
+    .first<{ id: string | null; submitted_at: number | null; state: string }>();
+
+  if (!existing || existing.state !== 'submitted') return 'gone';
+  if (existing.submitted_at !== null) return 'locked';
+  // A submitted review must carry a mark: an empty one is a recusal, which has
+  // its own act with its own words. Submitting nothing is not the same thing.
+  if (Object.keys(scores).length === 0) return 'blank';
+
+  const written = (note ?? '').trim();
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(
+          db,
+          `SELECT 1 FROM submission s
+            WHERE s.id = ?1
+              AND (s.event_id <> ?2 OR s.state <> 'submitted'
+                   OR EXISTS (SELECT 1 FROM review rv
+                               WHERE rv.submission_id = s.id
+                                 AND rv.reviewer_person_id = ?3 AND rv.round = ?4
+                                 AND rv.submitted_at IS NOT NULL))`,
+          submissionId,
+          eventId,
+          principal.personId,
+          round
+        ),
+        db
+          .prepare(
+            `INSERT OR REPLACE INTO review
+               (id, submission_id, reviewer_person_id, round, scores, note, submitted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            existing.id ?? newId('rev'),
+            submissionId,
+            principal.personId,
+            round,
+            JSON.stringify(scores),
+            written ? written : null,
+            nowMs
+          ),
+      ],
+      [0, { atLeast: 1 }],
+      STALE
+    );
+  } catch (e) {
+    return outcomeOf(e, 'submitOneReview');
+  }
+  return 'sent';
+}
+
 /* ------------------------------------------------------------------ *
  * Handing the pile out
  * ------------------------------------------------------------------ */

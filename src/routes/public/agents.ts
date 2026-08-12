@@ -63,9 +63,10 @@ function connectedCard(principal: Principal, token: string): string {
         '  }\n' +
         '}'
     ) +
-    '<p class="hint" style="margin-top:14px">This one acts as you. It expires in fourteen days, ' +
-    'and until then it is worth treating the way you would treat a password — whoever holds it ' +
-    'holds your own standing.</p>' +
+    '<p class="hint" style="margin-top:14px">This one acts as you. Treat it the way you would a ' +
+    'password — whoever holds it holds your own standing. It cannot be cancelled early: it stops ' +
+    'working on its own after fourteen days, and signing out does not end it, so share it with an ' +
+    'agent you run and nobody else.</p>' +
     '</div>'
   );
 }
