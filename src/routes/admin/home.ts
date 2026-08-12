@@ -167,6 +167,18 @@ function topBar(principal: Principal): string {
 function eventCard(ev: AdminEvent): string {
   const slug = encodeURIComponent(ev.slug);
   const dot = ev.lifecycle === 'open' ? '' : ' closed';
+  // A pure reviewer's card is a door to her own room — no decision facts,
+  // which are the organizer's weather, not hers.
+  if (ev.standing === 'viewer') {
+    return (
+      `<a class="card evcard" href="/admin/${slug}/reviews">` +
+      `<h3>${esc(ev.name)}</h3>` +
+      `<div class="when">${esc(dateRange(ev.startsOn, ev.endsOn))} · ${esc(standingWord(ev.standing))}</div>` +
+      `<div class="state"><span class="dot${dot}"></span>${esc(callStateText(ev))}</div>` +
+      '<div class="cta"><span class="btn btn-primary">Open your reviews</span></div>' +
+      '</a>'
+    );
+  }
   const chip =
     ev.counts.decidedNotTold > 0
       ? `<div class="chip notold">${esc(decidedNotToldPill(ev.counts.decidedNotTold))}</div>`
@@ -507,6 +519,8 @@ export function registerAdminHome(app: Hono<{ Bindings: Env }>): void {
         if (!exists) return c.notFound();
         return c.html(deniedPage(), 403);
       }
+      // A pure reviewer's landing is her own room, not the organizer's desk.
+      if (ev.standing === 'viewer') return c.redirect(`/admin/${ev.slug}/reviews`);
       const { counts } = await pile(c.env.DB, principal, ev.id, 'all', { limit: 0 });
       return c.html(programPage(principal, ev, counts));
     } catch (e) {

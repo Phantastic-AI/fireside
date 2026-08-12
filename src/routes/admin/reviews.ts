@@ -699,6 +699,8 @@ function shell(principal: Principal, ev: ReviewEvent, body: string, crumb?: stri
       tzLabel: ev.tzLabel ?? '',
       body,
       crumb,
+      // A pure reviewer gets her own room's chrome, not the organizer's doors.
+      nav: ev.everything ? 'full' : 'reviewer',
     }),
   });
 }

@@ -70,7 +70,9 @@ const BS_NAV: [path: string, label: string][] = [
   ['/settings', 'Settings'],
 ];
 
-/** The backstage chrome — dark top bar, event switch, section nav. */
+/** The backstage chrome — dark top bar, event switch, section nav.
+ *  `nav: 'reviewer'` trims the chrome to the reviewer's own room: a person
+ *  whose whole standing is reading proposals gets no organizer doors. */
 export function backstageShell(o: {
   eventSlug: string;
   eventName: string;
@@ -80,8 +82,10 @@ export function backstageShell(o: {
   tzLabel: string;
   body: string;
   crumb?: string;
+  nav?: 'full' | 'reviewer';
 }): string {
-  const nav = BS_NAV.map(([p, lab]) =>
+  const entries = o.nav === 'reviewer' ? BS_NAV.filter(([p]) => p === '/reviews') : BS_NAV;
+  const nav = entries.map(([p, lab]) =>
     p === o.here
       ? `<span aria-current="page">${lab}</span>`
       : `<a href="/admin/${o.eventSlug}${p}">${lab}</a>`
