@@ -4,8 +4,16 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-01",
   "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "fireside.phantastic.ai",
+      "custom_domain": true
+    }
+  ],
   "vars": {
-    "RESEED_ENABLED": "false"
+    "RESEED_ENABLED": "false",
+    "GOOGLE_CLIENT_ID": "92329243256-ieg544bl92lk19u7abi05aifut45be5s.apps.googleusercontent.com",
+    "FROM_EMAIL": "mail@fireside.phantastic.ai"
   },
   "rules": [
     {

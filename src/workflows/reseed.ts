@@ -1,6 +1,13 @@
 // R-2: reseed is a full deterministic rebuild. DELETE everything, re-insert
 // the world from seed.ts. Inserts only — trigger-safe by construction.
 import { buildSeed, assertDistribution, type SeedData, type Row } from '../../seed/seed';
+import { hashPassword, saltFrom } from '../lib/sign';
+
+// The published organizer credential (R-3): printed in the README, made safe
+// by this very rebuild. Deterministic salt keeps the hash stable across runs.
+const DEMO_CREDENTIALS: [personId: string, password: string][] = [
+  ['naomi-adeyemi', 'read-them-before-they-go'],
+];
 
 // Reverse-FK wipe order; forward order for inserts.
 const INSERT_ORDER: (keyof SeedData)[] = [
@@ -53,5 +60,11 @@ export async function reseed(db: D1Database): Promise<{ facts: string; inserted:
     }
   }
   if (pending.length) await db.batch(pending);
+
+  for (const [personId, password] of DEMO_CREDENTIALS) {
+    const hash = await hashPassword(password, saltFrom(personId));
+    await db.prepare('UPDATE person SET password_hash = ? WHERE id = ?').bind(hash, personId).run();
+  }
+
   return { facts, inserted, ms: Date.now() - t0 };
 }
