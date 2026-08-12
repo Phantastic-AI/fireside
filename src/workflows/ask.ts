@@ -16,12 +16,22 @@
 //      by id and never writes a link, so a hallucinated address cannot become
 //      an anchor tag. Its sentences are escaped as text by the screen.
 //
+// Standing widens what can be read, never what a stranger can read (D-017).
+// Somebody with a role at THIS conference also gets the pile's counts and the
+// backstage doors; somebody with proposals in gets those proposals, worded the
+// way their own portal words them. Both reads are scoped by the event, so a
+// role held at another conference earns nothing here, and neither section is
+// even assembled for a visitor with no standing.
+//
 // Two SELECTs live in this file rather than in a query file, deliberately: the
 // curated-answer read and the question write belong to Ask alone, no screen
 // outside this parcel reads them, and queries/public.ts is another parcel's
 // file this wave. If Ask outgrows one screen, they are the first thing to lift.
 
 import { checkedBatch, guard, newId, now } from '../lib/db';
+import { label, type LabelKey } from '../lib/labels';
+import { pile } from '../queries/admin';
+import { portalView, type VisibleState } from '../queries/portal';
 import {
   agenda,
   speakersGallery,
@@ -29,6 +39,7 @@ import {
   type EventHome,
   type GallerySpeaker,
 } from '../queries/public';
+import type { Principal } from './account';
 
 /* ------------------------------------------------------------------ *
  * The closed set of doors.
@@ -54,6 +65,10 @@ const MAX_SPEAKERS = 24;
 const MAX_SENTENCES = 4;
 const MAX_DOORS = 3;
 const MAX_SENTENCE_CHARS = 260;
+/** How many of a speaker's own proposals are named before the portal takes over. */
+const MAX_MINE = 8;
+/** The same ceiling the agenda's own search box carries. */
+const SEARCH_MAX = 80;
 /** A stuck call must not hold the page. Twelve seconds, then the honest state. */
 const PATIENCE_MS = 12_000;
 
@@ -227,13 +242,173 @@ export function plainDoors(ev: EventHome, published: boolean): Door[] {
 }
 
 /* ------------------------------------------------------------------ *
+ * Standing: what this one person is to this one conference, and the
+ * facts that earns. Nothing here is ever assembled for somebody who
+ * does not hold the standing it belongs to.
+ * ------------------------------------------------------------------ */
+
+type Standing = { lines: string[]; doors: Door[] };
+
+/** The word this proposal wears on the speaker's own portal. The state itself
+ *  arrives already told-gated from queries/portal.ts, whose VISIBLE_STATE_SQL
+ *  is the only thing allowed to decide it, and the word comes from the same
+ *  label the portal card reads — so a decision that has been made and not sent
+ *  still says "with the committee" here, exactly as it does there. */
+const STATE_WORD: Record<VisibleState, LabelKey> = {
+  draft: 'submission.draft',
+  submitted: 'submission.submitted',
+  accepted: 'submission.accepted',
+  waitlisted: 'submission.waitlisted',
+  rejected: 'submission.rejected',
+  withdrawn: 'submission.withdrawn',
+  cancelled: 'submission.cancelled',
+};
+
+/** The counts band's own read (routes/admin/home.ts), not a second way of
+ *  counting the same pile. One row rather than none: only `counts` is wanted,
+ *  and pile() reads a limit of 0 as no limit at all. */
+async function organizerFacts(
+  db: D1Database,
+  ev: EventHome,
+  principal: Principal
+): Promise<Standing> {
+  const { counts } = await pile(db, principal, ev.id, 'all', { limit: 1 });
+  const doors: Door[] = [
+    { id: 'd7', href: `/admin/${ev.slug}/submissions`, label: 'The proposals' },
+    { id: 'd8', href: `/admin/${ev.slug}/outbox`, label: 'The letters waiting to go' },
+    { id: 'd9', href: `/admin/${ev.slug}/agenda`, label: 'The agenda you are building' },
+  ];
+  const lines = [
+    '',
+    'ORGANIZER FACTS — this person runs this conference, so these are theirs to see',
+    `Still undecided: ${counts.undecided} [d7]`,
+    `Decided and not told yet: ${counts.decidedNotTold} [d8]`,
+    `Accepted: ${counts.accepted}, and ${ev.counts.speakers} speakers with them [d9]`,
+  ];
+  if (ev.cfpClosesAt) {
+    lines.push(
+      `The call ${ev.lifecycle === 'open' ? 'closes' : 'closed'} ` +
+        `${instant(ev.cfpClosesAt, ev.timezone)}`
+    );
+  }
+  return { lines, doors };
+}
+
+/** Their own proposals and nothing else — portalView is already scoped to one
+ *  person, and a draft is not a proposal until it has been sent. Their portal
+ *  is d6, already in the closed set, so it is pointed at rather than repeated. */
+async function speakerFacts(
+  db: D1Database,
+  ev: EventHome,
+  principal: Principal
+): Promise<Standing | null> {
+  const view = await portalView(db, ev.id, principal.personId);
+  const mine = (view?.submissions ?? []).filter((s) => s.state !== 'draft');
+  if (!mine.length) return null;
+  const lines = [
+    '',
+    'YOUR PROPOSALS — what this person has sent this conference, and only theirs',
+  ];
+  for (const s of mine.slice(0, MAX_MINE)) {
+    lines.push(`[d6] "${s.title}" — ${label(STATE_WORD[s.state], 'onstage')}`);
+  }
+  if (mine.length > MAX_MINE) lines.push(`…and ${mine.length - MAX_MINE} more in their portal [d6]`);
+  return { lines, doors: [] };
+}
+
+/** Standing is per conference. A role on another event is not a role here, so
+ *  the only key that counts is this event's own. */
+async function standingFacts(
+  db: D1Database,
+  ev: EventHome,
+  principal: Principal | null
+): Promise<Standing | null> {
+  if (!principal) return null;
+  if (principal.eventRoles[ev.id] !== undefined) return await organizerFacts(db, ev, principal);
+  return await speakerFacts(db, ev, principal);
+}
+
+/* ------------------------------------------------------------------ *
+ * Narrowing the agenda. Its filters compose in the address — day, track,
+ * format, room and a search — so the concierge can hand back a program
+ * already cut down to the answer. It never writes that address: it names
+ * values from the list below, and this file builds the door.
+ * ------------------------------------------------------------------ */
+
+type Narrowing = { days: string[]; tracks: string[]; formats: string[]; rooms: string[] };
+
+/** The two transforms routes/public/agenda.ts applies when it writes a chip's
+ *  href. They have to agree, or a minted door lands on an empty program. */
+function slugify(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/** Only from a published agenda: an unpublished one has no days a visitor
+ *  could be sent to. */
+function vocabulary(ag: Agenda | null): Narrowing {
+  const out: Narrowing = { days: [], tracks: [], formats: [], rooms: [] };
+  if (!ag?.published) return out;
+  const add = (list: string[], value: string | null | undefined) => {
+    if (value && !list.includes(value)) list.push(value);
+  };
+  for (const day of ag.days) {
+    add(out.days, day.day);
+    for (const slot of day.slots) {
+      for (const s of slot.sessions) {
+        add(out.tracks, s.track?.slug);
+        add(out.formats, slugify(s.format));
+        add(out.rooms, s.roomName ? slugify(s.roomName) : null);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Every value checked against what this conference actually has. Anything the
+ * model made up is dropped without comment, and a request that survives none of
+ * that opens no door at all — a narrowed program that narrows to nothing is
+ * worse than the whole one.
+ */
+function mintNarrowed(
+  ev: EventHome,
+  vocab: Narrowing,
+  want: Record<string, string> | null
+): Door | null {
+  if (!want) return null;
+  const kept: [string, string][] = [];
+  const take = (key: 'day' | 'track' | 'format' | 'room', legal: string[]) => {
+    const value = want[key];
+    if (value && legal.includes(value)) kept.push([key, value]);
+  };
+  take('day', vocab.days);
+  take('track', vocab.tracks);
+  take('format', vocab.formats);
+  take('room', vocab.rooms);
+  const q = (want['q'] ?? '').trim().slice(0, SEARCH_MAX);
+  if (q) kept.push(['q', q]);
+  if (!kept.length) return null;
+  return {
+    id: 'dn',
+    href: `/${ev.slug}/agenda?${new URLSearchParams(kept).toString()}`,
+    label: 'The agenda, narrowed',
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * What the concierge is allowed to know: the public program, and nothing
  * behind it. Every line carries the id of the door it opens.
  * ------------------------------------------------------------------ */
 
 type Facts = { text: string; doors: Door[] };
 
-function buildFacts(ev: EventHome, ag: Agenda | null, speakers: GallerySpeaker[]): Facts {
+function buildFacts(
+  ev: EventHome,
+  ag: Agenda | null,
+  speakers: GallerySpeaker[],
+  vocab: Narrowing,
+  standing: Standing | null
+): Facts {
   const published = ag?.published === true;
   const doors = fixedDoors(ev, published);
   let seq = 100;
@@ -324,6 +499,20 @@ function buildFacts(ev: EventHome, ag: Agenda | null, speakers: GallerySpeaker[]
     }
   }
 
+  if (vocab.days.length) {
+    lines.push('', 'NARROWING — the only words a narrowed agenda accepts, spelled exactly like this');
+    lines.push(`day: ${vocab.days.join(', ')}`);
+    if (vocab.tracks.length) lines.push(`track: ${vocab.tracks.join(', ')}`);
+    if (vocab.formats.length) lines.push(`format: ${vocab.formats.join(', ')}`);
+    if (vocab.rooms.length) lines.push(`room: ${vocab.rooms.join(', ')}`);
+    lines.push(`q: anything to search the program for, up to ${SEARCH_MAX} characters`);
+  }
+
+  if (standing) {
+    lines.push(...standing.lines);
+    doors.push(...standing.doors);
+  }
+
   return { text: lines.join('\n'), doors };
 }
 
@@ -344,15 +533,24 @@ const SYSTEM = [
   '- A talk is named by its title. The ids under DOORS belong in "doors", never in a sentence.',
   '- Never describe how you work, and never say what you are.',
   '- Never write a web address or a link. The doors do that.',
+  '- Where THE FACTS hold this person\'s own standing or their own proposals, answer from that first.',
   '',
   'How you reply:',
   'Reply with JSON and nothing else, in exactly this shape:',
   '{"say":["first sentence","second sentence"],"doors":["d1","d2"]}',
   '"say" holds two to four sentences of plain text.',
   '"doors" holds up to three door ids, most useful first, taken only from the DOORS list.',
+  '',
+  'Narrowing the agenda:',
+  'When one day, one track, one kind of talk, one room or one search would land them on',
+  'exactly what they asked about, add an "agenda" object as well:',
+  '{"say":["..."],"doors":["d1"],"agenda":{"day":"2026-09-04","format":"lightning"}}',
+  'Use only the words listed under NARROWING, spelled exactly as they appear there.',
+  '"q" is free words to search for, and it is the only key that is not from that list.',
+  'Leave "agenda" out when the whole program is the answer, and never put those words in a sentence.',
 ].join('\n');
 
-type ModelSay = { say: string[]; doors: string[] };
+type ModelSay = { say: string[]; doors: string[]; agenda: Record<string, string> | null };
 
 function parseModel(raw: string): ModelSay | null {
   const start = raw.indexOf('{');
@@ -374,7 +572,16 @@ function parseModel(raw: string): ModelSay | null {
   const doors = Array.isArray(o['doors'])
     ? (o['doors'] as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
-  return { say, doors };
+  // Read as loosely as it is written and checked strictly afterwards: the keys
+  // and the values are both proved against the real program in mintNarrowed.
+  const asked = o['agenda'];
+  const agenda: Record<string, string> = {};
+  if (typeof asked === 'object' && asked !== null && !Array.isArray(asked)) {
+    for (const [key, value] of Object.entries(asked as Record<string, unknown>)) {
+      if (typeof value === 'string') agenda[key] = value;
+    }
+  }
+  return { say, doors, agenda: Object.keys(agenda).length ? agenda : null };
 }
 
 /**
@@ -457,11 +664,22 @@ export async function answerQuestion(
   db: D1Database,
   ai: Ai,
   ev: EventHome,
-  question: string
+  question: string,
+  principal: Principal | null = null
 ): Promise<AskResult> {
-  const [ag, speakers] = await Promise.all([agenda(db, ev.id), speakersGallery(db, ev.id)]);
+  const [ag, speakers, standing] = await Promise.all([
+    agenda(db, ev.id),
+    speakersGallery(db, ev.id),
+    // A standing that will not read is not a reason to refuse the question.
+    // The program on its own still answers most of them.
+    standingFacts(db, ev, principal).catch((e) => {
+      console.log('ask: the standing did not read', String(e));
+      return null;
+    }),
+  ]);
   const published = ag?.published === true;
-  const facts = buildFacts(ev, ag, speakers);
+  const vocab = vocabulary(ag);
+  const facts = buildFacts(ev, ag, speakers, vocab, standing);
   const byId = new Map(facts.doors.map((d) => [d.id, d]));
 
   let said: ModelSay | null = null;
@@ -480,7 +698,11 @@ export async function answerQuestion(
     return { kind: 'unsure', say: [], doors: plainDoors(ev, published) };
   }
 
+  // The narrowed program goes first when there is one: it is the shortest walk
+  // between the question and the two talks it was really about.
   const doors: Door[] = [];
+  const minted = mintNarrowed(ev, vocab, said?.agenda ?? null);
+  if (minted) doors.push(minted);
   for (const id of said?.doors ?? []) {
     const door = byId.get(id);
     if (door && !doors.some((d) => d.href === door.href)) doors.push(door);

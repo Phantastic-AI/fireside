@@ -11,6 +11,14 @@
 // row carries no person_id, by design, and the spend counter beside it keeps a
 // day-salted digest rather than an address (lib/ratelimit.ts).
 //
+// Signing in changes what the concierge may read, never what is written down.
+// Somebody who runs this conference is also answered from the pile's counts and
+// the doors behind it; somebody who has sent proposals to it is answered about
+// their own, in the words their portal uses. That scoping lives in
+// workflows/ask.ts, and it is per conference — a standing held somewhere else
+// earns nothing here, and a visitor with no standing is answered exactly as
+// they were before.
+//
 // It works with JavaScript switched off. The form posts, the page comes back
 // with the answer on it. src/islands/ask.js only removes the reload.
 //
@@ -349,7 +357,7 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
     const claim = await claimAsk(c.env.DB, asker);
     if (!claim.ok) return reply(claim.who === 'everyone' ? 'busy-today' : 'at-the-cap');
 
-    const result = await answerQuestion(c.env.DB, c.env.AI, ev, question);
+    const result = await answerQuestion(c.env.DB, c.env.AI, ev, question, principal);
     await remember(c.env.DB, {
       eventId: ev.id,
       scope,
