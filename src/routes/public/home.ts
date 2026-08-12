@@ -269,6 +269,7 @@ export function homePage(signedIn = false): string {
     '<a href="#team">Team</a>' +
     '<a href="#attendees">Attendees</a>' +
     '<a href="#mechanics">How it works</a>' +
+    '<a href="#ask-anywhere">Concierge</a>' +
     '<a href="#live">Walk one</a>' +
     (signedIn
       ? '<a href="/admin">Backstage</a><a href="/sign-out">Sign out</a>'
@@ -350,7 +351,10 @@ export function homePage(signedIn = false): string {
     '</div></section>';
 
   const concierge =
-    '<section class="mkt-sec mkt-deep" id="concierge"><div class="mkt-wrap mkt-cols">' +
+    // id is 'ask-anywhere', not 'concierge': shared.css pins #concierge fixed
+    // in the corner for the bubble's mount, and a section that borrowed the id
+    // would inherit position:fixed and float over the hero.
+    '<section class="mkt-sec mkt-deep" id="ask-anywhere"><div class="mkt-wrap mkt-cols">' +
     '<div>' +
     '<p class="mkt-kick">The concierge</p>' +
     '<h2 class="mkt-h">Ask the program a question, get the page you were after.</h2>' +
