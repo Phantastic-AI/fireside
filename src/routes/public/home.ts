@@ -18,6 +18,7 @@
 // undecided; 610 letters staged; 60 accepted; 54 speakers; 57 placed
 // sessions). The hourly reseed holds them true.
 import { esc, page, brand, NAME } from '../../lib/html';
+import type { EventCard } from '../../queries/public';
 
 /* ------------------------------------------------------------------ *
  * Content. Kept as data so the shape of the page stays readable.
@@ -260,10 +261,137 @@ function vgPeople(): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * The live section reads the world.
+ * ------------------------------------------------------------------ */
+
+const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+function numberWord(n: number): string {
+  return NUMBER_WORDS[n] ?? String(n);
+}
+
+/** A day key (`YYYY-MM-DD`) as its own wall date — no timezone shift, the key
+ *  is already the event's local day. Mirrors the event-home helper. */
+function dayParts(iso: string): { weekday: string; day: number; month: string; year: number } {
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1, 12));
+  return {
+    weekday: dt.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short' }),
+    day: d ?? 1,
+    month: dt.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long' }),
+    year: y ?? 1970,
+  };
+}
+function dateRange(startsOn: string, endsOn: string): string {
+  const s = dayParts(startsOn);
+  const e = dayParts(endsOn);
+  if (startsOn === endsOn) return `${s.weekday} ${s.day} ${s.month} ${s.year}`;
+  if (s.month === e.month && s.year === e.year) {
+    return `${s.weekday} ${s.day} – ${e.weekday} ${e.day} ${s.month} ${s.year}`;
+  }
+  if (s.year === e.year) {
+    return `${s.weekday} ${s.day} ${s.month} – ${e.weekday} ${e.day} ${e.month} ${e.year}`;
+  }
+  return `${s.weekday} ${s.day} ${s.month} ${s.year} – ${e.weekday} ${e.day} ${e.month} ${e.year}`;
+}
+
+/** The one-line state a card wears, from the lifecycle and nothing backstage. */
+function eventStanding(ev: EventCard): string {
+  if (ev.lifecycle === 'open') return 'Open · the call is running';
+  if (ev.lifecycle === 'happened') return ev.agendaPublished ? 'Happened · recordings up' : 'Happened';
+  return ev.agendaPublished ? 'Program set · agenda up' : 'Deciding · the call has closed';
+}
+
+// The two seeded conferences carry hand-written walkthrough copy — the demo's
+// front line, keyed by slug so they render only while they are really in the
+// world. Everything else the page might list gets the generic card below.
+const CURATED: Record<string, string> = {
+  'aie-nyc':
+    '<div class="mkt-ev"><h3>AI Engineer New York 2026</h3>' +
+    '<p class="when">Thursday 3 – Friday 4 September · New York</p>' +
+    '<p class="st"><i></i>Open · closing in nine days</p>' +
+    '<p class="ln">The call is open and the committee is mid-decision: a thousand proposals ' +
+    'in, six hundred and ten decisions made and not yet sent. Walk in and finish it.</p>' +
+    '<div class="more"><strong>Backstage, signed in as the organizer</strong>' +
+    '<a class="link" href="/admin/aie-nyc/submissions">The pile</a>' +
+    '<a class="link" href="/admin/aie-nyc/outbox">The outbox</a>' +
+    '<a class="link" href="/aie-nyc/portal">A speaker’s portal</a>' +
+    '<a class="link" href="/admin/aie-nyc/green-room">The green room</a></div>' +
+    '<p class="ln" style="margin-top:10px">The organizer sign-in is published in the repository’s ' +
+    'README. Sign in with it, decide things, send the letters, and move a session into a room ' +
+    'that is already busy — watch it argue.</p>' +
+    '<div class="go"><a class="btn btn-primary btn-lg" href="/aie-nyc/cfp">Open the call →</a>' +
+    '<a class="btn btn-lg" href="/aie-nyc">See the conference →</a>' +
+    '<a class="btn btn-lg" href="/aie-nyc/ask">Ask it anything →</a></div>' +
+    '</div>',
+  'ddc-clt':
+    '<div class="mkt-ev mkt-past"><h3>DevOps Days Charlotte 2025</h3>' +
+    '<p class="when">Thursday 6 – Friday 7 November · Charlotte</p>' +
+    '<p class="st"><i></i>Happened · recordings up</p>' +
+    '<p class="ln">A conference in its afterlife. Recordings sit on the sessions, the schedule ' +
+    'stands exactly as it ran, and the people who met in the hallway are still finding each ' +
+    'other on it.</p>' +
+    '<div class="more mkt-more-txt"><strong>Open to anyone</strong>The program, the speakers, ' +
+    'the recordings and the people, with no sign-in at all.</div>' +
+    '<div class="go"><a class="btn btn-lg" href="/ddc-clt">See the program →</a>' +
+    '<a class="btn" href="/ddc-clt/ask">Ask it anything →</a>' +
+    '</div></div>',
+};
+
+/** The headline over the live cards, counting what is actually there. Falls
+ *  back to the plain sentence if the list could not be read. */
+function liveHeadline(events: EventCard[]): string {
+  const n = events.length;
+  if (n === 0) return 'Walk a conference running on this right now.';
+  if (n === 1) return 'A conference is running on this right now.';
+  return `${numberWord(n).replace(/^./, (c) => c.toUpperCase())} conferences are running on this right now.`;
+}
+
+/** The cards: the curated two first, in walkthrough order, then any other
+ *  event the world holds — a conference stood up while the page was live. */
+function liveCards(events: EventCard[]): string {
+  const order = ['aie-nyc', 'ddc-clt'];
+  const bySlug = new Map(events.map((e) => [e.slug, e]));
+  const cards: string[] = [];
+  for (const slug of order) {
+    if (bySlug.has(slug)) cards.push(CURATED[slug]!);
+  }
+  for (const ev of events) {
+    if (!order.includes(ev.slug)) cards.push(genericCard(ev));
+  }
+  // If the read came back empty, the seeded pair is still the honest default:
+  // the page is never blank where a conference should be.
+  if (!cards.length) return CURATED['aie-nyc']! + CURATED['ddc-clt']!;
+  return cards.join('');
+}
+
+/** A card for an event with no hand-written walkthrough — a conference someone
+ *  (or an agent walking the call) stood up while the page was live. Public
+ *  surfaces only, no backstage numbers, no invented copy. */
+function genericCard(ev: EventCard): string {
+  const past = ev.lifecycle === 'happened';
+  const where = ev.venueName ? ` · ${esc(ev.venueName)}` : '';
+  const s = encodeURIComponent(ev.slug);
+  const call =
+    ev.lifecycle === 'open'
+      ? `<a class="btn btn-primary btn-lg" href="/${s}/cfp">Open the call →</a>`
+      : '';
+  return (
+    `<div class="mkt-ev${past ? ' mkt-past' : ''}"><h3>${esc(ev.name)}</h3>` +
+    `<p class="when">${esc(dateRange(ev.startsOn, ev.endsOn))}${where}</p>` +
+    `<p class="st"><i></i>${esc(eventStanding(ev))}</p>` +
+    `<p class="ln">Stood up on Fireside, and open to walk: the program, the speakers, and — ` +
+    `while the call is open — the form itself.</p>` +
+    `<div class="go">${call}<a class="btn btn-lg" href="/${s}">See the conference →</a>` +
+    `<a class="btn" href="/${s}/ask">Ask it anything →</a></div>` +
+    '</div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * The page.
  * ------------------------------------------------------------------ */
 
-export function homePage(signedIn = false): string {
+export function homePage(signedIn = false, events: EventCard[] = []): string {
   const nav =
     '<a href="#program">Program</a>' +
     '<a href="#team">Team</a>' +
@@ -411,41 +539,13 @@ export function homePage(signedIn = false): string {
   const live =
     '<section class="mkt-sec mkt-top" id="live"><div class="mkt-wrap">' +
     '<p class="mkt-kick">Walk one</p>' +
-    '<h2 class="mkt-h">Two conferences are running on this right now.</h2>' +
-    '<p class="mkt-lede">Open either one and walk it end to end: the public call, the ' +
+    `<h2 class="mkt-h">${liveHeadline(events)}</h2>` +
+    '<p class="mkt-lede">Open one and walk it end to end: the public call, the ' +
     'organizer’s pile, the letters waiting to go, the sheet the crew carries on the day.</p>' +
-    '<div class="mkt-doors">' +
-    '<div class="mkt-ev"><h3>AI Engineer New York 2026</h3>' +
-    '<p class="when">Thursday 3 – Friday 4 September · New York</p>' +
-    '<p class="st"><i></i>Open · closing in nine days</p>' +
-    '<p class="ln">The call is open and the committee is mid-decision: a thousand proposals ' +
-    'in, six hundred and ten decisions made and not yet sent. Walk in and finish it.</p>' +
-    '<div class="more"><strong>Backstage, signed in as the organizer</strong>' +
-    '<a class="link" href="/admin/aie-nyc/submissions">The pile</a>' +
-    '<a class="link" href="/admin/aie-nyc/outbox">The outbox</a>' +
-    '<a class="link" href="/aie-nyc/portal">A speaker’s portal</a>' +
-    '<a class="link" href="/admin/aie-nyc/green-room">The green room</a></div>' +
-    '<p class="ln" style="margin-top:10px">The organizer sign-in is published in the repository’s ' +
-    'README. Sign in with it, decide things, send the letters, and move a session into a room ' +
-    'that is already busy — watch it argue.</p>' +
-    '<div class="go"><a class="btn btn-primary btn-lg" href="/aie-nyc/cfp">Open the call →</a>' +
-    '<a class="btn btn-lg" href="/aie-nyc/ask">Ask it anything →</a></div>' +
-    '</div>' +
-    '<div class="mkt-ev mkt-past"><h3>DevOps Days Charlotte 2025</h3>' +
-    '<p class="when">Thursday 6 – Friday 7 November · Charlotte</p>' +
-    '<p class="st"><i></i>Happened · recordings up</p>' +
-    '<p class="ln">A conference in its afterlife. Recordings sit on the sessions, the schedule ' +
-    'stands exactly as it ran, and the people who met in the hallway are still finding each ' +
-    'other on it.</p>' +
-    '<div class="more mkt-more-txt"><strong>Open to anyone</strong>The program, the speakers, ' +
-    'the recordings and the people, with no sign-in at all.</div>' +
-    '<div class="go"><a class="btn btn-lg" href="/ddc-clt">See the program →</a>' +
-    '<a class="btn" href="/ddc-clt/ask">Ask it anything →</a>' +
-    '</div>' +
-    '</div>' +
-    '</div>' +
-    '<p class="mkt-note">These are demonstration conferences with invented people. Everything ' +
-    'resets on a schedule.</p>' +
+    `<div class="mkt-doors">${liveCards(events)}</div>` +
+    '<p class="mkt-note">The seeded conferences are demonstrations with invented people, and ' +
+    'everything resets on a schedule — so a conference stood up here, by an organizer or by an ' +
+    'agent walking the call, is real while it lasts and swept with the rest.</p>' +
     '</div></section>';
 
   const mechanics =

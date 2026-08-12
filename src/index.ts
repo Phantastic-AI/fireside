@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { homePage } from './routes/public/home';
+import { listEvents } from './queries/public';
 import { signInPage, signUpPage } from './routes/public/signin';
 import { registerCfp } from './routes/public/cfp';
 import { registerPortal } from './routes/public/portal';
@@ -75,7 +76,12 @@ app.get('/a/back.css', (c) => c.body(tokensCss + sharedCss + backstageCss, 200, 
 
 app.get('/', async (c) => {
   const me = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
-  return c.html(homePage(!!me));
+  // The live section reads the world rather than asserting it: a conference
+  // created while the page is up — by an organizer, or by an agent walking the
+  // call — is counted and shown, so the page never says "two" when there are
+  // three.
+  const events = await listEvents(c.env.DB);
+  return c.html(homePage(!!me, events));
 });
 app.get('/sign-in', (c) => c.html(signInPage()));
 app.get('/sign-up', (c) => c.html(signUpPage()));
