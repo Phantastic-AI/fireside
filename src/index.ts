@@ -226,4 +226,14 @@ app.notFound((c) =>
   )
 );
 
-export default app;
+export default {
+  fetch: app.fetch,
+  // Hourly: reseed only once RESEED_ENABLED flips true (R-2 — the cron earns
+  // its trigger by being exercised manually first); maintenance rides along.
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    if (env.RESEED_ENABLED === 'true') {
+      const { reseed } = await import('./workflows/reseed');
+      ctx.waitUntil(reseed(env.DB));
+    }
+  },
+};
