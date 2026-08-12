@@ -675,7 +675,7 @@ export async function speakerPage(
          JOIN submission s ON s.id = pa.submission_id
          JOIN event e ON e.id = s.event_id
          WHERE pa.person_id = ? AND s.event_id <> ? AND ${PUBLIC_STATES}
-           AND e.agenda_published = 1
+           AND e.agenda_published = 1 AND s.starts_at IS NOT NULL
          ORDER BY e.starts_on DESC, s.starts_at, s.title`
       )
       .bind(personId, eventId),

@@ -6,9 +6,8 @@
 // and paints rows the server already put in time order — no date math here,
 // times and day labels arrive pre-formatted in the embedded JSON.
 //
-// Kept in sync by hand with the STARS_JS constant in
-// ../routes/public/schedule.ts, which serves this file's exact text at
-// /a/stars.js (see that file's header comment for why).
+// Served byte-for-byte at /a/stars.js — imported as raw text by
+// ../routes/public/schedule.ts via the wrangler Text rule for src/islands/*.js.
 (function () {
   'use strict';
 

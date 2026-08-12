@@ -2,6 +2,12 @@ import { Hono } from 'hono';
 import { cp0GuardProbe } from './cp0-probe';
 import { homePage } from './routes/public/home';
 import { signInPage, signUpPage } from './routes/public/signin';
+import { registerCfp } from './routes/public/cfp';
+import { registerPortal } from './routes/public/portal';
+import { registerAgenda } from './routes/public/agenda';
+import { registerSpeakers } from './routes/public/speakers';
+import { registerSchedule } from './routes/public/schedule';
+import { registerEventHome } from './routes/public/event';
 import {
   signUp,
   signIn,
@@ -208,6 +214,16 @@ app.get('/api/me', async (c) => {
   const p = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
   return p ? c.json(p) : c.json({ signedIn: false }, 401);
 });
+
+// ---------- The event screens ----------
+// registerEventHome goes last: its GET /:eventSlug matches broadest, and it
+// calls next() for unknown slugs so the 404 below still owns the miss.
+registerCfp(app);
+registerPortal(app);
+registerAgenda(app);
+registerSpeakers(app);
+registerSchedule(app);
+registerEventHome(app);
 
 // The product 404 — its real copy, from the prototype, from day one.
 app.notFound((c) =>

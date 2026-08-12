@@ -30,7 +30,7 @@
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { esc, onstageShell, eventNav, page } from '../../lib/html';
-import { label } from '../../lib/labels';
+import { label, CALL_HAPPENED } from '../../lib/labels';
 import { eventBySlug, speakersGallery, type EventHome, type GallerySpeaker } from '../../queries/public';
 
 /* ------------------------------------------------------------------ *
@@ -74,6 +74,7 @@ function dayMonthAt(ms: number, timezone: string): string {
 
 /** The call's own state, in the fact rail's words (labels.ts, §1.7). */
 function callStateText(ev: EventHome): string {
+  if (ev.lifecycle === 'happened') return CALL_HAPPENED;
   if (ev.lifecycle === 'open' && ev.cfpClosesAt !== null) {
     return label('call.open', 'onstage').replace('{date}', dayMonthAt(ev.cfpClosesAt, ev.timezone));
   }
@@ -121,11 +122,15 @@ function proposalsCardHtml(ev: EventHome): string {
   const slug = esc(ev.slug);
   if (proposals > 0) {
     const noun = proposals === 1 ? 'proposal' : 'proposals';
-    const speakerNote = speakers > 0 ? ` · ${esc(speakers)} speaking` : '';
+    // Past events read as memory, not as a race still being run.
+    const line =
+      ev.lifecycle === 'happened'
+        ? `${esc(accepted)} made the program${speakers > 0 ? ` · ${esc(speakers)} spoke` : ''}.`
+        : `${esc(accepted)} accepted so far${speakers > 0 ? ` · ${esc(speakers)} speaking` : ''}.`;
     return (
       '<div class="card card-pad">' +
       `<h3 class="serif" style="font-size:21px;font-weight:600">${esc(proposals)} ${noun} came in</h3>` +
-      `<p class="sub" style="margin-top:6px">${esc(accepted)} accepted so far${speakerNote}.</p>` +
+      `<p class="sub" style="margin-top:6px">${line}</p>` +
       '</div>'
     );
   }

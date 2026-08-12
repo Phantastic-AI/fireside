@@ -18,7 +18,9 @@
   "rules": [
     {
       "type": "Text",
-      "globs": ["**/*.css"],
+      // stars.js is raw text served at /a/stars.js; cfp.js stays a bundled
+      // module (it exports its own source via toString) — do not widen this.
+      "globs": ["**/*.css", "**/islands/stars.js"],
       "fallthrough": true
     }
   ],
