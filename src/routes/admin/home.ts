@@ -58,6 +58,7 @@ import {
   type PileCounts,
 } from '../../queries/admin';
 import { principalFromCookie, type Principal } from '../../workflows/account';
+import { createEvent } from '../../workflows/create-event';
 
 /* ------------------------------------------------------------------ *
  * Small words and numbers, local to this screen (the convention set by
@@ -193,7 +194,8 @@ function adminEventsPage(principal: Principal, events: AdminEvent[]): string {
     '<div class="stage backstage">' +
     topBar(principal) +
     '<main><div class="wrap" style="padding-top:44px">' +
-    '<h1 class="display">Your events</h1>' +
+    '<div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap"><h1 class="display">Your events</h1>' +
+    '<a class="link" href="/admin/new" style="margin-left:auto">Start a conference →</a></div>' +
     `<p class="lede" style="margin-top:8px">${esc(lede)}</p>` +
     `<div class="sec evcards">${events.map(eventCard).join('')}</div>` +
     '</div></main>' +
@@ -202,8 +204,7 @@ function adminEventsPage(principal: Principal, events: AdminEvent[]): string {
   return page({ title: `Your events · ${NAME}`, register: 'backstage', body });
 }
 
-/** The brief's calm first-day state: no events at all, and creating one is
- *  not built yet. One sentence, deliberately no door — see the header note. */
+/** The first-day state: no events yet, and the one door that fixes it. */
 function noConferencesPage(principal: Principal): string {
   const body =
     '<div class="stage backstage">' +
@@ -212,11 +213,81 @@ function noConferencesPage(principal: Principal): string {
     '<h1 class="display">Your events</h1>' +
     '<div class="sec state-out">' +
     '<h2>No conferences yet.</h2>' +
-    '<p>If you should be running one, ask whoever set it up to add you as a team member.</p>' +
+    '<p>Start one and you own it — or, if a conference is already running, ask its organizer to add you as a team member.</p>' +
+    '<a class="btn btn-primary" href="/admin/new" style="margin-top:14px">Start a conference →</a>' +
     '</div></div></main>' +
     `<footer class="foot"><div class="wrap foot-in"><span class="fname">${NAME}</span></div></footer>` +
     '</div>';
   return page({ title: `Your events · ${NAME}`, register: 'backstage', body });
+}
+
+/* ------------------------------------------------------------------ *
+ * GET/POST /admin/new — starting a conference
+ * ------------------------------------------------------------------ */
+
+type NewEventValues = Record<string, string>;
+
+function field(labelText: string, inner: string, hint?: string): string {
+  return (
+    `<div style="margin-top:16px"><label style="display:block;font-size:13.5px;font-weight:650;margin-bottom:5px">${esc(labelText)}</label>` +
+    inner +
+    (hint ? `<p class="sub" style="margin-top:4px;font-size:13px">${esc(hint)}</p>` : '') +
+    '</div>'
+  );
+}
+
+const inputStyle =
+  'style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:15px;background:var(--card)"';
+
+function newEventPage(principal: Principal, error?: string, v: NewEventValues = {}): string {
+  const val = (k: string, fallback = '') => esc(v[k] ?? fallback);
+  const body =
+    '<div class="stage backstage">' +
+    topBar(principal) +
+    '<main><div class="wrap" style="padding-top:44px;max-width:640px">' +
+    '<h1 class="display">Start a conference</h1>' +
+    '<p class="lede" style="margin-top:8px">Name it, give it days and rooms, and the rest is settings.</p>' +
+    (error ? `<div class="card card-pad" style="margin-top:16px;border-color:var(--danger)"><p style="margin:0">${esc(error)}</p></div>` : '') +
+    '<form method="post" action="/admin/new" class="sec">' +
+    field('Name', `<input name="name" required maxlength="120" value="${val('name')}" ${inputStyle}>`) +
+    field(
+      'Address',
+      `<input name="slug" maxlength="48" value="${val('slug')}" placeholder="left blank, it comes from the name" ${inputStyle}>`,
+      'Lowercase letters, digits and dashes — the public page lives at /that-address.'
+    ) +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+    field('First day', `<input type="date" name="starts_on" required value="${val('starts_on')}" ${inputStyle}>`) +
+    field('Last day', `<input type="date" name="ends_on" required value="${val('ends_on')}" ${inputStyle}>`) +
+    '</div>' +
+    field(
+      'Timezone',
+      `<input name="timezone" required list="tz-list" value="${val('timezone', 'America/New_York')}" ${inputStyle}>` +
+        '<datalist id="tz-list">' +
+        ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Europe/London', 'Europe/Berlin', 'Asia/Kolkata', 'Asia/Tokyo', 'Australia/Sydney', 'UTC']
+          .map((z) => `<option value="${z}">`)
+          .join('') +
+        '</datalist>'
+    ) +
+    field('Venue', `<input name="venue_name" maxlength="120" value="${val('venue_name')}" ${inputStyle}>`) +
+    field(
+      'The call for speakers',
+      `<label style="display:flex;gap:8px;align-items:center;font-size:15px;font-weight:400"><input type="checkbox" name="call_open" value="1"${v['call_open'] ? ' checked' : ''}> Open it now</label>` +
+        `<div style="margin-top:10px"><input type="date" name="cfp_closes_on" value="${val('cfp_closes_on')}" ${inputStyle}></div>`,
+      'The date it closes. Speakers can send and edit proposals until then.'
+    ) +
+    field('Decisions go out by', `<input type="date" name="decide_by" value="${val('decide_by')}" ${inputStyle}>`, 'Shown to speakers on the form and in their portal.') +
+    field('A line for the call page', `<textarea name="cfp_intro" rows="3" maxlength="600" ${inputStyle}>${val('cfp_intro')}</textarea>`) +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
+    field('Rooms, one per line', `<textarea name="rooms" rows="4" ${inputStyle}>${val('rooms', 'Main stage')}</textarea>`) +
+    field('Tracks, one per line', `<textarea name="tracks" rows="4" ${inputStyle}></textarea>`, 'Leave empty to run without tracks.') +
+    '</div>' +
+    '<div class="btnrow" style="margin-top:22px"><button class="btn btn-primary btn-lg" type="submit">Start it</button>' +
+    '<a class="btn" href="/admin">Back to your events</a></div>' +
+    '</form>' +
+    '</div></main>' +
+    `<footer class="foot"><div class="wrap foot-in"><span class="fname">${NAME}</span></div></footer>` +
+    '</div>';
+  return page({ title: `Start a conference · ${NAME}`, register: 'backstage', body });
 }
 
 /* ------------------------------------------------------------------ *
@@ -374,6 +445,47 @@ export function registerAdminHome(app: Hono<{ Bindings: Env }>): void {
       if (e instanceof ScopeError) return c.html(noConferencesPage(principal));
       throw e;
     }
+  });
+
+  // Registered before /admin/:eventSlug so the literal wins the match.
+  app.get('/admin/new', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in');
+    return c.html(newEventPage(principal));
+  });
+
+  app.post('/admin/new', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in');
+    const form = await c.req.parseBody();
+    const s = (k: string): string => (typeof form[k] === 'string' ? (form[k] as string) : '');
+    const lines = (k: string): string[] =>
+      s(k)
+        .split('\n')
+        .map((x) => x.trim())
+        .filter((x) => x !== '');
+    const res = await createEvent(c.env.DB, principal, {
+      name: s('name'),
+      slug: s('slug'),
+      startsOn: s('starts_on'),
+      endsOn: s('ends_on'),
+      timezone: s('timezone'),
+      venueName: s('venue_name'),
+      callOpen: s('call_open') === '1',
+      cfpClosesOn: s('cfp_closes_on'),
+      decideBy: s('decide_by'),
+      cfpIntro: s('cfp_intro'),
+      rooms: lines('rooms'),
+      tracks: lines('tracks'),
+    });
+    if (!res.ok) {
+      const kept: Record<string, string> = {};
+      for (const k of ['name', 'slug', 'starts_on', 'ends_on', 'timezone', 'venue_name', 'call_open', 'cfp_closes_on', 'decide_by', 'cfp_intro', 'rooms', 'tracks']) {
+        kept[k] = s(k);
+      }
+      return c.html(newEventPage(principal, res.error, kept), 422);
+    }
+    return c.redirect(`/admin/${res.slug}`, 303);
   });
 
   app.get('/admin/:eventSlug', async (c) => {
