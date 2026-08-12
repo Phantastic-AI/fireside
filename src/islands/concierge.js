@@ -39,6 +39,7 @@ function conciergeIsland() {
   var kept = '';     // the conversation so far, as the server's own markup
   var who = '';      // the identity mark the thread was kept under
   var thread = null; // the scrolling middle of the panel, while it is up
+  var greeted = false; // the painted thread holds a real conversation, not dots
 
   // The brand's flame, the same path the masthead draws (lib/html.ts FLAME).
   var FLAME =
@@ -56,7 +57,7 @@ function conciergeIsland() {
 
   function panelHtml() {
     return (
-      '<div class="cc-panel" role="dialog" aria-label="The concierge">' +
+      '<div class="cc-panel" role="dialog" aria-modal="true" aria-label="The concierge">' +
       '<div class="cc-head">' + FLAME +
       '<div><div class="t">The concierge</div>' +
       '<div class="s">Ask about the program</div></div>' +
@@ -64,8 +65,8 @@ function conciergeIsland() {
       '<div class="cc-body" data-cc-thread></div>' +
       '<div class="cc-foot">' +
       '<div class="cc-ask">' +
-      '<input type="text" data-cc-in autocomplete="off" placeholder="Ask about the program" ' +
-      'aria-label="Ask about the program">' +
+      '<input type="text" id="cc-q" name="cc-q" data-cc-in autocomplete="off" ' +
+      'placeholder="Ask about the program" aria-label="Ask about the program">' +
       '<button type="button" data-cc-send>Ask</button></div>' +
       '<p class="cc-hand">Your agent can work this program too: ' +
       '<span class="code">POST /mcp</span> speaks MCP — tools, the submit action, ' +
@@ -85,9 +86,11 @@ function conciergeIsland() {
 
   // A conversation is written down without its typing dots: a thread kept
   // mid-question comes back showing what was asked, not dots for an answer
-  // that is never going to arrive.
+  // that is never going to arrive. A thread that has not been greeted yet is
+  // not captured at all — a freshly painted, still-empty panel must never
+  // overwrite the conversation it is about to restore.
   function keep() {
-    if (thread) {
+    if (thread && greeted) {
       var settled = thread.cloneNode(true);
       var w = settled.querySelector('[data-cc-wait]');
       if (w) w.remove();
@@ -152,6 +155,7 @@ function conciergeIsland() {
     }
     box.innerHTML = panelHtml();
     thread = box.querySelector('[data-cc-thread]');
+    greeted = false;
     greet();
     if (focus) {
       var el = box.querySelector('[data-cc-in]');
@@ -184,6 +188,7 @@ function conciergeIsland() {
         wait.remove();
         if (kept) thread.innerHTML = kept;
         else thread.insertAdjacentHTML('beforeend', html);
+        greeted = true;
         keep();
         land();
       })
@@ -244,15 +249,18 @@ function conciergeIsland() {
     if (!t || !t.closest) return;
     if (t.closest('[data-cc-open]')) { show(true, true); return; }
     if (t.closest('[data-cc-close]')) { show(false, true); return; }
-    // Following an answer somewhere ends the exchange: the panel is recorded
-    // closed so it is not standing in front of the page it just chose — which
-    // on a phone is the whole screen. The browser does the walking.
+    // Following a link anywhere in the panel ends the exchange: the panel is
+    // recorded closed so it is not standing in front of the page it just
+    // chose — which on a phone is the whole screen. The browser does the
+    // walking; the repaint waits a beat so a navigation that never happens
+    // leaves the button, not a ghost.
     var walk = t.closest('a[href]');
-    if (walk && thread && thread.contains(walk) &&
+    if (walk && box.contains(walk) &&
         !e.metaKey && !e.ctrlKey && !e.shiftKey && walk.target !== '_blank') {
       open = false;
       keep();
       document.body.classList.remove('cc-open');
+      setTimeout(function () { if (!open) paint(false); }, 0);
       return;
     }
     // The chips are the Ask screen's own, rendered by the same builder: `i` is
