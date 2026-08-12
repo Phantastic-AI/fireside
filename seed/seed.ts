@@ -465,9 +465,21 @@ export function buildSeed(): SeedData {
   d.event_role.push({ person_id: 'lena-fischer', event_id: AIE, role: 'reviewer', granted_at: utc(2026, 8, 1, 12), granted_by: 'naomi-adeyemi' });
 
   const lena = 'lena-fischer';
-  const reviewable = subs.filter((s) => s.hand && ['submitted', 'waitlisted', 'accepted'].includes(s.state)).slice(0, 24);
+  // Eight rounds finished on proposals the committee has since decided — the
+  // history the aggregates read — and sixteen still open on proposals that are
+  // genuinely undecided, so her reading list is real work rather than
+  // archaeology. (It used to hand her open rounds on accepted talks, and the
+  // queue — which rightly reads only the undecided — showed her nothing.)
+  const decided = subs
+    .filter((s) => s.hand && ['waitlisted', 'accepted'].includes(s.state))
+    .slice(0, 8);
+  const undecided = subs
+    .filter((s) => s.state === 'submitted')
+    .sort((a, b) => Number(b.hand) - Number(a.hand))
+    .slice(0, 16);
+  const reviewable = [...decided, ...undecided];
   reviewable.forEach((s, i) => {
-    const done = i < 8;
+    const done = i < decided.length;
     d.review.push({
       id: `rev-${s.id}`, submission_id: s.id, reviewer_person_id: lena, round: 1,
       scores: done
