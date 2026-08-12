@@ -383,7 +383,7 @@ function peopleSection(p: Proposal, slug: string): string {
   if (p.participation.length === 0) {
     return (
       `<div class="sec" id="people">${sectionHead('Who is speaking')}` +
-      '<div class="state-out"><h2>Nobody is attached to this one.</h2>' +
+      '<div class="state-out"><h2>Nobody’s speaking on this one yet.</h2>' +
       '<p>A proposal with no speaker on it cannot be told anything. Put a name on it from the ' +
       'roster and the letters have somewhere to go.</p>' +
       `<div class="btnrow"><a class="btn btn-primary" href="/admin/${esc(slug)}/people">Open the roster →</a></div>` +
@@ -432,8 +432,7 @@ function reviewsSection(p: Proposal, slug: string, inPlay: boolean): string {
     return (
       `<div class="sec" id="scores">${head}` +
       '<div class="state-out"><h2>This one is on nobody’s list.</h2>' +
-      '<p>Put it in front of the committee and their scores land here, next to the words they ' +
-      'were reading when they gave them.</p>' +
+      '<p>Put it in front of the committee and their scores land here.</p>' +
       `<div class="btnrow"><a class="btn btn-primary" href="/admin/${esc(slug)}/reviews?hand=${encodeURIComponent(p.id)}#hand">Hand it to a reviewer →</a></div>` +
       '</div></div>'
     );
@@ -521,13 +520,13 @@ function messageRow(m: ProposalMessage, tz: string): string {
 }
 
 function lettersSection(p: Proposal, slug: string, tz: string, inPlay: boolean): string {
-  const head = sectionHead('Letters about this one');
+  const head = sectionHead('Letters');
   const door = `<a class="link" href="/admin/${esc(slug)}/outbox">Open the outbox →</a>`;
 
   if (p.messages.length === 0) {
     return (
       `<div class="sec" id="letters">${head}` +
-      '<div class="state-out"><h2>Nothing has been written to them yet.</h2>' +
+      '<div class="state-out"><h2>No letters yet.</h2>' +
       `<p>${inPlay ? 'The first one goes with your decision.' : 'A draft has not been sent, so there is nothing to write about yet.'}</p>` +
       `<div class="btnrow"><a class="btn" href="/admin/${esc(slug)}/outbox">Open the outbox →</a></div>` +
       '</div></div>'

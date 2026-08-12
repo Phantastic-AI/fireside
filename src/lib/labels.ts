@@ -26,8 +26,14 @@ const LABELS = {
   'submission.withdrawn': 'Withdrawn',
   'submission.cancelled': { backstage: 'Cancelled · still on the agenda', onstage: 'Cancelled' }, // Δ4
   'submission.reinstate': { backstage: 'Put it back on' }, // Δ4 — organizer's own verb, no speaker word
-  'submission.decided_not_told': { backstage: 'Decided · not told' }, // §1.3 — machinery, never shown to a speaker
-  'submission.told': { backstage: 'Told {date}' },
+  // §1.3 — machinery, never shown to a speaker. Backstage says "notified":
+  // inside the SaaS the organizer is the one who notifies, and that is the
+  // plain word for it. The anti-"notified" rule is a marketing-voice stance
+  // (the de-slop rite still holds it); the product UI does not (operator,
+  // register split, decision-log). Speaker-facing copy and the thesis keep
+  // "told".
+  'submission.decided_not_told': { backstage: 'Decided · not notified' },
+  'submission.told': { backstage: 'Notified {date}' },
 
   // §1.6 — placement and publishing
   'placement.none': { backstage: 'Not scheduled', onstage: 'Time and room to come' },
@@ -235,7 +241,10 @@ export const BANNED_WORDS: string[] = [
   'stack trace',
   'the list request failed (403)',
   'in_review',
-  'not_notified',
+  // "notify/notified/notification" are a MARKETING-voice ban, not a product
+  // one (operator, register split): inside the SaaS backstage the organizer
+  // notifies speakers, and that is the plain word. The de-slop rite's own
+  // taste bank still forbids them in marketing copy. So they are absent here.
   'upload-file',
   'todo-sub-4',
   'slug',
@@ -314,8 +323,6 @@ export const BANNED_WORDS: string[] = [
   'denied',
   'unsuccessful',
   'submission',
-  'notification',
-  'notify',
   'comms',
   'blast',
   'participant role min/max',

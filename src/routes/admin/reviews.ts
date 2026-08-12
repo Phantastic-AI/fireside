@@ -850,7 +850,7 @@ function teamRow(r: TeamReader, ev: ReviewEvent, nowMs: number): string {
       ? `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/take-back">` +
         `<input type="hidden" name="who" value="${esc(r.personId)}">` +
         `<input type="hidden" name="expected" value="${r.untouched}">` +
-        `<button class="btn btn-sm" type="submit">Take back ${esc(num(r.untouched))} untouched</button>` +
+        `<button class="btn btn-sm" type="submit">Retract ${esc(num(r.untouched))} unopened</button>` +
         '</form>'
       : r.assigned > 0
         ? `<span class="sub">Every one of ${r.isYou ? 'yours' : 'theirs'} has been written in.</span>`
@@ -1060,7 +1060,7 @@ function whoReadsWhat(
     '<section class="sec" id="team">' +
     heading +
     '<div class="tablewrap" style="margin-top:14px"><table class="t"><thead><tr>' +
-    '<th>Reader</th><th>Holding</th><th>Progress</th><th>Nudge</th><th>Take back</th>' +
+    '<th>Reader</th><th>Holding</th><th>Progress</th><th>Nudge</th><th>Retract</th>' +
     '</tr></thead><tbody>' +
     team.map((r) => teamRow(r, ev, nowMs)).join('') +
     '</tbody></table></div>' +

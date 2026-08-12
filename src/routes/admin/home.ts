@@ -189,7 +189,7 @@ function eventCard(ev: AdminEvent): string {
   const chip =
     ev.counts.decidedNotTold > 0
       ? `<div class="chip notold">${esc(decidedNotToldPill(ev.counts.decidedNotTold))}</div>`
-      : '<div class="chip s-accepted">Everyone has been told</div>';
+      : '<div class="chip s-accepted">Everyone has been notified</div>';
   return (
     `<a class="card evcard" href="/admin/${slug}">` +
     `<h3>${esc(ev.name)}</h3>` +
@@ -347,7 +347,7 @@ function attnBand(ev: AdminEvent, counts: PileCounts): string {
   return (
     '<div class="sec attn" style="background:var(--go-wash);border-color:#CBE0D1">' +
     '<div class="n">0</div>' +
-    '<div><div class="lab">Everyone has been told</div></div>' +
+    '<div><div class="lab">Everyone has been notified</div></div>' +
     `<a class="btn go" href="/admin/${slug}/submissions">Go to proposals →</a>` +
     '</div>'
   );
