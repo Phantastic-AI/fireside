@@ -83,8 +83,16 @@ app.get('/sign-up', (c) => c.html(signUpPage()));
  *  portal if you are a speaker at exactly one conference, and otherwise the
  *  front door — which knows your name once you are signed in. */
 async function afterSignIn(db: D1Database, personId: string): Promise<string> {
+  // Standing comes in two shapes: install-wide (person.internal_role, how the
+  // seeded organizers hold the whole place) and per-event rows. Either one
+  // means the backstage is where signing in should land.
   const role = await db
-    .prepare('SELECT 1 FROM event_role WHERE person_id = ? LIMIT 1')
+    .prepare(
+      `SELECT 1 FROM person WHERE id = ?1 AND internal_role IS NOT NULL
+       UNION ALL
+       SELECT 1 FROM event_role WHERE person_id = ?1
+       LIMIT 1`
+    )
     .bind(personId)
     .first();
   if (role) return '/admin';
