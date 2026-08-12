@@ -935,8 +935,8 @@ var DEC1  = D(2026,8,4,14,2);
   'Four years ago every one of these talks was a demo. This one is a maintenance report. I will walk through what changed in our stack between 2024 and now, which of the promises actually landed, and the two places we are still doing it by hand because nothing better exists yet.',{slides:'the-year-the-tooling-caught-up.pdf',size:'6.1 MB'}],
  ['s-queues','What the incident taught us about queues',['ingrid-solheim'],'practice','Lightning talk',15,'thu','09:30','Ballroom B',
   'On a Tuesday in March our payment queue backed up for 41 minutes and we learned that three separate teams each believed a different team owned the retry policy. Fifteen minutes on what the graphs said, what we thought they said, and the one line of config that would have made it a non-event.',{}],
- ['s-underwriters','How 400 underwriters at a 150-year-old insurer ship with AI every day',['priya-raghunathan','amara-nwosu'],'platform','Talk',45,'thu','10:30','Ballroom A',
-  'In 18 months we went from a pilot nobody used to agents drafting 40% of first-pass underwriting notes. This talk walks through the three failed rollouts before the one that stuck: what we measured, the $4.2M we banked, and the operating-model changes that made it durable. Amara ran the business side and will contradict me at least twice.',{form:true}],
+ ['s-underwriters','Claims agents: three rollouts, one that stuck',['priya-raghunathan','amara-nwosu'],'platform','Talk',45,'thu','10:30','Ballroom A',
+  'In 18 months we went from a pilot nobody used to agents drafting two thirds of first-pass claims notes. This talk walks through the three failed rollouts before the one that stuck: the eval set of 212 real claims that finally told us the truth, the 11 days that came off the median cycle time, and the operating-model changes that made it durable. Amara ran the business side and will contradict me at least twice.',{form:true}],
  ['s-evals','The eval suite that finally told us the truth',['tomas-okonkwo'],'practice','Talk',45,'thu','10:30','Studio',
   'We had a green dashboard and an angry customer at the same time for six weeks. The fix was not a better model, it was an eval set built from real tickets, scored by the people who answer them. Here is the harness, the sampling method, and the moment it told us to roll back a launch.',{slides:'cadence-eval-suite.pdf',size:'3.3 MB'}],
  ['s-retrieval','Retrieval is a data problem wearing an AI hat',['marcus-delacroix'],'platform','Talk',45,'thu','11:30','Ballroom A',
@@ -1379,17 +1379,17 @@ function callState(E, who){
    S-1  Landing  #/
    ============================================================ */
 var MIRROR = [
-  ['Deciding and notifying smeared into one terrifying button.',
-   'Decide quietly, then tell everyone deliberately. This remembers who has been told.'],
-  ['“No records found.” A table that ends in nothing and leaves you guessing.',
+  ['One green button that decides and tells 600 people in the same breath.',
+   'A decision leaves when you send it, not when you make it. Who has been told is never a guess.'],
+  ['A table that ends at zero rows and leaves you nowhere to go.',
    'Every empty screen names the next thing to do, and links to it.'],
-  ['A reviewer alone in a queue, scoring one proposal at a time, never seeing what anyone else thought.',
+  ['A queue that feeds a reviewer one proposal at a time, under a count that says 1,000 where the truth is 40.',
    'The whole list on one page, with the counts that are actually true.'],
-  ['Speakers making an account before they are allowed to write a sentence.',
+  ['Make an account, verify your email, and then you may begin typing.',
    'One page, no account until you press send, and a half-typed abstract that survives anything.'],
-  ['Your program trapped inside the tool — export means copy and paste.',
+  ['Your program lives inside the tool, and getting it out again is copy and paste.',
    'A public agenda anyone can embed, and a calendar file that costs nothing.'],
-  ['Fifty identical rows of “Maybe” as the first thing you see on a Monday.',
+  ['Monday morning: fifty rows, identical chips, and no way to tell which one matters.',
    'One line per proposal that is bigger than the rest, so your eye can run the column.']
 ];
 function screenLanding(){
@@ -1517,10 +1517,10 @@ function screenCfp(ev){
     '<h2 class="display" style="font-size:28px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">Your talk' +
       '<span class="counter" id="cfp-count" style="font-size:14px">0 of ' + CFP_FIELDS + ' answered</span></h2>' +
     '<div style="margin-top:18px">' +
-    fieldText('f-title', 'Talk title', 'This is the line a stranger reads on the schedule. Published as-is if your talk is accepted.',
-      'How 400 underwriters at a 150-year-old insurer ship with AI every day') +
-    fieldText('f-abs', 'Abstract', 'Published as-is if your talk is accepted. Up to 1,200 characters.',
-      'In 18 months we went from a pilot nobody used to agents drafting 40% of first-pass underwriting notes. This talk walks through the three failed rollouts before the one that stuck: what we measured, the $4.2M we banked, and the operating-model changes that made it durable.',
+    fieldText('f-title', 'Talk title', 'This is the line a stranger reads on the schedule. If your talk is accepted, it goes on the program word for word.',
+      'Claims agents: three rollouts, one that stuck') +
+    fieldText('f-abs', 'Abstract', 'If your talk is accepted, this goes on the program word for word. Up to 1,200 characters.',
+      'In 18 months we went from a pilot nobody used to agents drafting two thirds of first-pass claims notes. This talk walks through the three failed rollouts before the one that stuck: the eval set of 212 real claims that finally told us the truth, the 11 days that came off the median cycle time, and the operating-model changes that made it durable.',
       { area: true, rows: 6 }) +
     '<label class="f"><span class="f-lab">Track</span><div class="radios">' + tracks + '</div>' +
       '<span class="hint">Where your talk lives in the program — the committee filters by it, and it becomes the schedule\'s lanes.</span></label>' +
@@ -1530,12 +1530,12 @@ function screenCfp(ev){
     '<label class="f" for="f-lvl"><span class="f-lab">Who is this for?</span>' +
       '<select id="f-lvl" data-count><option value="">Choose one</option><option>New to this</option><option>Working with it already</option><option>Deep in it</option></select>' +
       '<span class="hint">Shown on the public agenda so nobody walks into the wrong room.</span></label>' +
-    fieldText('f-out', 'What will people leave with?', 'Specific numbers beat adjectives.',
-      'Deploy frequency 2x, claims cycle time down 35%, $4.2M annualized savings — and the three-slide operating model we handed to the CFO.',
+    fieldText('f-out', 'What will people leave with?', 'One real number says more than three adjectives.',
+      'The three numbers we watch weekly, the eval set of 212 real claims behind them, and the one-page rollout memo we now start every project with.',
       { area: true, rows: 3 }) +
-    fieldText('f-co', 'Co-presenter', 'Talks pairing an engineer with a business partner are especially welcome. Up to 3 speakers per talk.',
+    fieldText('f-co', 'Co-presenter', 'The best of these talks bring the person who ran the business side. Up to 3 speakers per talk.',
       'Amara Nwosu, VP Claims Operations', { optional: true }) +
-    fieldText('f-note', 'Note to the committee', 'Private — never shown publicly or in exports. Deadlines, travel, anything we should know.',
+    fieldText('f-note', 'Note to the committee', 'Only the committee ever reads this. Deadlines, travel, anything we should know.',
       'I can do either day, but not Friday afternoon — I fly out at 16:00.', { area: true, rows: 3, optional: true }) +
     '</div>' +
     '<hr class="rule">' +
@@ -1543,7 +1543,7 @@ function screenCfp(ev){
     '<div style="margin-top:18px">' +
     fieldText('f-name', 'Your name', 'As you would like it printed on the schedule.', 'Priya Raghunathan') +
     fieldText('f-org', 'Organisation and role', 'Shown under your name on the public agenda.', 'Meridian Underwriting · SVP Engineering') +
-    fieldText('f-email', 'Email', 'How we reach you. Your speaker portal is tied to this address.', 'priya@example.org', { type: 'email' }) +
+    fieldText('f-email', 'Email', 'Your portal link lands here, and so does the decision.', 'priya.raghunathan@example.org', { type: 'email' }) +
     '</div>' +
     '<div class="btnrow" style="margin-top:8px">' +
       '<button class="btn btn-primary btn-lg" id="cfp-send">Send my proposal</button>' +
@@ -1612,7 +1612,7 @@ function screenThanks(ev){
   return onstage(ev, '<div class="wrap" style="padding-top:56px">' +
     '<div class="state-out" style="max-width:40em">' +
       '<h2>Sent.</h2>' +
-      '<p>We have written to <b>priya@example.org</b> with a link to your speaker portal. The committee has it now — decisions go out by <b>' + h(dLong(E.decideBy)) + '</b>.</p>' +
+      '<p>We have written to <b>priya.raghunathan@example.org</b> with a link to your speaker portal. The committee has it now — decisions go out by <b>' + h(dLong(E.decideBy)) + '</b>.</p>' +
       '<p>You can edit every word of it until the call closes on ' + h(dLong(E.closes)) + '. Nothing you change after that reaches the committee, so this is the moment to fix the title you are not sure about.</p>' +
       '<div class="btnrow"><a class="btn btn-primary btn-lg" href="' + url(ev + '/portal') + '">Open your portal</a>' +
       '<a class="btn btn-lg" href="' + url(ev + '/cfp') + '">Send another proposal</a></div>' +
@@ -1684,7 +1684,7 @@ function screenPortal(ev){
      (accepted && accepted.day ? whenLine(accepted) + '. ' : 'Your time and room are still being worked out. ') +
      'Everything we need from you is in your portal.'],
     ['Proposal received', 'We have your proposal', D(2026,7,22,10,14),
-     'We have “How 400 underwriters at a 150-year-old insurer ship with AI every day”. Nobody has read it yet. Decisions go out by ' + dLong(E.decideBy) + '.']
+     'We have “Claims agents: three rollouts, one that stuck”. Nobody has read it yet. Decisions go out by ' + dLong(E.decideBy) + '.']
   ].map(function(m){
     return '<div class="msg"><div class="mk">' + h(m[0]) + '</div>' +
       '<div><div class="msub">' + h(m[1]) + '</div><div class="mprev">' + h(m[3]) + '</div></div>' +
@@ -1914,7 +1914,7 @@ function screenMySchedule(ev){
 function screen404(ev){
   var bad = location.hash.replace(/^#/, '') || '/no-such-event';
   return onstage(null, '<div class="wrap" style="padding-top:60px">' +
-    '<div class="state-out"><h2>Not on the program.</h2>' +
+    '<div class="state-out"><h2>There\'s no stage here.</h2>' +
     '<p>This page submitted a strong proposal. The committee passed.</p>' +
     '<p class="aside">It happens to the best of us.</p>' +
     '<p>There is no call for speakers at <span class="code">' + h(bad) + '</span>.</p>' +
@@ -1977,7 +1977,7 @@ function screenProgram(ev){
     '<div style="padding:26px 0 0">' +
       '<h1 class="display">' + h(E.name) + '</h1>' +
       '<p class="sub" style="margin-top:6px">' + h(E.dates) + ' · ' + h(E.venue) + ' · ' + h(callState(E, 'org')) + ' · ' + h(E.tz) + '</p>' +
-      '<p class="serif" style="font-size:19px;color:var(--ink-soft);margin-top:16px;max-width:40em">Decide quietly, then tell everyone deliberately. This remembers who has been told.</p>' +
+      '<p class="serif" style="font-size:19px;color:var(--ink-soft);margin-top:16px;max-width:40em">A decision leaves when you send it, not when you make it. Who has been told is never a guess.</p>' +
     '</div>' +
     '<div class="sec">' + attn + '</div>' +
     '<div class="sec" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:16px">' +
