@@ -42,6 +42,20 @@ export function page(o: PageOpts): string {
   );
 }
 
+/** Event-scoped onstage nav — one builder so six screens cannot drift. */
+export function eventNav(slug: string, here: string, callOpen: boolean): string {
+  const link = (path: string, label: string) =>
+    `<a href="/${slug}${path}"${here === path ? ' aria-current="page"' : ''}>${label}</a>`;
+  return (
+    link('', 'The event') +
+    (callOpen ? link('/cfp', 'The call') : '') +
+    link('/agenda', 'Agenda') +
+    link('/speakers', 'Speakers') +
+    link('/my-schedule', 'My schedule') +
+    link('/portal', 'Your portal')
+  );
+}
+
 /** The onstage chrome: masthead, main, footer. `nav` is pre-built links. */
 export function onstageShell(nav: string, body: string, foot?: string): string {
   return (
