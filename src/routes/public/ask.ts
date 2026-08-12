@@ -48,6 +48,7 @@ import { eventBySlug, type EventHome } from '../../queries/public';
 import { claimAsk, clientIp } from '../../lib/ratelimit';
 import { principalFromCookie } from '../../workflows/account';
 import {
+  agentHandshake,
   answerQuestion,
   curatedAnswers,
   intentAnswer,
@@ -137,7 +138,9 @@ function answerBlock(result: AskResult, ev: EventHome): string {
       ? 'The organizers wrote this one.'
       : result.kind === 'instant'
         ? 'Read off the program just now.'
-        : 'I put that together from the program. If I have it wrong, the organizers see the question.';
+        : result.kind === 'house'
+          ? 'The same answer for everyone who asks.'
+          : 'I put that together from the program. If I have it wrong, the organizers see the question.';
   return (
     '<div class="cc-fs" data-ask-answer>' +
     sentences(result.say) +
@@ -523,6 +526,26 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
         });
       }
       const block = answerBlock(result, ev);
+      c.header('cache-control', 'no-store');
+      if (inPlace) return c.html(block);
+      return await wholePage(curated, youBubble(question) + block);
+    }
+
+    // Somebody asking how to bring their agent gets the actual steps, not a
+    // model's paraphrase of them. Free like a curated answer, and written down
+    // the same way, so the organizers see the demand.
+    const handshake = agentHandshake(question, !!principal);
+    if (handshake) {
+      if (budget.ok) {
+        await remember(c.env.DB, {
+          eventId: ev.id,
+          scope,
+          text: question,
+          answered: true,
+          snapshot: handshake.say.join(' '),
+        });
+      }
+      const block = answerBlock(handshake, ev);
       c.header('cache-control', 'no-store');
       if (inPlace) return c.html(block);
       return await wholePage(curated, youBubble(question) + block);

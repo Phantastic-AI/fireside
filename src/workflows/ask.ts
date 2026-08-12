@@ -57,7 +57,7 @@ export type Door = { id: string; href: string; label: string };
  * model in the path at all. See INSTANT ANSWERS at the foot of this file.
  */
 export type AskResult = {
-  kind: 'curated' | 'read' | 'unsure' | 'instant';
+  kind: 'curated' | 'read' | 'unsure' | 'instant' | 'house';
   say: string[];
   doors: Door[];
 };
@@ -616,8 +616,9 @@ export function settle(sentences: string[]): string[] {
       .trim();
     if (!clean) continue;
     // A sentence that quotes the prompt's own scaffolding at the reader is not
-    // an answer. Dropping it lets the unsure block say the honest thing.
-    if (/\bTHE FACTS\b|\bTHE QUESTION\b|\bDOORS\b/.test(clean)) continue;
+    // an answer — section headers and the d1/d2 ids alike. Dropping it lets
+    // the unsure block say the honest thing.
+    if (/\bTHE FACTS\b|\bTHE QUESTION\b|\bDOORS\b|\bd\d{1,2}\b/.test(clean)) continue;
     // The register again: a sentence starts with a capital and ends with a
     // stop, whoever wrote it.
     let cased = clean.charAt(0).toUpperCase() + clean.slice(1);
@@ -877,6 +878,31 @@ function instantly(say: (string | null)[], doors: (Door | null | undefined)[]): 
     kind: 'instant',
     say: settle(say.filter((s): s is string => typeof s === 'string' && s.trim() !== '')),
     doors: kept,
+  };
+}
+
+/** Somebody asking how to bring their agent is asking for steps, not for the
+ *  program — so the steps are a template, the same for everyone, with the one
+ *  page that has their command on it. 'house' rather than 'instant': nothing
+ *  here was read off the program, and the provenance line should not claim so. */
+const AGENT_ASK =
+  /\bmcp\b|\bclaude\b|\bcursor\b|\bcopilot\b|\bjson-?rpc\b|\bapi\b|\bagents?\b|\bai assistant\b/i;
+
+export function agentHandshake(question: string, signedIn: boolean): AskResult | null {
+  if (!AGENT_ASK.test(question)) return null;
+  const say = signedIn
+    ? [
+        'Your agent can act here as you.',
+        'Open the Agents page and copy the connect command printed for you — the token in it holds your standing, so treat it like a password',
+      ]
+    : [
+        'Fireside speaks MCP: any agent can read the public program, no key needed',
+        'To let yours act as you, sign in first — the Agents page then prints your paste-ready connect command',
+      ];
+  return {
+    kind: 'house',
+    say: settle(say),
+    doors: [{ id: 'agents', href: '/agents', label: 'Connect your agent' }],
   };
 }
 
