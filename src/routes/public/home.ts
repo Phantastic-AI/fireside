@@ -220,13 +220,15 @@ function show(o: {
   );
 }
 
-export function homePage(): string {
+export function homePage(signedIn = false): string {
   const nav =
     '<a href="#product">The product</a>' +
     '<a href="#year">The year</a>' +
     '<a href="#live">Walk one</a>' +
     '<a href="#open">Open source</a>' +
-    '<a href="/sign-in">Sign in</a>';
+    (signedIn
+      ? '<a href="/admin">Backstage</a><a href="/sign-out">Sign out</a>'
+      : '<a href="/sign-in">Sign in</a>');
 
   const hero =
     '<section class="mkt-hero"><div class="mkt-wrap">' +
@@ -238,7 +240,9 @@ export function homePage(): string {
     'the room with them.</p>' +
     '<div class="mkt-cta">' +
     '<a class="btn btn-primary btn-lg" href="#live">Walk a live conference →</a>' +
-    '<a class="btn btn-lg" href="/sign-in">Sign in</a>' +
+    (signedIn
+      ? '<a class="btn btn-lg" href="/admin">Your backstage →</a>'
+      : '<a class="btn btn-lg" href="/sign-in">Sign in</a>') +
     '</div>' +
     `<div class="mkt-spine">${SPINE.map((s) => `<span>${esc(s)}</span>`).join('')}</div>` +
     '</div></section>';
@@ -371,7 +375,8 @@ export function homePage(): string {
     '<a class="link" href="/admin/aie-nyc/outbox">The outbox</a>' +
     '<a class="link" href="/aie-nyc/portal">A speaker’s portal</a>' +
     '<a class="link" href="/admin/aie-nyc/green-room">The green room</a></div>' +
-    '<div class="go"><a class="btn btn-primary btn-lg" href="/aie-nyc/cfp">Open the call →</a></div>' +
+    '<div class="go"><a class="btn btn-primary btn-lg" href="/aie-nyc/cfp">Open the call →</a>' +
+    '<a class="btn btn-lg" href="/aie-nyc/ask">Ask it anything →</a></div>' +
     '</div>' +
     '<div class="mkt-ev mkt-past"><h3>DevOps Days Charlotte 2025</h3>' +
     '<p class="when">Thursday 6 – Friday 7 November · Charlotte</p>' +
@@ -381,7 +386,8 @@ export function homePage(): string {
     'other on it.</p>' +
     '<div class="more mkt-more-txt"><strong>Open to anyone</strong>The program, the speakers, ' +
     'the recordings and the people, with no sign-in at all.</div>' +
-    '<div class="go"><a class="btn btn-lg" href="/ddc-clt">See the program →</a></div>' +
+    '<div class="go"><a class="btn btn-lg" href="/ddc-clt">See the program →</a>' +
+    '<a class="btn" href="/ddc-clt/ask">Ask it anything →</a></div>' +
     '</div>' +
     '</div>' +
     '<p class="mkt-note">These are demonstration conferences with invented people. Everything ' +

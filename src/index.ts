@@ -72,13 +72,35 @@ const cssHeaders = { 'content-type': 'text/css; charset=utf-8', 'cache-control':
 app.get('/a/on.css', (c) => c.body(tokensCss + sharedCss + onstageCss + marketingCss, 200, cssHeaders));
 app.get('/a/back.css', (c) => c.body(tokensCss + sharedCss + backstageCss, 200, cssHeaders));
 
-app.get('/', (c) => c.html(homePage()));
+app.get('/', async (c) => {
+  const me = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+  return c.html(homePage(!!me));
+});
 app.get('/sign-in', (c) => c.html(signInPage()));
 app.get('/sign-up', (c) => c.html(signUpPage()));
 
-// TODO(CP1): redirect to /admin (organizers) or the portal (speakers) once
-// those screens exist; the front door is the honest interim landing.
-const AFTER_SIGN_IN = '/';
+/** Where signing in lands you: your backstage if you hold any standing, your
+ *  portal if you are a speaker at exactly one conference, and otherwise the
+ *  front door — which knows your name once you are signed in. */
+async function afterSignIn(db: D1Database, personId: string): Promise<string> {
+  const role = await db
+    .prepare('SELECT 1 FROM event_role WHERE person_id = ? LIMIT 1')
+    .bind(personId)
+    .first();
+  if (role) return '/admin';
+  const events = await db
+    .prepare(
+      `SELECT e.slug FROM participation pa
+         JOIN submission s ON s.id = pa.submission_id
+         JOIN event e ON e.id = s.event_id
+        WHERE pa.person_id = ? AND s.state <> 'draft'
+        GROUP BY e.slug LIMIT 2`
+    )
+    .bind(personId)
+    .all<{ slug: string }>();
+  const one = events.results.length === 1 ? events.results[0] : null;
+  return one ? `/${one.slug}/portal` : '/';
+}
 
 async function requestMagicLink(c: { env: Env; req: { url: string } }, email: string): Promise<string> {
   const person = await findPersonByEmail(c.env.DB, email);
@@ -109,7 +131,7 @@ app.post('/sign-in', async (c) => {
   const person = await signIn(c.env.DB, email, password);
   if (!person) return c.html(signInPage('That address and password do not match.'), 401);
   c.header('set-cookie', await sessionCookie(c.env.SESSION_SECRET, person.id));
-  return c.redirect(AFTER_SIGN_IN);
+  return c.redirect(await afterSignIn(c.env.DB, person.id));
 });
 
 app.post('/sign-in/link', async (c) => {
@@ -127,7 +149,7 @@ app.get('/sign-in/magic', async (c) => {
     return c.html(signInPage('That link has expired. Ask for a fresh one below.'), 400);
   }
   c.header('set-cookie', await sessionCookie(c.env.SESSION_SECRET, p.subjectId));
-  return c.redirect(AFTER_SIGN_IN);
+  return c.redirect(await afterSignIn(c.env.DB, p.subjectId));
 });
 
 app.post('/sign-up', async (c) => {
@@ -139,7 +161,9 @@ app.post('/sign-up', async (c) => {
   });
   if (!res.ok) return c.html(signUpPage(res.error), 400);
   c.header('set-cookie', await sessionCookie(c.env.SESSION_SECRET, res.personId));
-  return c.redirect(AFTER_SIGN_IN);
+  // A brand-new person has nothing yet; the backstage is where their first
+  // conference gets made.
+  return c.redirect('/admin');
 });
 
 app.get('/sign-out', (c) => {
@@ -220,7 +244,7 @@ app.get('/sign-in/google/callback', async (c) => {
     person = { id };
   }
   c.header('set-cookie', await sessionCookie(c.env.SESSION_SECRET, person.id));
-  return c.redirect(AFTER_SIGN_IN);
+  return c.redirect(await afterSignIn(c.env.DB, person.id));
 });
 
 // Who am I — the smallest window into the Principal (smoke-testable).
