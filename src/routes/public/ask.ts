@@ -44,7 +44,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { esc, page, onstageShell, eventNav } from '../../lib/html';
 import { label } from '../../lib/labels';
-import { eventBySlug, type EventHome } from '../../queries/public';
+import { eventBySlug, sessionBySlug, type EventHome } from '../../queries/public';
 import { claimAsk, clientIp } from '../../lib/ratelimit';
 import { principalFromCookie } from '../../workflows/account';
 import {
@@ -54,10 +54,12 @@ import {
   intentAnswer,
   intentLabel,
   intentOf,
+  isAboutThePage,
   logQuestion,
   matchCurated,
   offeredIntents,
   plainDoors,
+  thisTalkAnswer,
   type AskResult,
   type CuratedAnswer,
   type Door,
@@ -185,9 +187,13 @@ const MOST_CHIPS = 6;
  * held to six however much standing somebody has — a wall of chips is a menu,
  * and this is not a menu.
  */
-function chipRow(ev: EventHome, intents: IntentChip[]): string {
-  const room = Math.max(1, MOST_CHIPS - intents.length);
+function chipRow(ev: EventHome, intents: IntentChip[], lead?: string): string {
+  const leadChip = lead
+    ? `<button class="cc-chip" type="submit" name="q" value="${esc(lead)}">${esc(lead)}</button>`
+    : '';
+  const room = Math.max(1, MOST_CHIPS - intents.length - (lead ? 1 : 0));
   const chips =
+    leadChip +
     intents
       .map(
         (i) =>
@@ -340,11 +346,16 @@ function greeting(intents: IntentChip[]): string {
  *  conversation held for one person is never painted for the next one on the
  *  same tab. It is a hash, not a name: what lingers in a shared browser's
  *  sessionStorage should not say who was here. Empty means a stranger. */
-function panelFragment(ev: EventHome, intents: IntentChip[], who: string): string {
+function panelFragment(
+  ev: EventHome,
+  intents: IntentChip[],
+  who: string,
+  context?: { lead: string; greeting: string }
+): string {
   return (
     `<div class="cc-fs" data-cc-who="${esc(who)}">` +
-    `<p class="cc-lead">${esc(greeting(intents))}</p>` +
-    chipRow(ev, intents) +
+    `<p class="cc-lead">${esc(context ? context.greeting : greeting(intents))}</p>` +
+    chipRow(ev, intents, context?.lead) +
     '</div>'
   );
 }
@@ -418,7 +429,22 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
     if (c.req.query('panel')) {
       const offered = await offeredIntents(c.env.DB, ev, principal);
       c.header('cache-control', 'private, no-store');
-      return c.html(panelFragment(ev, offered, await whoMark(principal?.personId ?? null)));
+      // If the bubble opened on a talk's page, it opens with that talk: a chip
+      // to ask about it, and a greeting that names it. Everything else the same.
+      const hereQ = String(c.req.query('here') ?? '').trim();
+      let context: { lead: string; greeting: string } | undefined;
+      if (hereQ.startsWith('s:')) {
+        const session = await sessionBySlug(c.env.DB, ev.id, hereQ.slice(2));
+        if (session) {
+          context = {
+            lead: 'What is this talk about?',
+            greeting: `You are looking at “${session.title}”. Ask me about it, or anything else on the program.`,
+          };
+        }
+      }
+      return c.html(
+        panelFragment(ev, offered, await whoMark(principal?.personId ?? null), context)
+      );
     }
     const [curated, intents] = await Promise.all([
       curatedAnswers(c.env.DB, ev.id),
@@ -503,6 +529,31 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
 
     const curated = await curatedAnswers(c.env.DB, ev.id);
     const scope = scopeOf(ev.id, principal);
+
+    // The talk on the page, when the reader asks about it. The bubble sent
+    // which page it is on; "what's up with this talk" is read off that one row,
+    // no model and nothing spent, before the program-wide path is even tried.
+    const here = String(form['here'] ?? '').trim();
+    if (question && here.startsWith('s:') && isAboutThePage(question)) {
+      const session = await sessionBySlug(c.env.DB, ev.id, here.slice(2));
+      if (session) {
+        const result = thisTalkAnswer(ev, session);
+        const budget = await claimAsk(c.env.DB, { ...asker, spend: false });
+        if (budget.ok) {
+          await remember(c.env.DB, {
+            eventId: ev.id,
+            scope,
+            text: question,
+            answered: true,
+            snapshot: result.say.join(' '),
+          });
+        }
+        const block = answerBlock(result, ev);
+        c.header('cache-control', 'no-store');
+        if (inPlace) return c.html(block);
+        return await wholePage(curated, youBubble(question) + block);
+      }
+    }
 
     // Asked and not taken: whether there is any budget left, before anything
     // is spent. A curated answer is always free to give, but past the cap it

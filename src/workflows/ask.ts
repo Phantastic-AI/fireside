@@ -39,7 +39,9 @@ import {
   type Agenda,
   type EventHome,
   type GallerySpeaker,
+  type PublicSession,
 } from '../queries/public';
+import { FORMAT_KEY } from '../lib/labels';
 import { reviewEvent, reviewQueue } from '../queries/reviews';
 import type { Principal } from './account';
 
@@ -896,6 +898,49 @@ function wantsToConnect(q: string): boolean {
   if (/\b(my|your|our|own)\s+(ai\s+|coding\s+)?agents?\b/i.test(q)) return true;
   if (/\b(connect|hook\s*up|point|wire|plug|bring|attach)\b[^.?!]{0,32}\bagent/i.test(q)) return true;
   return false;
+}
+
+/** A question about the thing on the page — "this talk", "what's up with this",
+ *  "when is it", "who's speaking here". Deictic, so it only means something when
+ *  the bubble carried a `here`; the route checks that before it asks this. */
+const DEICTIC =
+  /\bthis (talk|session|one|slot)\b|\bwhat'?s (up with |on with )?this\b|\btell me (about|more)\b|\b(when|where|who|what|how long)('?s| is| are)? (this|it)\b|\babout (this|it)\b|\bthis\b\??$/i;
+export function isAboutThePage(question: string): boolean {
+  return DEICTIC.test(question.trim());
+}
+
+/**
+ * The talk on the page, read straight off the program: what it is, when and
+ * where it is, and who is giving it — with the door to its own page. No model,
+ * no spend; the answer is the row.
+ */
+export function thisTalkAnswer(ev: EventHome, s: PublicSession): AskResult {
+  const when =
+    s.startsAt && s.roomName
+      ? `${shortDay(s.day)} at ${clock(s.startsAt, s.timezone)}, in ${s.roomName}`
+      : s.startsAt
+        ? `${shortDay(s.day)} at ${clock(s.startsAt, s.timezone)}`
+        : 'not scheduled yet';
+  const kind = `${label(FORMAT_KEY[s.format] ?? 'format.talk', 'onstage')}, ${s.minutes} minutes`;
+  const names = s.speakers.map((p) => p.name).filter(Boolean);
+  const who =
+    names.length === 0
+      ? ''
+      : names.length === 1
+        ? `${names[0]} is giving it.`
+        : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} are giving it.`;
+  const say: string[] = [];
+  if (s.cancelled) {
+    say.push(`"${s.title}" was on the program, and it has been cancelled.`);
+    if (s.cancelNote) say.push(s.cancelNote);
+  } else {
+    say.push(`"${s.title}" is a ${kind}, ${when}.`);
+    if (who) say.push(who);
+  }
+  const doors: Door[] = [
+    { id: 'this', href: `/${ev.slug}/s/${s.publicSlug}`, label: 'Open this talk' },
+  ];
+  return { kind: 'instant', say: settle(say), doors };
 }
 
 export function agentHandshake(question: string, signedIn: boolean): AskResult | null {

@@ -30,6 +30,10 @@ function conciergeIsland() {
   if (!slug) return;
 
   var ask = '/' + encodeURIComponent(slug) + '/ask';
+  // What this page is about, when it is about one thing (a talk reads
+  // 's:<slug>'). Sent with every question so the concierge can answer about
+  // the thing in front of the reader, not the whole program.
+  var here = box.getAttribute('data-cc-here') || '';
   var THREAD = 'fireside.cc.thread.' + slug;
   var OPEN = 'fireside.cc.open.' + slug;
   var WHO = 'fireside.cc.who.' + slug;
@@ -180,7 +184,7 @@ function conciergeIsland() {
   function greet() {
     var wait = waiting();
     thread.appendChild(wait);
-    fetch(ask + '?panel=1', { credentials: 'same-origin' })
+    fetch(ask + '?panel=1' + (here ? '&here=' + encodeURIComponent(here) : ''), { credentials: 'same-origin' })
       .then(function (r) { return r.text(); })
       .then(function (html) {
         var now = markerOf(html);
@@ -216,7 +220,7 @@ function conciergeIsland() {
         'content-type': 'application/x-www-form-urlencoded',
         'x-ask': 'in-place'
       },
-      body: payload
+      body: here ? payload + '&here=' + encodeURIComponent(here) : payload
     })
       .then(function (r) { return r.text(); })
       .then(function (html) {

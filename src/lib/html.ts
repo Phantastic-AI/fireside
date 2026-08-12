@@ -59,10 +59,21 @@ export function page(o: PageOpts): string {
  * for: routes/public/ask.ts answers `?panel=1` with the greeting and the chips
  * this reader has earned, and answers a question the same way it answers the
  * page. See islands/concierge.js.
+ *
+ * `here` is what the page is about, when it is about one thing — a session
+ * reads `s:<slug>`. The bubble sends it with every question, so "what's up
+ * with this talk", asked on a talk's page, is answered about that talk rather
+ * than the whole program. A page about nothing in particular passes nothing,
+ * and the concierge answers the way it always has.
  */
-function conciergeMount(eventSlug: string, register: 'onstage' | 'backstage'): string {
+function conciergeMount(
+  eventSlug: string,
+  register: 'onstage' | 'backstage',
+  here?: string
+): string {
+  const hereAttr = here ? ` data-cc-here="${esc(here)}"` : '';
   return (
-    `<div id="concierge" class="${register}" data-concierge="${esc(eventSlug)}"></div>` +
+    `<div id="concierge" class="${register}" data-concierge="${esc(eventSlug)}"${hereAttr}></div>` +
     `<script>${conciergeIsland}</script>`
   );
 }
@@ -157,7 +168,8 @@ export function onstageShell(
   nav: string,
   body: string,
   eventSlug: string | null,
-  foot?: string
+  foot?: string,
+  here?: string
 ): string {
   return (
     '<div class="stage onstage">' +
@@ -167,6 +179,6 @@ export function onstageShell(
     `<span class="fname">${NAME}</span>` +
     `<span>${foot ?? 'An open-source call for speakers.'}</span>` +
     '</div></footer></div>' +
-    (eventSlug ? conciergeMount(eventSlug, 'onstage') : '')
+    (eventSlug ? conciergeMount(eventSlug, 'onstage', here) : '')
   );
 }

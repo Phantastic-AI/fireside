@@ -862,7 +862,12 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
         : '') +
       '</div>';
 
-    const body = embed ? `<div class="stage onstage embed"><main>${inner}</main></div>` : onstageShell(nav, inner, slug);
+    // The concierge in the corner is told which talk this page is, so "what's
+    // up with this talk" is answered about this one. Not in an embed: that is
+    // somebody else's page, and it carries no concierge.
+    const body = embed
+      ? `<div class="stage onstage embed"><main>${inner}</main></div>`
+      : onstageShell(nav, inner, slug, undefined, `s:${sessionSlug}`);
 
     return c.html(
       page({
