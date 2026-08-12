@@ -187,7 +187,11 @@ function paragraphs(text: string): string {
  * The outcome sentences — one closed set, and the screen owns the words
  * ------------------------------------------------------------------ */
 
-const NOTES: Record<ReviewOutcome, string> = {
+// Exported so mcp.ts's submit_review tool can refuse in the form's own
+// words — "the same refusal sentences", not a paraphrase that could drift
+// from them. See the header note on queries/reviews.ts: the second copy of a
+// rule is the one that goes wrong, and a copied sentence is a copy either way.
+export const NOTES: Record<ReviewOutcome, string> = {
   saved: 'Saved. It stays yours until you submit.',
   noted: 'Your note is kept. Mark a score and it joins the ones ready to submit.',
   sent: 'Your marks are in. They count towards the average on each proposal now.',
@@ -1452,7 +1456,10 @@ function viewFrom(form: Record<string, unknown>): View {
  * written, trimmed and capped. Anything else is dropped rather than stored,
  * so a hand-made form cannot put a mark on a line the committee never made.
  */
-function scoresFrom(form: Record<string, unknown>, card: ScorecardKey[]): Scores {
+// Exported for mcp.ts's submit_review tool — a signed connection posts marks
+// keyed the same way the reviewer's own form fields are, and this is the one
+// place that shape is checked against the round's scorecard.
+export function scoresFrom(form: Record<string, unknown>, card: ScorecardKey[]): Scores {
   const out: Scores = {};
   for (const k of card) {
     const raw = form[`score_${k.key}`];

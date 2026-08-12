@@ -87,18 +87,17 @@ export type Principal = {
   eventRoles: Record<string, string>; // event_id -> owner|approver|editor|viewer
 };
 
-export async function principalFromCookie(
+/** The person-plus-roles lookup every Principal is built from, however the
+ *  caller arrived: a session cookie unwraps to a personId and calls this: so
+ *  does a signed connection's bearer token (see makeAgentToken, and mcp.ts's
+ *  reading of it). One query, one shape, wherever the subject came from. */
+export async function principalFromPersonId(
   db: D1Database,
-  secret: string,
-  cookieHeader: string | undefined
+  personId: string
 ): Promise<Principal | null> {
-  const m = /(?:^|;\s*)fs_s=([^;]+)/.exec(cookieHeader ?? '');
-  if (!m) return null;
-  const p = await verifyToken(secret, m[1]!);
-  if (!p || p.purpose !== 'session') return null;
   const person = await db
     .prepare('SELECT id, email, name, internal_role FROM person WHERE id = ?')
-    .bind(p.subjectId)
+    .bind(personId)
     .first<{ id: string; email: string | null; name: string; internal_role: 'organizer' | 'reviewer' | null }>();
   if (!person) return null;
   const roles = await db
@@ -108,6 +107,38 @@ export async function principalFromCookie(
   const eventRoles: Record<string, string> = {};
   for (const r of roles.results) eventRoles[r.event_id] = r.role;
   return { personId: person.id, name: person.name, email: person.email, role: person.internal_role, eventRoles };
+}
+
+export async function principalFromCookie(
+  db: D1Database,
+  secret: string,
+  cookieHeader: string | undefined
+): Promise<Principal | null> {
+  const m = /(?:^|;\s*)fs_s=([^;]+)/.exec(cookieHeader ?? '');
+  if (!m) return null;
+  const p = await verifyToken(secret, m[1]!);
+  if (!p || p.purpose !== 'session') return null;
+  return await principalFromPersonId(db, p.subjectId);
+}
+
+// ---------- signed connections (the agent tier) ----------
+
+/** How long a minted connection acts as the person who minted it. Long enough
+ *  that a working session is not re-minting a command every afternoon; short
+ *  enough that a leaked one ages out. */
+const AGENT_DAYS = 14;
+
+/** A bearer credential for POST /mcp: 'Authorization: Bearer <this>' reads as
+ *  this person for as long as it is valid. mcp.ts turns it back into a
+ *  Principal with verifyToken + principalFromPersonId — the same two steps a
+ *  session cookie goes through, purpose aside. */
+export async function makeAgentToken(secret: string, personId: string): Promise<string> {
+  return await signToken(secret, {
+    purpose: 'agent',
+    subjectId: personId,
+    nonce: randomNonce(),
+    exp: Date.now() + AGENT_DAYS * 86_400_000,
+  });
 }
 
 // ---------- magic links ----------

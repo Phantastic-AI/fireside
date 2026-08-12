@@ -26,7 +26,15 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
 }
 
 export type TokenPayload = {
-  purpose: 'session' | 'magic' | 'portal' | 'resume' | 'share' | 'green_room' | 'oauth_state';
+  purpose:
+    | 'session'
+    | 'magic'
+    | 'portal'
+    | 'resume'
+    | 'share'
+    | 'green_room'
+    | 'oauth_state'
+    | 'agent';
   subjectId: string;
   nonce: string;
   exp: number; // epoch ms

@@ -3,7 +3,9 @@
 // Everything a person can see on the public side of Fireside — the events, an
 // event's facts, the program, one talk, the speakers, the questions the call
 // asks, and the act of sending a proposal — is reachable here by a machine,
-// through the Model Context Protocol, at one address: POST /mcp.
+// through the Model Context Protocol, at one address: POST /mcp. A second,
+// narrower tier answers only when the caller carries a bearer token minted at
+// /agents: it reads and writes as the person who minted it, and nothing more.
 //
 // The shape of the thing:
 //
@@ -12,19 +14,36 @@
 //     response comes back the same way; a notification gets 202 and no body.
 //     Statelessness is the whole trick — every call carries what it needs, so
 //     two calls in a row may land on two different machines and neither knows.
-//   * The read tools go through queries/public.ts, which is where the rules
-//     about what a stranger may see are already written into the SQL. This
-//     file adds no scope logic of its own, because the second copy of a rule
-//     is the one that goes wrong.
-//   * queries/portal.ts is deliberately NOT used. A speaker's portal holds
-//     decisions they have been told and letters addressed to them; there is no
-//     one signed in on this connection, so there is nobody to show it to. The
-//     portal stays behind its sign-in and its emailed link.
-//   * The one writer is workflows/submit.ts's submitProposal — the same
+//   * The public read tools go through queries/public.ts, which is where the
+//     rules about what a stranger may see are already written into the SQL.
+//     This file adds no scope logic of its own, because the second copy of a
+//     rule is the one that goes wrong.
+//   * queries/portal.ts is used only once a bearer token has turned into a
+//     Principal, and then only to read that same person's own portal — the
+//     my_owed tool. Nothing here can read anybody else's decisions or letters
+//     without one, and nothing anonymous can read them with one either.
+//   * The one public writer is workflows/submit.ts's submitProposal — the same
 //     function behind the call-for-speakers screen, with the same guards, the
 //     same cap on how many proposals one person may send, and the same
 //     refusals in the same words. A proposal sent from here is not a lesser
 //     proposal; it is the same row, written the same way.
+//   * The signed tools (whoami, pile_summary, my_owed, review_queue,
+//     review_proposal, submit_review) hold no authorization logic of their
+//     own either: pile() and requireScope (queries/admin.ts), reviewEvent and
+//     queuePosition (queries/reviews.ts), and portalView (queries/portal.ts)
+//     decide what a standing may see, exactly as they do for the backstage
+//     screens and the reviewer's own room. submit_review's write is
+//     workflows/review.ts's upsertReview and submitReviews — the same two
+//     calls the reviewer's own form makes, in the same order, with the same
+//     refusal sentences, reused rather than restated.
+//   * Bearer handling: 'Authorization: Bearer <token>' on POST /mcp, purpose
+//     'agent', minted by makeAgentToken (workflows/account.ts) at /agents and
+//     good for fourteen days. No header at all is exactly today's public
+//     tier — nothing below changes for a caller that never sends one. A
+//     header that fails to verify is read as no header, never as a fault: it
+//     neither raises a protocol error nor unlocks anything. tools/list shows
+//     the signed six only once a valid token is on the call, so an anonymous
+//     client never learns a tool exists that it cannot use.
 //
 // Words: every state word still comes from lib/labels.ts. Formats, levels,
 // roles, and the sentence a call says about itself are looked up, not typed.
@@ -45,6 +64,7 @@
 import type { Hono } from 'hono';
 import type { Env } from './index';
 import { CALL_HAPPENED, FORMAT_KEY, LEVEL_KEY, label, type LabelKey } from './lib/labels';
+import { verifyToken } from './lib/sign';
 import {
   agenda,
   cfpQuestions,
@@ -61,6 +81,15 @@ import {
   type GallerySession,
   type GallerySpeaker,
 } from './queries/public';
+import { adminEvents, pile, ScopeError, type AdminEvent } from './queries/admin';
+import { portalView } from './queries/portal';
+import {
+  queuePosition,
+  reviewEvent,
+  reviewQueue,
+  stagedReviews,
+  type ReviewEvent,
+} from './queries/reviews';
 import {
   ABSTRACT_MAX,
   FORMATS,
@@ -69,6 +98,13 @@ import {
   tracksOfEvent,
   type TrackOption,
 } from './workflows/submit';
+import { principalFromPersonId, type Principal } from './workflows/account';
+import { submitReviews, upsertReview } from './workflows/review';
+// scoresFrom and NOTES are the reviewer form's own value-shape check and its
+// own outcome sentences (routes/admin/reviews.ts). submit_review reuses both
+// rather than restating them, so a scale's range and a "you already sent
+// this in" sentence cannot say two different things in two places.
+import { NOTES, scoresFrom } from './routes/admin/reviews';
 
 const PROTOCOL_VERSION = '2025-06-18';
 const SERVER_INFO = { name: 'fireside', version: '1.0.0' };
@@ -296,7 +332,10 @@ type Tool = {
   title: string;
   description: string;
   inputSchema: JsonSchema;
-  run: (env: Env, args: Args, nowMs: number) => Promise<ToolOutcome>;
+  // `principal` is null on the public tier and on any call whose bearer token
+  // did not verify. The eight public tools below never look at it; the six
+  // signed ones (see SIGNED_TOOLS) are the only entries that read it.
+  run: (env: Env, args: Args, nowMs: number, principal: Principal | null) => Promise<ToolOutcome>;
 };
 
 const textArg = (args: Args, key: string): string => {
@@ -330,6 +369,74 @@ async function eventOr(
   const ev = await eventBySlug(env.DB, slug, nowMs);
   if (!ev) return { ok: false, says: NO_SUCH_EVENT };
   return { ok: true, ev };
+}
+
+/* ------------------------------------------------------------------ *
+ * The signed tier: standing, and the sentences a refusal reuses.
+ * ------------------------------------------------------------------ */
+
+const NEEDS_SIGNED_IN =
+  'This one needs a signed connection. Sign in at /agents and paste the command it gives you.';
+
+const NO_SUCH_PROPOSAL =
+  'No proposal here goes by that id. review_queue and pile_summary give the ids that exist.';
+
+// The reviewer room's own sentence for "handed to somebody else, or to
+// nobody" (routes/admin/reviews.ts's queuePage, non-chair branch), reused
+// word for word rather than paraphrased.
+const NOT_ASSIGNED = 'That proposal is not on your list this round, so there is nothing here to score.';
+
+const noOrganizerStanding = (eventSlug: string): string =>
+  `Your connection has no organizer standing at ${eventSlug}.`;
+const noReviewerStanding = (eventSlug: string): string =>
+  `Your connection has no reviewer standing at ${eventSlug}.`;
+
+/** Every state word a signed tool needs, backstage or onstage — the local map
+ *  every screen that touches SubmissionState/VisibleState keeps its own copy
+ *  of (see routes/admin/pile.ts's STATE_KEY, workflows/ask.ts's STATE_WORD). */
+const SUBMISSION_STATE_KEY: Record<string, LabelKey> = {
+  draft: 'submission.draft',
+  submitted: 'submission.submitted',
+  accepted: 'submission.accepted',
+  waitlisted: 'submission.waitlisted',
+  rejected: 'submission.rejected',
+  withdrawn: 'submission.withdrawn',
+  cancelled: 'submission.cancelled',
+};
+const submissionStateWords = (stored: string, register: 'onstage' | 'backstage'): string => {
+  const key = SUBMISSION_STATE_KEY[stored];
+  return key ? label(key, register) : stored;
+};
+
+/** A submission's own event, by address rather than by anybody's standing —
+ *  the same kind of lookup eventOr does for a slug, the other way round.
+ *  No scope decision lives here: reviewEvent and queuePosition, below, are
+ *  what decide whether this connection may read or write what it names. */
+async function eventSlugOfSubmission(db: D1Database, submissionId: string): Promise<string | null> {
+  if (!submissionId) return null;
+  const row = await db
+    .prepare('SELECT e.slug AS slug FROM submission s JOIN event e ON e.id = s.event_id WHERE s.id = ?')
+    .bind(submissionId)
+    .first<{ slug: string }>();
+  return row?.slug ?? null;
+}
+
+/** The event a reviewing call is about, or the sentence that says this
+ *  connection holds no reviewer standing there. reviewEvent alone decides —
+ *  this only turns its ScopeError into the tool-result refusal style. */
+async function reviewEventOr(
+  env: Env,
+  principal: Principal,
+  slug: string
+): Promise<{ ok: true; ev: ReviewEvent } | { ok: false; says: string }> {
+  try {
+    const ev = await reviewEvent(env.DB, principal, slug);
+    if (!ev) return { ok: false, says: NO_SUCH_EVENT };
+    return { ok: true, ev };
+  } catch (e) {
+    if (e instanceof ScopeError) return { ok: false, says: noReviewerStanding(slug) };
+    throw e;
+  }
 }
 
 /** The organizer's own extra questions, as the call asks them. */
@@ -369,7 +476,7 @@ function fieldWords(field: string, questions: readonly CfpQuestion[]): string | 
  * The tools themselves. A plain object map, name to tool.
  * ------------------------------------------------------------------ */
 
-const TOOLS: Record<string, Tool> = {
+const PUBLIC_TOOLS: Record<string, Tool> = {
   list_events: {
     title: 'Every event here',
     description:
@@ -862,6 +969,297 @@ const TOOLS: Record<string, Tool> = {
 };
 
 /* ------------------------------------------------------------------ *
+ * The signed tools: standing required, read through the same queries and
+ * workflows the backstage and reviewer screens read and write through.
+ * Every run() below starts the same way — refuse when there is no
+ * principal — because a signed tool called anonymously is refused exactly
+ * like a bearer token that did not verify; the caller reads one sentence
+ * either way.
+ * ------------------------------------------------------------------ */
+
+const SIGNED_TOOLS: Record<string, Tool> = {
+  whoami: {
+    title: 'Who this connection is',
+    description:
+      "This connection's own name and standing: any install-wide role, and its role at each event " +
+      'by short name. No email address — an address is not a standing.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    async run(env, _args, _nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      let events: AdminEvent[] = [];
+      try {
+        events = await adminEvents(env.DB, principal);
+      } catch (e) {
+        // Nothing backstage anywhere is not a fault — a speaker with no
+        // standing still gets a whole answer, just an empty one.
+        if (!(e instanceof ScopeError)) throw e;
+      }
+      const eventStandings: Record<string, string> = {};
+      for (const e of events) eventStandings[e.slug] = e.standing;
+      return answered({
+        name: principal.name,
+        role: principal.role,
+        events: eventStandings,
+      });
+    },
+  },
+
+  pile_summary: {
+    title: 'What is waiting on the committee',
+    description:
+      'Organizer standing required at the named event. Counts by state, and up to twenty undecided ' +
+      'proposals — id, title, format and track — from the same pile the backstage screen reads. ' +
+      'Refuses in a sentence when this connection holds no organizer standing there.',
+    inputSchema: {
+      type: 'object',
+      properties: EVENT_ARG,
+      required: ['event'],
+      additionalProperties: false,
+    },
+    async run(env, args, nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const found = await eventOr(env, args, nowMs);
+      if (!found.ok) return refuse(found.says);
+      const ev = found.ev;
+      let read;
+      try {
+        read = await pile(env.DB, principal, ev.id, 'undecided', { limit: 20 });
+      } catch (e) {
+        if (e instanceof ScopeError) return refuse(noOrganizerStanding(ev.slug));
+        throw e;
+      }
+      return answered({
+        event: ev.slug,
+        counts: read.counts,
+        undecided: read.rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          format: formatWords(r.format),
+          track: r.track ? { track: r.track.slug, name: r.track.name } : null,
+        })),
+      });
+    },
+  },
+
+  my_owed: {
+    title: 'What you owe, and by when',
+    description:
+      "This connection's own standing at one event: its proposals in their told states only, and its " +
+      'open tasks with their due dates — the same read the speaker portal itself uses, so nothing ' +
+      'here is ahead of what the person it belongs to has already been told.',
+    inputSchema: {
+      type: 'object',
+      properties: EVENT_ARG,
+      required: ['event'],
+      additionalProperties: false,
+    },
+    async run(env, args, nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const found = await eventOr(env, args, nowMs);
+      if (!found.ok) return refuse(found.says);
+      const ev = found.ev;
+      const view = await portalView(env.DB, ev.id, principal.personId, nowMs);
+      if (!view) return answered({ event: ev.slug, proposals: [], open_tasks: [] });
+      const mine = view.submissions.filter((s) => s.state !== 'draft');
+      const openTasks = [...view.tasks, ...view.submissions.flatMap((s) => s.tasks)].filter(
+        (t) => t.status === 'open'
+      );
+      return answered({
+        event: ev.slug,
+        proposals: mine.map((s) => ({
+          id: s.id,
+          title: s.title,
+          state: submissionStateWords(s.state, 'onstage'),
+        })),
+        open_tasks: openTasks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          due_on: t.dueOn,
+          overdue: t.overdue,
+        })),
+      });
+    },
+  },
+
+  review_queue: {
+    title: 'Your reading list',
+    description:
+      "This connection's own assigned reviews for the event's current round, still unsubmitted — id, " +
+      'title, format and track. No author name or employer: the round stays blind here exactly as it ' +
+      "does on the reviewer's own screen. review_proposal reads one of these whole, and submit_review " +
+      'sends a mark.',
+    inputSchema: {
+      type: 'object',
+      properties: EVENT_ARG,
+      required: ['event'],
+      additionalProperties: false,
+    },
+    async run(env, args, _nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const slug = textArg(args, 'event');
+      if (!slug) return refuse('Name the event first — its short name, as list_events gives it.');
+      const found = await reviewEventOr(env, principal, slug);
+      if (!found.ok) return refuse(found.says);
+      const ev = found.ev;
+      const q = await reviewQueue(env.DB, principal, ev);
+      const left = q.rows.filter((r) => r.mySubmittedAt === null && !r.myRecused);
+      return answered({
+        event: ev.slug,
+        round: ev.round,
+        left: q.left,
+        proposals: left.map((r) => ({
+          id: r.id,
+          title: r.title,
+          format: formatWords(r.format),
+          track: r.track ? { track: r.track.slug, name: r.track.name } : null,
+        })),
+      });
+    },
+  },
+
+  review_proposal: {
+    title: 'One assigned proposal, blind',
+    description:
+      'One proposal on your reading list, whole: title, abstract, format, who it is pitched at, its ' +
+      "track, and the round's own scorecard — the exact keys, kinds and ranges submit_review takes. " +
+      'Nothing here names the author or their employer; that stays hidden the same way it stays ' +
+      "hidden on the reviewer's own screen. Refuses in a sentence when the proposal is not on this " +
+      "connection's list this round.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: "The proposal's id, as review_queue gives it." },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    async run(env, args, _nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const id = textArg(args, 'id');
+      if (!id) return refuse('Name the proposal you mean — its id, as review_queue gives it.');
+      const slug = await eventSlugOfSubmission(env.DB, id);
+      if (!slug) return refuse(NO_SUCH_PROPOSAL);
+      const found = await reviewEventOr(env, principal, slug);
+      if (!found.ok) return refuse(found.says);
+      const ev = found.ev;
+      const spot = await queuePosition(env.DB, principal, ev, id);
+      if (!spot) return refuse(NOT_ASSIGNED);
+      const q = await reviewQueue(env.DB, principal, ev, { page: spot.page });
+      const row = q.rows.find((r) => r.id === spot.submissionId);
+      if (!row) return refuse(NOT_ASSIGNED);
+      return answered({
+        id: row.id,
+        event: ev.slug,
+        round: ev.round,
+        title: row.title,
+        abstract: row.abstract,
+        format: formatWords(row.format),
+        who_it_is_for: levelWords(row.level),
+        track: row.track ? { track: row.track.slug, name: row.track.name } : null,
+        minutes: row.minutes,
+        already_submitted: row.mySubmittedAt !== null,
+        my_marks: row.myScores,
+        my_note: row.myNote,
+        scorecard: ev.scorecard.map((k) => ({
+          key: k.key,
+          asks: k.label,
+          kind: k.kind,
+          max: k.kind === 'scale' ? k.max : null,
+          options: k.kind === 'select' ? k.options : null,
+        })),
+      });
+    },
+  },
+
+  submit_review: {
+    title: 'Send one review to the committee',
+    description:
+      "Score one assigned proposal and send it to the committee in the same act — the round's marks " +
+      '(review_proposal names the exact keys, kinds and ranges its scorecard takes) plus an optional ' +
+      'note only the committee reads. A submitted review is final for this round, the same way the ' +
+      "reviewer's own form's is: it cannot be changed or taken back, and it joins the average on that " +
+      "proposal immediately. Refuses in a sentence when the proposal is not on this connection's " +
+      'list, when it has already been decided or scored, or when the marks sent match none of the ' +
+      "round's scorecard.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: "The proposal's id, as review_queue or review_proposal gives it." },
+        scores: {
+          type: 'object',
+          description:
+            "The round's marks, keyed by the key review_proposal's scorecard gives each one. A scale " +
+            'takes a whole number in its range; a select takes one of its own options, spelled ' +
+            'exactly as review_proposal lists it; a written line takes a sentence or two.',
+          additionalProperties: true,
+        },
+        comment: { type: 'string', description: 'A note only the committee reads. Optional.' },
+      },
+      required: ['id', 'scores'],
+      additionalProperties: false,
+    },
+    async run(env, args, _nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const id = textArg(args, 'id');
+      if (!id) return refuse('Name the proposal you mean — its id, as review_queue gives it.');
+      const slug = await eventSlugOfSubmission(env.DB, id);
+      if (!slug) return refuse(NO_SUCH_PROPOSAL);
+      const found = await reviewEventOr(env, principal, slug);
+      if (!found.ok) return refuse(found.says);
+      const ev = found.ev;
+
+      const spot = await queuePosition(env.DB, principal, ev, id);
+      if (!spot) return refuse(NOT_ASSIGNED);
+
+      const rawScores = isObject(args['scores']) ? args['scores'] : {};
+      const asForm: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(rawScores)) {
+        asForm[`score_${k}`] = typeof v === 'number' ? String(v) : v;
+      }
+      // The exact same value-shape check the reviewer's own form field goes
+      // through: a scale kept inside its range, a select kept to its own
+      // options, a written line trimmed and capped. Nothing else survives.
+      const scores = scoresFrom(asForm, ev.scorecard);
+      if (Object.keys(scores).length === 0) {
+        return refuse(
+          "None of those marks match this round's scorecard. review_proposal lists the exact keys, " +
+            'kinds and ranges it takes.'
+        );
+      }
+      const comment = textArg(args, 'comment');
+
+      const staged = await upsertReview(
+        env.DB,
+        principal,
+        ev.id,
+        ev.round,
+        spot.submissionId,
+        scores,
+        comment || null
+      );
+      if (staged !== 'saved') return refuse(NOTES[staged]);
+
+      // The confirm pass, immediately: the same two calls the reviewer's own
+      // "Submit N reviews" button makes, read fresh so the count that goes is
+      // the count actually staged, never a guess.
+      const cohort = await stagedReviews(env.DB, principal, ev.id, ev.round);
+      const sent = await submitReviews(env.DB, principal, ev.id, ev.round, cohort.length);
+      if (sent.outcome !== 'sent') return refuse(NOTES[sent.outcome]);
+
+      return answered({
+        id: spot.submissionId,
+        submitted: true,
+        says:
+          'Your review is in. It counts towards the average on this proposal now, and it is final ' +
+          'for this round.',
+      });
+    },
+  },
+};
+
+const ALL_TOOLS: Record<string, Tool> = { ...PUBLIC_TOOLS, ...SIGNED_TOOLS };
+
+/* ------------------------------------------------------------------ *
  * JSON-RPC 2.0, by hand.
  * ------------------------------------------------------------------ */
 
@@ -900,18 +1298,24 @@ function toolResult(outcome: ToolOutcome): Record<string, unknown> {
   };
 }
 
-async function callTool(env: Env, params: Args, nowMs: number): Promise<Record<string, unknown>> {
+async function callTool(
+  env: Env,
+  params: Args,
+  nowMs: number,
+  principal: Principal | null
+): Promise<Record<string, unknown>> {
   const name = typeof params['name'] === 'string' ? params['name'] : '';
-  const tool = TOOLS[name];
+  const tool = ALL_TOOLS[name];
   if (!tool) {
+    const known = Object.keys(principal ? ALL_TOOLS : PUBLIC_TOOLS);
     throw new RpcFault(
       INVALID_PARAMS,
-      `There is no tool called ${name || 'that'} here. The ones there are: ${Object.keys(TOOLS).join(', ')}.`
+      `There is no tool called ${name || 'that'} here. The ones there are: ${known.join(', ')}.`
     );
   }
   const args = isObject(params['arguments']) ? params['arguments'] : {};
   try {
-    return toolResult(await tool.run(env, args, nowMs));
+    return toolResult(await tool.run(env, args, nowMs, principal));
   } catch {
     // A tool that fell over is still a sentence, not a stack trace. The
     // caller can act on this one: try it again.
@@ -925,18 +1329,21 @@ async function callTool(env: Env, params: Args, nowMs: number): Promise<Record<s
  * The dispatcher. A plain map from method name to what it answers — adding a
  * method is adding a line here, and everything not on it is -32601.
  */
-const METHODS: Record<string, (env: Env, params: Args, nowMs: number) => Promise<unknown>> = {
-  initialize: async () => ({
+const METHODS: Record<
+  string,
+  (env: Env, params: Args, nowMs: number, principal: Principal | null) => Promise<unknown>
+> = {
+  initialize: async (_env, _params, _nowMs, principal) => ({
     protocolVersion: PROTOCOL_VERSION,
     capabilities: { tools: {} },
     serverInfo: SERVER_INFO,
-    instructions: INSTRUCTIONS,
+    instructions: principal ? `${INSTRUCTIONS} This connection acts as ${principal.name}.` : INSTRUCTIONS,
   }),
 
   ping: async () => ({}),
 
-  'tools/list': async () => ({
-    tools: Object.entries(TOOLS).map(([name, t]) => ({
+  'tools/list': async (_env, _params, _nowMs, principal) => ({
+    tools: Object.entries(principal ? ALL_TOOLS : PUBLIC_TOOLS).map(([name, t]) => ({
       name,
       title: t.title,
       description: t.description,
@@ -944,8 +1351,25 @@ const METHODS: Record<string, (env: Env, params: Args, nowMs: number) => Promise
     })),
   }),
 
-  'tools/call': async (env, params, nowMs) => await callTool(env, params, nowMs),
+  'tools/call': async (env, params, nowMs, principal) => await callTool(env, params, nowMs, principal),
 };
+
+/**
+ * The bearer half of the door. 'Authorization: Bearer <token>', purpose
+ * 'agent', turned into the Principal it names — or null for anything that is
+ * not exactly that: no header, a header that is not Bearer, a token that
+ * does not verify, the wrong purpose, an expired one, or a person who no
+ * longer exists. Every one of those reads as "no header" to the rest of this
+ * file. Nothing here throws — a bearer that does not check out neither
+ * crashes the call nor unlocks anything.
+ */
+async function principalFromBearer(env: Env, header: string | undefined): Promise<Principal | null> {
+  const m = /^Bearer\s+(.+)$/i.exec((header ?? '').trim());
+  if (!m?.[1]) return null;
+  const payload = await verifyToken(env.SESSION_SECRET, m[1]);
+  if (!payload || payload.purpose !== 'agent') return null;
+  return await principalFromPersonId(env.DB, payload.subjectId);
+}
 
 export function registerMcp(app: Hono<{ Bindings: Env }>): void {
   // One address, one method. There is no stream to open and no session to
@@ -1001,8 +1425,15 @@ export function registerMcp(app: Hono<{ Bindings: Env }>): void {
       return c.json(faultWith(id, METHOD_NOT_FOUND, `This door has no method called ${method}.`), 200);
     }
 
+    // Read once per request, whatever the method: tools/list needs it to
+    // decide which tools exist, tools/call needs it to run one, and
+    // initialize needs it for the one added sentence. A caller that sent no
+    // header pays no extra read at all — the regex fails before anything
+    // touches the database.
+    const principal = await principalFromBearer(c.env, c.req.header('authorization'));
+
     try {
-      return c.json(replyWith(id, await handler(c.env, params, Date.now())), 200);
+      return c.json(replyWith(id, await handler(c.env, params, Date.now(), principal)), 200);
     } catch (e) {
       if (e instanceof RpcFault) return c.json(faultWith(id, e.code, e.message), 200);
       return c.json(

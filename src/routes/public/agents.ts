@@ -8,10 +8,18 @@
 //
 // Register law: everything on this page is a present-tense fact about the
 // running software. No roadmap, no construction talk. The one scope sentence
-// is the load-bearing one: an agent here sees what a signed-out browser sees.
+// is the load-bearing one: with no header, a caller here sees what a
+// signed-out browser sees.
+//
+// Signed in, this page mints the one thing it never stores: a bearer for
+// POST /mcp, good for fourteen days, reading and writing as whoever asked for
+// it. Minting happens on every visit rather than once and remembered — the
+// page holds no state of its own, and a fresh paste is cheaper than a lost
+// one. The response carries private, no-store the moment a name is on it.
 import { page, brand } from '../../lib/html';
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
+import { makeAgentToken, principalFromCookie, type Principal } from '../../workflows/account';
 
 const ORIGIN = 'https://fireside.phantastic.ai';
 
@@ -29,7 +37,42 @@ function code(text: string): string {
   return `<pre class="mono" style="background:var(--card,#fff);border:1px solid var(--line,#ded5c7);border-radius:8px;padding:12px 14px;overflow-x:auto;font-size:13px;line-height:1.5;margin:8px 0 0">${text}</pre>`;
 }
 
-export function agentsPage(): string {
+/**
+ * The card at the top of the page once somebody is signed in: their own
+ * paste-ready connect strings, and the one caution that matters. The token
+ * itself is minted by the route below, once per visit — this only lays it
+ * out.
+ */
+function connectedCard(principal: Principal, token: string): string {
+  const bearer = `Authorization: Bearer ${token}`;
+  return (
+    '<div class="sec card card-pad" style="border-color:var(--accent,#B14D14)">' +
+    `<h2 style="font-size:19px;margin:0 0 6px">Connected as ${principal.name}</h2>` +
+    '<p>These read and write as you, everywhere your own sign-in reaches — the same standing, ' +
+    'carried by the header instead of a cookie.</p>' +
+    '<p style="margin-top:14px"><b>Claude Code</b></p>' +
+    code(`claude mcp add --transport http fireside ${ORIGIN}/mcp --header "${bearer}"`) +
+    '<p style="margin-top:14px"><b>Anything that reads an <span class="mono">mcpServers</span> block</b></p>' +
+    code(
+      '{\n' +
+        '  "mcpServers": {\n' +
+        '    "fireside": {\n' +
+        `      "url": "${ORIGIN}/mcp",\n` +
+        `      "headers": { "Authorization": "Bearer ${token}" }\n` +
+        '    }\n' +
+        '  }\n' +
+        '}'
+    ) +
+    '<p class="hint" style="margin-top:14px">This one acts as you. It expires in fourteen days, ' +
+    'and until then it is worth treating the way you would treat a password — whoever holds it ' +
+    'holds your own standing.</p>' +
+    '</div>'
+  );
+}
+
+export function agentsPage(opts: { principal: Principal | null; token: string | null }): string {
+  const connected =
+    opts.principal && opts.token ? connectedCard(opts.principal, opts.token) : '';
   const body =
     '<div class="stage onstage">' +
     `<header class="mast"><div class="wrap mast-in">${brand()}<nav><a href="/">Home</a><a href="https://github.com/Phantastic-AI/fireside">GitHub</a></nav></div></header>` +
@@ -40,11 +83,15 @@ export function agentsPage(): string {
     'a machine can read at one address — and it can send a proposal through the same guards the form uses.</p>' +
     '</div>' +
 
+    connected +
+
     '<div class="sec card card-pad">' +
     '<h2 style="font-size:19px;margin:0 0 6px">The address</h2>' +
     `<p>Fireside speaks the Model Context Protocol over plain HTTP: stateless JSON-RPC 2.0 at <span class="mono">POST ${ORIGIN}/mcp</span>, protocol <span class="mono">2025-06-18</span>. ` +
-    'No key, no token, no session header — every call stands alone, and every caller is the public. ' +
-    'An agent here sees exactly what a signed-out browser sees: portals, piles, and letters stay behind their sign-in.</p>' +
+    'No key, no token, no session header is required for any of this — every call stands alone, and a ' +
+    'caller carrying none of those is the public: it sees exactly what a signed-out browser sees, and ' +
+    'portals, piles, and letters stay behind their sign-in. Somebody with standing here can sign in and ' +
+    'mint a second, signed connection on this page — it reads and writes as them, and nothing wider.</p>' +
     '</div>' +
 
     '<div class="sec card card-pad">' +
@@ -100,5 +147,14 @@ export function agentsPage(): string {
 }
 
 export function registerAgents(app: Hono<{ Bindings: Env }>): void {
-  app.get('/agents', (c) => c.html(agentsPage()));
+  app.get('/agents', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.html(agentsPage({ principal: null, token: null }));
+    // Minted fresh on every visit rather than stored: this page holds no
+    // state of its own, and the reader's own standing is what makes the
+    // token good, not a row remembering it was ever issued.
+    const token = await makeAgentToken(c.env.SESSION_SECRET, principal.personId);
+    c.header('cache-control', 'private, no-store');
+    return c.html(agentsPage({ principal, token }));
+  });
 }
