@@ -28,15 +28,14 @@ function askIsland() {
     if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
-  function send(q) {
-    q = (q || '').trim();
-    if (busy || !q) return;
+  function send(body, shown) {
+    if (busy || !body) return;
     busy = true;
     form.setAttribute('aria-busy', 'true');
 
     var you = document.createElement('div');
     you.className = 'cc-you';
-    you.textContent = q;              // what someone typed is text, never markup
+    you.textContent = shown;          // what someone typed is text, never markup
     thread.appendChild(you);
     var wait = waiting();
     thread.appendChild(wait);
@@ -49,7 +48,7 @@ function askIsland() {
         'content-type': 'application/x-www-form-urlencoded',
         'x-ask': 'in-place'
       },
-      body: 'q=' + encodeURIComponent(q)
+      body: body
     })
       .then(function (r) { return r.text(); })
       .then(function (html) {
@@ -61,7 +60,7 @@ function askIsland() {
         // The one honest thing to do when the reply never lands: fall back to
         // the page that works without any of this.
         wait.remove();
-        input.value = q;
+        input.value = shown;
         form.removeAttribute('data-ask');
         form.submit();
       })
@@ -75,10 +74,18 @@ function askIsland() {
   form.addEventListener('submit', function (e) {
     if (!form.hasAttribute('data-ask')) return;   // the fallback path, let it go
     var pressed = e.submitter;
+    // An instant chip wins over whatever sits half-typed in the box: the
+    // press is the question.
+    if (pressed && pressed.name === 'i' && pressed.value) {
+      e.preventDefault();
+      send('i=' + encodeURIComponent(pressed.value), (pressed.textContent || '').trim() || pressed.value);
+      return;
+    }
     var q = pressed && pressed.name === 'q' ? pressed.value : input.value;
-    if (!(q || '').trim()) return;                // let the browser say it is blank
+    q = (q || '').trim();
+    if (!q) return;                               // let the browser say it is blank
     e.preventDefault();
-    send(q);
+    send('q=' + encodeURIComponent(q), q);
   });
 }
 

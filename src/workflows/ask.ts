@@ -30,15 +30,17 @@
 
 import { checkedBatch, guard, newId, now } from '../lib/db';
 import { label, type LabelKey } from '../lib/labels';
-import { pile } from '../queries/admin';
-import { portalView, type VisibleState } from '../queries/portal';
+import { pile, READ_ROLES, REVIEW_ROLES } from '../queries/admin';
+import { portalView, type PortalTask, type VisibleState } from '../queries/portal';
 import {
   agenda,
+  eventDayKey,
   speakersGallery,
   type Agenda,
   type EventHome,
   type GallerySpeaker,
 } from '../queries/public';
+import { reviewEvent, reviewQueue } from '../queries/reviews';
 import type { Principal } from './account';
 
 /* ------------------------------------------------------------------ *
@@ -47,9 +49,15 @@ import type { Principal } from './account';
 
 export type Door = { id: string; href: string; label: string };
 
-/** What the screen renders. `say` is plain text — the screen escapes it. */
+/**
+ * What the screen renders. `say` is plain text — the screen escapes it.
+ *
+ * 'instant' is the fourth kind and the cheapest: a question the object graph
+ * answers about itself, composed here from one read and a template, with no
+ * model in the path at all. See INSTANT ANSWERS at the foot of this file.
+ */
 export type AskResult = {
-  kind: 'curated' | 'read' | 'unsure';
+  kind: 'curated' | 'read' | 'unsure' | 'instant';
   say: string[];
   doors: Door[];
 };
@@ -241,6 +249,16 @@ export function plainDoors(ev: EventHome, published: boolean): Door[] {
   return [pick('d1'), pick('d2')].filter((d): d is Door => !!d);
 }
 
+/** The three backstage ones, named once so the facts an organizer is given and
+ *  the instant answer they press for cannot point at two different screens. */
+function backstageDoors(ev: EventHome): Door[] {
+  return [
+    { id: 'd7', href: `/admin/${ev.slug}/submissions`, label: 'The proposals' },
+    { id: 'd8', href: `/admin/${ev.slug}/outbox`, label: 'The letters waiting to go' },
+    { id: 'd9', href: `/admin/${ev.slug}/agenda`, label: 'The agenda you are building' },
+  ];
+}
+
 /* ------------------------------------------------------------------ *
  * Standing: what this one person is to this one conference, and the
  * facts that earns. Nothing here is ever assembled for somebody who
@@ -273,11 +291,7 @@ async function organizerFacts(
   principal: Principal
 ): Promise<Standing> {
   const { counts } = await pile(db, principal, ev.id, 'all', { limit: 1 });
-  const doors: Door[] = [
-    { id: 'd7', href: `/admin/${ev.slug}/submissions`, label: 'The proposals' },
-    { id: 'd8', href: `/admin/${ev.slug}/outbox`, label: 'The letters waiting to go' },
-    { id: 'd9', href: `/admin/${ev.slug}/agenda`, label: 'The agenda you are building' },
-  ];
+  const doors = backstageDoors(ev);
   const lines = [
     '',
     'ORGANIZER FACTS — this person runs this conference, so these are theirs to see',
@@ -712,4 +726,822 @@ export async function answerQuestion(
   if (!doors.length) doors.push(...plainDoors(ev, published));
 
   return { kind: 'read', say, doors };
+}
+
+/* ==================================================================== *
+ * INSTANT ANSWERS
+ *
+ * The questions nobody should have to type, and nobody should have to
+ * wait for. Each one is a code, a read of the live database, and a
+ * template written here — one query, no model, no budget. The organizers
+ * author none of it: these answers are the object graph describing
+ * itself, so they are already true the moment a talk moves or a decision
+ * is made.
+ *
+ * What earns a chip is standing, checked the same way every other screen
+ * checks it: pile() through READ_ROLES, the reading room through
+ * REVIEW_ROLES, and a speaker's own facts through portalView, whose
+ * projection is the only thing allowed to decide what a speaker may see.
+ * A decision made and not sent still reads "with the committee" here,
+ * because the word comes from the same label their portal card reads.
+ *
+ * The register is the concierge's own: warm, plain, second person,
+ * sentence case, and every sentence carries something a reader can act
+ * on — a time, a date, a count, a room. settle() runs over these exactly
+ * as it runs over the model's, so one voice governs both.
+ * ==================================================================== */
+
+export type IntentCode =
+  | 'now-next'
+  | 'call-close'
+  | 'getting-started'
+  | 'my-owed'
+  | 'pile-now'
+  | 'my-queue';
+
+/** A chip on the page: the code it posts, and the words on it. */
+export type IntentChip = { code: IntentCode; label: string };
+
+const INTENT_CODES: readonly string[] = [
+  'now-next',
+  'call-close',
+  'getting-started',
+  'my-owed',
+  'pile-now',
+  'my-queue',
+];
+
+/** Anything that is not one of ours is nothing at all — the screen treats it
+ *  exactly as it treats an empty question. */
+export function intentOf(raw: string | undefined | null): IntentCode | null {
+  const text = (raw ?? '').trim();
+  return INTENT_CODES.includes(text) ? (text as IntentCode) : null;
+}
+
+/* ------------------------------------------------------------------ *
+ * Small words. Counts a reader acts on are digits; counts that are only
+ * prose are spelled, because "2 days" in the middle of a sentence reads
+ * like a form field and "two days" reads like a person.
+ * ------------------------------------------------------------------ */
+
+const SMALL = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+
+function spelled(n: number): string {
+  return n >= 0 && n < SMALL.length ? (SMALL[n] as string) : String(n);
+}
+
+function count(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function spelledCount(n: number, one: string, many = `${one}s`): string {
+  return `${spelled(n)} ${n === 1 ? one : many}`;
+}
+
+const isAre = (n: number): string => (n === 1 ? 'is' : 'are');
+
+/** A label mid-sentence: "With the committee" is a card, "with the committee"
+ *  is a clause. Only the first letter moves, so a name inside it survives. */
+function midSentence(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+/** '2026-09-03' → 'Thursday 3 September'. The weekday is what somebody
+ *  standing in a hallway actually navigates by. */
+function dayWords(iso: string): string {
+  const weekday = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'long' }).format(
+    dayFromKey(iso)
+  );
+  return `${weekday} ${Number(iso.slice(8))} ${MONTHS[Number(iso.slice(5, 7)) - 1] ?? ''}`.trim();
+}
+
+/** '2026-09-03' → '3 September'. No year: every date in these answers is
+ *  within reach of the conference it belongs to. */
+function dateWords(iso: string): string {
+  return `${Number(iso.slice(8))} ${MONTHS[Number(iso.slice(5, 7)) - 1] ?? ''}`.trim();
+}
+
+function eventDayCount(ev: EventHome): number {
+  const span = dayFromKey(ev.endsOn).getTime() - dayFromKey(ev.startsOn).getTime();
+  return Math.max(1, Math.round(span / 86_400_000) + 1);
+}
+
+/** The conference's own words for its clock, as a clause rather than as the
+ *  line under a program: the column usually reads "All times ET". */
+function zoneWords(tzLabel: string | null): string {
+  const text = (tzLabel ?? '').replace(/^all times\s*/i, '').trim();
+  return text ? ` ${text}` : '';
+}
+
+/** Where it is, said once. The address usually carries the venue's name in it
+ *  already, and "Pier 57, Pier 57, New York" is nobody's address. */
+function placeWords(ev: EventHome): string | null {
+  const name = ev.venueName?.trim() ?? '';
+  const address = ev.venueAddress?.trim() ?? '';
+  if (!name) return address || null;
+  if (!address) return name;
+  return address.toLowerCase().includes(name.toLowerCase()) ? address : `${name}, ${address}`;
+}
+
+/** Where the clock stands against the conference's own days. */
+type Phase = 'before' | 'during' | 'after';
+
+function phaseOf(ev: EventHome, nowMs: number): Phase {
+  const today = eventDayKey(nowMs, ev.timezone);
+  if (today < ev.startsOn) return 'before';
+  if (today > ev.endsOn) return 'after';
+  return 'during';
+}
+
+/* ------------------------------------------------------------------ *
+ * Assembly.
+ * ------------------------------------------------------------------ */
+
+/** Sentences and doors, both cleaned: the register is enforced by the same
+ *  function that polices the model, and a door cannot appear twice. */
+function instantly(say: (string | null)[], doors: (Door | null | undefined)[]): AskResult {
+  const kept: Door[] = [];
+  for (const d of doors) {
+    if (!d || kept.some((k) => k.href === d.href)) continue;
+    kept.push(d);
+    if (kept.length === MAX_DOORS) break;
+  }
+  return {
+    kind: 'instant',
+    say: settle(say.filter((s): s is string => typeof s === 'string' && s.trim() !== '')),
+    doors: kept,
+  };
+}
+
+/** Doors by id from the closed set, in the order asked for. */
+function doorsOf(ev: EventHome, published: boolean, ...ids: string[]): Door[] {
+  const all = fixedDoors(ev, published);
+  return ids.map((id) => all.find((d) => d.id === id)).filter((d): d is Door => !!d);
+}
+
+/* ------------------------------------------------------------------ *
+ * The program, flattened. One pass over the public agenda gives every
+ * answer below its times, its rooms and its recordings — and because it
+ * comes from queries/public.ts, it can hold nothing a stranger could not
+ * already read.
+ * ------------------------------------------------------------------ */
+
+type Placed = {
+  day: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+  room: string | null;
+  slug: string | null;
+  cancelled: boolean;
+  recorded: boolean;
+};
+
+function placedSessions(ag: Agenda | null): Placed[] {
+  if (!ag?.published) return [];
+  const out: Placed[] = [];
+  for (const day of ag.days) {
+    for (const slot of day.slots) {
+      for (const s of slot.sessions) {
+        out.push({
+          day: day.day,
+          title: s.title,
+          startsAt: s.startsAt,
+          endsAt: s.startsAt + s.minutes * 60_000,
+          room: s.roomName,
+          slug: s.publicSlug,
+          cancelled: s.cancelled,
+          recorded: s.recordingUrl !== null,
+        });
+      }
+    }
+  }
+  return out.sort((a, b) => a.startsAt - b.startsAt);
+}
+
+/**
+ * The public program in the two shapes every instant answer needs: the talks
+ * that are really on it, and how many days they fall across. One read, so two
+ * chips pressed a second apart cannot quote two different programs.
+ */
+type Program = { live: Placed[]; days: number };
+
+async function programOf(db: D1Database, ev: EventHome): Promise<Program & { ag: Agenda | null }> {
+  const ag = await agenda(db, ev.id);
+  // Cancelled talks stay on the agenda, struck through, but nothing is
+  // "happening now" in a room that was emptied.
+  const live = placedSessions(ag).filter((p) => !p.cancelled);
+  const days = ag?.published && ag.days.length > 0 ? ag.days.length : eventDayCount(ev);
+  return { ag, live, days };
+}
+
+/** How a talk is named in a sentence: its title, and the room to walk to. */
+function named(p: Placed): string {
+  return p.room ? `“${p.title}” in ${p.room}` : `“${p.title}”`;
+}
+
+/** How long a title may be on a button before it stops being a button. */
+const DOOR_LABEL_MAX = 46;
+
+function sessionDoor(ev: EventHome, p: Placed | undefined): Door | null {
+  if (!p?.slug) return null;
+  const label =
+    p.title.length > DOOR_LABEL_MAX ? `${p.title.slice(0, DOOR_LABEL_MAX - 1).trimEnd()}…` : p.title;
+  return { id: 'ds', href: `/${ev.slug}/s/${p.slug}`, label };
+}
+
+/** The agenda cut to one day. The key and the value are the two the agenda's
+ *  own chips write, so this lands on a program with talks on it. */
+function dayDoor(ev: EventHome, day: string, today: string): Door {
+  return {
+    id: 'dd',
+    href: `/${ev.slug}/agenda?day=${day}`,
+    label: day === today ? 'Today on the agenda' : `${dayWords(day)} on the agenda`,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * now-next — what is on, and what is next, against the conference's own
+ * clock. Before it starts, the first morning; after it ends, where the
+ * recordings are.
+ * ------------------------------------------------------------------ */
+
+async function nowNext(db: D1Database, ev: EventHome, nowMs: number): Promise<AskResult> {
+  const { ag, live, days } = await programOf(db, ev);
+  const published = ag?.published === true;
+  const timezone = ag?.timezone ?? ev.timezone;
+  const today = eventDayKey(nowMs, ev.timezone);
+  const phase = phaseOf(ev, nowMs);
+
+  // Nothing published: the honest subject is the call and the people, not a
+  // schedule that does not exist yet.
+  if (!published || !live.length) {
+    return instantly(
+      [
+        'The schedule is not public yet.',
+        ev.counts.speakers > 0
+          ? `${count(ev.counts.speakers, 'speaker')} ${isAre(ev.counts.speakers)} announced so far, and ${ev.name} runs ${dateRange(ev)}.`
+          : `${ev.name} runs ${dateRange(ev)}${ev.venueName ? ` at ${ev.venueName}` : ''}.`,
+        ev.lifecycle === 'open' && ev.cfpClosesAt
+          ? `The call for speakers is open until ${instant(ev.cfpClosesAt, ev.timezone)}, so the program is still being built.`
+          : null,
+      ],
+      [
+        ...doorsOf(ev, published, 'd2'),
+        ...doorsOf(ev, published, ev.lifecycle === 'open' ? 'd4' : 'd1'),
+        ...doorsOf(ev, published, 'd1'),
+      ]
+    );
+  }
+
+  if (phase === 'after') {
+    const recorded = live.filter((p) => p.recorded).length;
+    return instantly(
+      [
+        `${ev.name} finished on ${dayWords(ev.endsOn)}.`,
+        `The program is still up: ${count(live.length, 'talk')}, each with a page of its own.`,
+        recorded > 0
+          ? `Recordings are up for ${recorded} of them, on the talk's own page.`
+          : "Any recording appears on the talk's own page.",
+      ],
+      doorsOf(ev, published, 'd1', 'd2', 'd3')
+    );
+  }
+
+  if (phase === 'before') {
+    const first = live[0];
+    const place = placeWords(ev);
+    return instantly(
+      [
+        first
+          ? `The program begins ${dayWords(first.day)} at ${clock(first.startsAt, timezone)} — ${count(live.length, 'talk')} across ${spelledCount(days, 'day')}.`
+          : `${ev.name} runs ${dateRange(ev)}.`,
+        place ? `It is at ${place}.` : null,
+        'Star the talks you want and they line up in your schedule, in the order you will walk to them.',
+      ],
+      doorsOf(ev, published, 'd1', 'd5', 'd2')
+    );
+  }
+
+  const onNow = live.filter((p) => p.startsAt <= nowMs && nowMs < p.endsAt);
+  const ahead = live.filter((p) => p.startsAt > nowMs);
+  const nextAt = ahead[0]?.startsAt ?? null;
+  const next = nextAt === null ? [] : ahead.filter((p) => p.startsAt === nextAt);
+
+  // One talk named, with the room to walk to, and a number for the rest: a
+  // sentence that lists five titles is a list, and a list is not an answer.
+  const first = onNow[0];
+  const nowLine = !first
+    ? 'Nothing is on right now.'
+    : onNow.length === 1
+      ? `Happening now: ${named(first)}, until ${clock(first.endsAt, timezone)}.`
+      : `Happening now: ${named(first)} until ${clock(first.endsAt, timezone)}, and ${spelled(onNow.length - 1)} more in other rooms.`;
+
+  const up = next[0];
+  const nextLine = !up
+    ? 'That was the last talk on the program.'
+    : `${up.day === today ? `Next at ${clock(up.startsAt, timezone)}` : `Next on ${dayWords(up.day)} at ${clock(up.startsAt, timezone)}`}: ${named(up)}${
+        next.length > 1 ? `, with ${spelledCount(next.length - 1, 'more talk')} at the same time` : ''
+      }.`;
+
+  const focus = first ?? up;
+  return instantly(
+    [
+      nowLine,
+      nextLine,
+      'Everything you starred is waiting in your schedule, in the order you will walk to it.',
+    ],
+    [
+      sessionDoor(ev, focus),
+      dayDoor(ev, focus?.day ?? today, today),
+      ...doorsOf(ev, published, 'd5', 'd1'),
+    ]
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * call-close — whether a proposal can still be sent, and when the answer
+ * comes back. Straight off the event row: no other read is needed.
+ * ------------------------------------------------------------------ */
+
+function callClose(ev: EventHome, nowMs: number): AskResult {
+  const closes = ev.cfpClosesAt;
+
+  if (closes !== null && ev.lifecycle === 'open') {
+    const away = closes - nowMs;
+    const hours = Math.max(1, Math.round(away / 3_600_000));
+    const days = Math.round(away / 86_400_000);
+    const soon =
+      away <= 48 * 3_600_000
+        ? `That is about ${spelledCount(hours, 'hour')} from now.`
+        : away <= 10 * 86_400_000
+          ? `That is ${spelledCount(days, 'day')} away.`
+          : null;
+    return instantly(
+      [
+        `The call for speakers is open until ${instant(closes, ev.timezone)} at ${clock(closes, ev.timezone)}${zoneWords(ev.tzLabel)}.`,
+        soon,
+        `You can send up to ${spelledCount(ev.maxSubmissions, 'proposal')}, and you can change ${ev.maxSubmissions === 1 ? 'it' : 'them'} right up to the close.`,
+        ev.decideBy ? `Decisions go out by ${dateWords(ev.decideBy)}.` : null,
+      ],
+      doorsOf(ev, ev.agendaPublished, 'd4', 'd6', 'd1')
+    );
+  }
+
+  if (closes !== null) {
+    return instantly(
+      [
+        `The call for speakers closed on ${instant(closes, ev.timezone)}, so nothing more can be sent in.`,
+        ev.decideBy && ev.lifecycle !== 'happened'
+          ? `Decisions go out by ${dateWords(ev.decideBy)}, and the same words land in your portal when they do.`
+          : null,
+        ev.counts.accepted > 0
+          ? ev.lifecycle === 'happened'
+            ? `${count(ev.counts.accepted, 'talk')} made the program.`
+            : `${count(ev.counts.accepted, 'talk')} ${isAre(ev.counts.accepted)} on the program so far.`
+          : null,
+      ],
+      doorsOf(ev, ev.agendaPublished, 'd6', 'd1', 'd2')
+    );
+  }
+
+  return instantly(
+    [
+      'There is no call for speakers open here right now.',
+      `${ev.name} runs ${dateRange(ev)}${ev.venueName ? ` at ${ev.venueName}` : ''}.`,
+    ],
+    plainDoors(ev, ev.agendaPublished)
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * getting-started — the one warm answer, and the only one that is more
+ * orientation than fact. It still names counts, because a program with a
+ * number on it is a program somebody can decide about.
+ * ------------------------------------------------------------------ */
+
+async function gettingStarted(db: D1Database, ev: EventHome): Promise<AskResult> {
+  if (ev.agendaPublished) {
+    // The same read now-next takes, so the two chips cannot put two different
+    // numbers of talks on the same screen a second apart.
+    const { live, days } = await programOf(db, ev);
+    const talks = live.length > 0 ? live.length : ev.counts.accepted;
+
+    // A conference that is over is not a thing to plan; it is a thing to read.
+    if (ev.lifecycle === 'happened') {
+      const recorded = live.filter((p) => p.recorded).length;
+      return instantly(
+        [
+          `${ev.name} has already happened, and the program is still up: ${count(talks, 'talk')}, each with a page of its own.`,
+          recorded > 0
+            ? `Recordings are up for ${recorded} of them, on the talk's own page.`
+            : "Any recording appears on the talk's own page.",
+          ev.counts.speakers > 0
+            ? 'The speakers page is the same program by person, if that is an easier way in.'
+            : null,
+        ],
+        doorsOf(ev, true, 'd1', 'd2', 'd3')
+      );
+    }
+
+    return instantly(
+      [
+        `Start on the agenda: ${count(talks, 'talk')} across ${spelledCount(days, 'day')}, each with a page of its own.`,
+        'Star the ones you want and they line up in your schedule, in the order you will walk to them.',
+        ev.counts.speakers > 0
+          ? 'The speakers page is the same program by person, if that is an easier way in.'
+          : null,
+      ],
+      doorsOf(ev, true, 'd1', 'd5', 'd2')
+    );
+  }
+
+  if (ev.lifecycle === 'open') {
+    return instantly(
+      [
+        `The schedule is not public yet, so the thing to do first is the call for speakers${ev.cfpClosesAt ? `, open until ${instant(ev.cfpClosesAt, ev.timezone)}` : ''}.`,
+        'Anything you send sits in your portal, where you can change it until the call closes.',
+        ev.counts.speakers > 0
+          ? `${count(ev.counts.speakers, 'speaker')} ${isAre(ev.counts.speakers)} announced already, each with a page of their own.`
+          : null,
+      ],
+      doorsOf(ev, false, 'd4', 'd6', 'd2')
+    );
+  }
+
+  return instantly(
+    [
+      'The schedule is not public yet.',
+      ev.counts.speakers > 0
+        ? `${count(ev.counts.speakers, 'speaker')} ${isAre(ev.counts.speakers)} announced so far, and ${ev.name} runs ${dateRange(ev)}.`
+        : `${ev.name} runs ${dateRange(ev)}.`,
+      'When the program is published it lands on the agenda, and starring a talk keeps it in your schedule.',
+    ],
+    doorsOf(ev, false, 'd2', 'd1', 'd6')
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * my-owed — a speaker's own tasks and their own proposals, in the words
+ * their portal uses. portalView is the projection; nothing here reaches
+ * past it, so a decision made and not sent reads "with the committee".
+ * ------------------------------------------------------------------ */
+
+/**
+ * One thing owed, and how many talks owe it. A speaker with three proposals is
+ * asked for slides three times, and three identical sentences read like a bug
+ * rather than like three tasks — so the same thing on the same date is said
+ * once, with the number of proposals it stands against.
+ */
+type Owed = { title: string; dueOn: string | null; overdue: boolean; n: number };
+
+function owedGroups(tasks: PortalTask[]): Owed[] {
+  const out: Owed[] = [];
+  for (const t of tasks) {
+    const same = out.find(
+      (g) => g.title === t.title && g.dueOn === t.dueOn && g.overdue === t.overdue
+    );
+    if (same) same.n += 1;
+    else out.push({ title: t.title, dueOn: t.dueOn, overdue: t.overdue, n: 1 });
+  }
+  return out;
+}
+
+function owedWords(g: Owed): string {
+  const when = !g.dueOn
+    ? 'has no date on it'
+    : g.overdue
+      ? `was due ${dateWords(g.dueOn)}, and is overdue`
+      : `is due ${dateWords(g.dueOn)}`;
+  return `“${g.title}” ${when}${g.n > 1 ? `, on each of your ${count(g.n, 'proposal')}` : ''}.`;
+}
+
+async function myOwed(
+  db: D1Database,
+  ev: EventHome,
+  principal: Principal | null,
+  nowMs: number
+): Promise<AskResult | null> {
+  if (!principal) return null;
+  const view = await portalView(db, ev.id, principal.personId, nowMs);
+  if (!view) return null;
+
+  const open = [...view.tasks, ...view.submissions.flatMap((s) => s.tasks)]
+    .filter((t) => t.status === 'open')
+    .sort((a, b) => (a.dueOn ?? '9999-12-31').localeCompare(b.dueOn ?? '9999-12-31'));
+  const mine = view.submissions.filter((s) => s.state !== 'draft');
+  const drafts = view.submissions.filter((s) => s.state === 'draft');
+
+  const say: (string | null)[] = [];
+  const groups = owedGroups(open);
+  const head = groups[0];
+  if (!head) {
+    say.push(`Nothing is waiting on you at ${ev.name} right now.`);
+  } else if (open.length === 1) {
+    say.push(`One thing is waiting on you: ${owedWords(head).replace(/\.$/, '')}.`);
+  } else {
+    say.push(`${count(open.length, 'thing')} are waiting on you.`);
+    for (const g of groups.slice(0, 2)) say.push(owedWords(g));
+    const rest = groups.slice(2).reduce((n, g) => n + g.n, 0);
+    if (rest > 0) say.push(`${count(rest, 'more', 'more')} ${isAre(rest)} in your portal.`);
+  }
+
+  const one = mine[0];
+  if (mine.length === 1 && one) {
+    say.push(`Your proposal “${one.title}” is ${midSentence(label(STATE_WORD[one.state], 'onstage'))}.`);
+    if (one.placement) {
+      say.push(
+        `It is on ${dayWords(one.placement.day)} at ${clock(one.placement.startsAt, ev.timezone)}${one.placement.roomName ? ` in ${one.placement.roomName}` : ''}.`
+      );
+    }
+  } else if (mine.length > 1) {
+    say.push(
+      `You have ${count(mine.length, 'proposal')} in, and where each one stands is on your portal.`
+    );
+  } else if (drafts.length > 0) {
+    say.push(
+      `${count(drafts.length, 'draft')} of yours ${isAre(drafts.length)} half-written and not sent yet.`
+    );
+  }
+
+  return instantly(say, [
+    ...doorsOf(ev, ev.agendaPublished, 'd6'),
+    ...doorsOf(ev, ev.agendaPublished, ev.agendaPublished ? 'd5' : 'd4', 'd1'),
+  ]);
+}
+
+/* ------------------------------------------------------------------ *
+ * pile-now — what is waiting on an organizer. The counts band's own read
+ * (pile), so the number here and the number on the masthead cannot part.
+ * ------------------------------------------------------------------ */
+
+async function pileNow(
+  db: D1Database,
+  ev: EventHome,
+  principal: Principal | null
+): Promise<AskResult | null> {
+  if (!principal) return null;
+  // A standing that will not read is an answer this person is not owed.
+  const read = await pile(db, principal, ev.id, 'all', { limit: 1 }).catch((e: unknown) => {
+    console.log('ask: the pile did not read', String(e));
+    return null;
+  });
+  if (!read) return null;
+  const counts = read.counts;
+
+  const say: (string | null)[] = [];
+  if (counts.undecided > 0) {
+    say.push(`${count(counts.undecided, 'proposal')} ${isAre(counts.undecided)} still undecided.`);
+    if (counts.decidedNotTold > 0) {
+      say.push(
+        `${count(counts.decidedNotTold, 'decision')} ${isAre(counts.decidedNotTold)} made and not sent yet.`
+      );
+    }
+  } else if (counts.decidedNotTold > 0) {
+    say.push(
+      `Every proposal is decided, and ${count(counts.decidedNotTold, 'decision')} ${isAre(counts.decidedNotTold)} still waiting to be sent.`
+    );
+  } else {
+    say.push('Nothing is waiting on you: every proposal is decided, and every decision has been sent.');
+  }
+
+  say.push(
+    `So far ${count(counts.accepted, 'talk')} ${isAre(counts.accepted)} accepted, with ${count(ev.counts.speakers, 'speaker')} behind them.`
+  );
+  if (ev.cfpClosesAt) {
+    say.push(
+      `The call ${ev.lifecycle === 'open' ? 'closes' : 'closed'} on ${instant(ev.cfpClosesAt, ev.timezone)}.`
+    );
+  }
+
+  const [proposals, outbox, building] = backstageDoors(ev);
+  const doors =
+    counts.undecided > 0
+      ? [proposals, outbox, building]
+      : counts.decidedNotTold > 0
+        ? [outbox, proposals, building]
+        : [building, proposals, outbox];
+  return instantly(say, doors);
+}
+
+/* ------------------------------------------------------------------ *
+ * my-queue — a reviewer's own round. Counts only: a blind read stays
+ * blind, so no title of a proposal appears in it.
+ * ------------------------------------------------------------------ */
+
+async function myQueue(
+  db: D1Database,
+  ev: EventHome,
+  principal: Principal | null
+): Promise<AskResult | null> {
+  if (!principal) return null;
+  const room = await reviewEvent(db, principal, ev.slug).catch((e: unknown) => {
+    console.log('ask: the reading room did not read', String(e));
+    return null;
+  });
+  if (!room) return null;
+  const round = room.round;
+  const q = await reviewQueue(db, principal, room);
+
+  // Their own numbers whichever view they read in: `assigned` counts the review
+  // rows that are theirs, and stepping aside finishes a proposal as surely as
+  // marking it does, so both come out of what is left.
+  const left = Math.max(0, q.assigned - q.submitted - q.recused);
+  const door: Door = { id: 'dr', href: `/admin/${ev.slug}/reviews`, label: 'Your reviews' };
+
+  if (q.mine === 0) {
+    return instantly(
+      [
+        `Nothing has been handed to you for round ${round} yet.`,
+        'When something is, it appears on your reviews page, and your marks stay yours until you send them.',
+      ],
+      [door]
+    );
+  }
+
+  if (left === 0) {
+    return instantly(
+      [
+        `Round ${round} is clear on your side: nothing is left for you to score.`,
+        q.mineDone > 0
+          ? `${count(q.mineDone, 'review')} of yours ${isAre(q.mineDone)} in${q.recused > 0 ? `, and you stepped aside on ${spelled(q.recused)}` : ''}.`
+          : // Handed out, then decided before she got to them: an empty list and
+            // a finished evening are two different silences.
+            `The ${count(q.mine, 'proposal')} handed to you ${isAre(q.mine)} all decided already.`,
+      ],
+      [door]
+    );
+  }
+
+  return instantly(
+    [
+      `${count(left, 'proposal')} ${isAre(left)} left for you to score in round ${round}.`,
+      `Of the ${count(q.mine, 'proposal')} handed to you this round, you have sent ${spelled(q.mineDone)}${q.recused > 0 ? `, and stepped aside on ${spelled(q.recused)}` : ''}.`,
+      q.staged > 0
+        ? `Marks are already in ${spelled(q.staged)} of the ones left, waiting to be sent.`
+        : null,
+    ],
+    [door]
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Which chips this person has earned, and what they say.
+ * ------------------------------------------------------------------ */
+
+/** The words on a chip, and the question written into the organizers' log when
+ *  it is pressed. Time-aware, so the chip asks what a reader would actually ask
+ *  standing where they are standing. */
+export function intentLabel(code: IntentCode, ev: EventHome, nowMs: number): string {
+  switch (code) {
+    case 'now-next': {
+      const phase = phaseOf(ev, nowMs);
+      return phase === 'before'
+        ? 'When does the program start?'
+        : phase === 'during'
+          ? 'What is on right now?'
+          : 'What was on?';
+    }
+    case 'call-close':
+      return ev.lifecycle === 'open'
+        ? 'Can I still send a talk?'
+        : 'When do decisions go out?';
+    case 'getting-started':
+      return 'What should I do first?';
+    case 'my-owed':
+      return 'What do I owe, and by when?';
+    case 'pile-now':
+      return 'What needs deciding?';
+    case 'my-queue':
+      return 'What is left for me to score?';
+  }
+}
+
+type Held = { proposals: number; openTasks: number; reviews: number };
+
+/**
+ * What this person holds at this conference, in one row: whether they have sent
+ * anything, whether anything is owed by them, and whether this round handed them
+ * any reading. It exists to decide which chips to draw without running the three
+ * answers behind them on every page view.
+ *
+ * It is a read of counts only — no title, no state, no name — so it can be run
+ * before any of the standing checks that gate the answers themselves.
+ */
+async function heldHere(db: D1Database, ev: EventHome, personId: string): Promise<Held> {
+  const row = await db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM submission s
+            JOIN participation pa ON pa.submission_id = s.id
+           WHERE s.event_id = ?1 AND pa.person_id = ?2 AND s.state <> 'draft') AS proposals,
+         (SELECT COUNT(*) FROM task
+           WHERE event_id = ?1 AND person_id = ?2
+             AND completed_at IS NULL AND cancelled_at IS NULL) AS open_tasks,
+         (SELECT COUNT(*) FROM review rv
+            JOIN submission s2 ON s2.id = rv.submission_id
+           WHERE s2.event_id = ?1 AND rv.reviewer_person_id = ?2
+             AND rv.round = (SELECT current_round FROM event WHERE id = ?1)) AS reviews`
+    )
+    .bind(ev.id, personId)
+    .first<{ proposals: number; open_tasks: number; reviews: number }>();
+  return {
+    proposals: row?.proposals ?? 0,
+    openTasks: row?.open_tasks ?? 0,
+    reviews: row?.reviews ?? 0,
+  };
+}
+
+/**
+ * The chips this page offers, in the order it offers them: the three anybody
+ * may press, then the ones a standing at THIS conference earns. A role held
+ * somewhere else earns nothing here, exactly as it earns nothing in the facts
+ * the model is given.
+ *
+ * Anonymous visitors cost no query at all; a signed-in person costs one.
+ */
+export async function offeredIntents(
+  db: D1Database,
+  ev: EventHome,
+  principal: Principal | null,
+  nowMs: number = Date.now()
+): Promise<IntentChip[]> {
+  const chip = (code: IntentCode): IntentChip => ({ code, label: intentLabel(code, ev, nowMs) });
+  const out: IntentChip[] = [chip('now-next')];
+  // A closed call at a conference that has already happened is nobody's
+  // question; an open one, or one whose decisions are still coming, is.
+  if (ev.cfpClosesAt !== null && ev.lifecycle !== 'happened') out.push(chip('call-close'));
+  // Nothing is started at a conference that is over — "what was on" is the
+  // whole of what a reader wants there, and two chips saying it is one too many.
+  if (ev.lifecycle !== 'happened') out.push(chip('getting-started'));
+  if (!principal) return out;
+
+  const role = principal.eventRoles[ev.id];
+  const backstage =
+    principal.role === 'organizer' || (role !== undefined && READ_ROLES.includes(role));
+  const readingRoom =
+    principal.role === 'organizer' ||
+    principal.role === 'reviewer' ||
+    (role !== undefined && REVIEW_ROLES.includes(role));
+
+  let held: Held = { proposals: 0, openTasks: 0, reviews: 0 };
+  try {
+    held = await heldHere(db, ev, principal.personId);
+  } catch (e) {
+    // A chip that cannot be decided on is a chip that is not drawn. The page
+    // still answers everything a stranger could ask.
+    console.log('ask: the standing chips did not read', String(e));
+    return out;
+  }
+
+  if (held.proposals > 0 || held.openTasks > 0) out.push(chip('my-owed'));
+  if (backstage) out.push(chip('pile-now'));
+  if (readingRoom && held.reviews > 0) out.push(chip('my-queue'));
+  return out;
+}
+
+/**
+ * The answer behind a chip. One read, one template, no model and no spend.
+ *
+ * Null means "not yours to see, or not a question we have" — the screen treats
+ * that exactly as it treats a blank box. The standing checks live in the answers
+ * themselves rather than in the chip that offers them, so a code posted by hand
+ * is refused by the same rule that would refuse the screen.
+ */
+export async function intentAnswer(
+  db: D1Database,
+  ev: EventHome,
+  code: IntentCode,
+  principal: Principal | null = null,
+  nowMs: number = Date.now()
+): Promise<AskResult | null> {
+  // A read that fails is not a stack trace on somebody's screen: the page has
+  // a sentence for a question it cannot answer, and the Worker's log keeps why.
+  return await runIntent(db, ev, code, principal, nowMs).catch((e: unknown) => {
+    console.log('ask: the instant answer did not read', String(e));
+    return null;
+  });
+}
+
+async function runIntent(
+  db: D1Database,
+  ev: EventHome,
+  code: IntentCode,
+  principal: Principal | null,
+  nowMs: number
+): Promise<AskResult | null> {
+  switch (code) {
+    case 'now-next':
+      return await nowNext(db, ev, nowMs);
+    case 'call-close':
+      return callClose(ev, nowMs);
+    case 'getting-started':
+      return await gettingStarted(db, ev);
+    case 'my-owed':
+      return await myOwed(db, ev, principal, nowMs);
+    case 'pile-now':
+      return await pileNow(db, ev, principal);
+    case 'my-queue':
+      return await myQueue(db, ev, principal);
+  }
 }

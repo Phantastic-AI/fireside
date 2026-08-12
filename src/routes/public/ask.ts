@@ -11,6 +11,13 @@
 // row carries no person_id, by design, and the spend counter beside it keeps a
 // day-salted digest rather than an address (lib/ratelimit.ts).
 //
+// Some of what she wants nobody needs to have asked. The chips above the FAQ
+// are questions the object graph answers about itself — what is on right now,
+// when the call closes, what she owes and by when — so pressing one costs a
+// single query and no model call at all. They are instant, they are free, and
+// the organizers wrote none of them: see INSTANT ANSWERS in workflows/ask.ts.
+// A question typed in the box still goes the way it always went.
+//
 // Signing in changes what the concierge may read, never what is written down.
 // Somebody who runs this conference is also answered from the pile's counts and
 // the doors behind it; somebody who has sent proposals to it is answered about
@@ -36,14 +43,21 @@ import { principalFromCookie } from '../../workflows/account';
 import {
   answerQuestion,
   curatedAnswers,
+  intentAnswer,
+  intentLabel,
+  intentOf,
   logQuestion,
   matchCurated,
+  offeredIntents,
   plainDoors,
   type AskResult,
   type CuratedAnswer,
   type Door,
+  type IntentChip,
+  type IntentCode,
   type QuestionScope,
 } from '../../workflows/ask';
+import type { Principal } from '../../workflows/account';
 // Hand-written browser JavaScript, deliberately outside the TypeScript program
 // (tsconfig has no allowJs). Same arrangement as the call's island.
 // @ts-ignore -- plain-JS island; see cfp.ts for the same note.
@@ -103,7 +117,10 @@ function answerBlock(result: AskResult, ev: EventHome): string {
     return (
       '<div class="cc-fs" data-ask-answer>' +
       `<p class="cc-lead">${esc(NOTES.unsure)}</p>` +
-      '<p>The agenda and the speakers page hold everything that is decided so far.</p>' +
+      // The second clause is true by the line above this block: a question that
+      // got no answer is still written down, so the organizers read it later.
+      '<p>The agenda and the speakers page hold everything that is decided so far, ' +
+      'and the organizers see what you asked, so somebody may write the answer here.</p>' +
       doorRow(result.doors.length ? result.doors : plainDoors(ev, ev.agendaPublished)) +
       '</div>'
     );
@@ -111,7 +128,9 @@ function answerBlock(result: AskResult, ev: EventHome): string {
   const provenance =
     result.kind === 'curated'
       ? 'The organizers wrote this one.'
-      : 'I put that together from the program. If I have it wrong, the organizers see the question.';
+      : result.kind === 'instant'
+        ? 'Read off the program just now.'
+        : 'I put that together from the program. If I have it wrong, the organizers see the question.';
   return (
     '<div class="cc-fs" data-ask-answer>' +
     sentences(result.say) +
@@ -144,6 +163,9 @@ function youBubble(text: string): string {
  * page is not the place to repeat that back unread. Curated answers, which
  * an organizer has approved, are the part of it that belongs on the page.
  */
+/** How many chips the row may carry, instant ones included. */
+const MOST_CHIPS = 6;
+
 function starters(ev: EventHome): string[] {
   const out: string[] = [];
   if (ev.lifecycle === 'open') out.push('When does the call for speakers close?');
@@ -208,16 +230,31 @@ function faq(ev: EventHome, curated: CuratedAnswer[]): string {
 function askPage(o: {
   ev: EventHome;
   curated: CuratedAnswer[];
+  intents: IntentChip[];
   thread: string;
   note: Note | null;
 }): string {
   const { ev, curated } = o;
   const action = `/${encodeURIComponent(ev.slug)}/ask`;
-  const chips = starters(ev)
-    .map(
-      (s) => `<button class="cc-chip" type="submit" name="q" value="${esc(s)}">${esc(s)}</button>`
-    )
-    .join('');
+  // Same button, same shape, one letter apart: `i` is a question this page can
+  // answer from the database on the spot, `q` is one for the concierge. The
+  // instant ones come first because they come back first, and the row is held
+  // to six however much standing somebody has — a wall of chips is a menu, and
+  // this screen is not a menu.
+  const room = Math.max(1, MOST_CHIPS - o.intents.length);
+  const chips =
+    o.intents
+      .map(
+        (i) =>
+          `<button class="cc-chip" type="submit" name="i" value="${esc(i.code)}">${esc(i.label)}</button>`
+      )
+      .join('') +
+    starters(ev)
+      .slice(0, room)
+      .map(
+        (s) => `<button class="cc-chip" type="submit" name="q" value="${esc(s)}">${esc(s)}</button>`
+      )
+      .join('');
 
   const thread = o.thread + (o.note ? noteBlock(o.note, ev) : '');
 
@@ -264,9 +301,19 @@ const back = (slug: string, note: Note): string =>
 
 /** An organizer of this conference asking from the public page is still asking
  *  as an organizer, and the digest they read later is better for knowing it.
- *  'speaker' stays unused from this screen — see the parcel report. */
-function scopeOf(eventId: string, roles: Record<string, string> | undefined): QuestionScope {
-  return roles && roles[eventId] ? 'organizer' : 'public';
+ *  'speaker' arrives with the chip that only a speaker is offered: somebody
+ *  asking what they owe is asking as one, whatever else they are. */
+function scopeOf(
+  eventId: string,
+  principal: Principal | null,
+  intent: IntentCode | null = null
+): QuestionScope {
+  if (!principal) return 'public';
+  // Install-wide standing is standing everywhere, which is exactly why the
+  // backstage chips are offered to it as well.
+  if (principal.role === 'organizer' || principal.eventRoles[eventId]) return 'organizer';
+  if (intent === 'my-owed') return 'speaker';
+  return 'public';
 }
 
 /**
@@ -290,9 +337,19 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
   app.get('/:event/ask', async (c) => {
     const ev = await eventBySlug(c.env.DB, c.req.param('event'));
     if (!ev) return c.notFound();
-    const curated = await curatedAnswers(c.env.DB, ev.id);
+    // Which chips this reader has earned is a fact about them, so the principal
+    // is read here as well as on the way in. A stranger costs no extra query.
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    const [curated, intents] = await Promise.all([
+      curatedAnswers(c.env.DB, ev.id),
+      offeredIntents(c.env.DB, ev, principal),
+    ]);
     return c.html(
-      askPage({ ev, curated, thread: '', note: noteFrom(c.req.query('note')) })
+      askPage({ ev, curated, intents, thread: '', note: noteFrom(c.req.query('note')) })
     );
   });
 
@@ -309,20 +366,67 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
 
     const form = await c.req.parseBody();
     const question = String(form['q'] ?? '').trim().slice(0, 500);
-    if (!question) return reply('blank');
+    // A chip posts a code rather than words. One we do not have is nothing at
+    // all — the same sentence an empty box gets.
+    const pressed = String(form['i'] ?? '').trim();
+    const intent = pressed ? intentOf(pressed) : null;
+    if (pressed && !intent) return reply('blank');
+    if (!intent && !question) return reply('blank');
 
     const principal = await principalFromCookie(
       c.env.DB,
       c.env.SESSION_SECRET,
       c.req.header('cookie')
     );
-    const curated = await curatedAnswers(c.env.DB, ev.id);
-    const scope = scopeOf(ev.id, principal?.eventRoles);
     const asker = {
       ip: clientIp(c.req.header('CF-Connecting-IP')),
       personId: principal?.personId ?? null,
       nowMs: Date.now(),
     };
+    /** The whole screen again, with the answer on it — the JavaScript-free path. */
+    const wholePage = async (curated: CuratedAnswer[], thread: string) =>
+      c.html(
+        askPage({
+          ev,
+          curated,
+          intents: await offeredIntents(c.env.DB, ev, principal),
+          thread,
+          note: null,
+        })
+      );
+
+    // An instant answer is one read and a template. Nothing is spent on it,
+    // because nothing costs anything: the budget is read rather than claimed,
+    // and only to keep a pressed-all-afternoon chip out of the digest. The
+    // standing behind the chip is checked inside the answer, so a code posted
+    // by hand is refused by the same rule that would never have offered it.
+    if (intent) {
+      const asked = intentLabel(intent, ev, asker.nowMs);
+      const result = await intentAnswer(c.env.DB, ev, intent, principal, asker.nowMs);
+      // Nothing to say is not an answer: a chip this reader has not earned, and
+      // a read that came back empty, get the same sentence an empty box gets.
+      if (!result || !result.say.length) return reply('blank');
+      const budget = await claimAsk(c.env.DB, { ...asker, spend: false });
+      if (budget.ok) {
+        await remember(c.env.DB, {
+          eventId: ev.id,
+          scope: scopeOf(ev.id, principal, intent),
+          text: asked,
+          // Answered, and true when it was written: the snapshot is what this
+          // reader was actually told, so the digest shows demand as it landed.
+          answered: true,
+          snapshot: result.say.length ? result.say.join(' ') : null,
+        });
+      }
+      const block = answerBlock(result, ev);
+      c.header('cache-control', 'no-store');
+      if (inPlace) return c.html(block);
+      const curated = await curatedAnswers(c.env.DB, ev.id);
+      return await wholePage(curated, youBubble(asked) + block);
+    }
+
+    const curated = await curatedAnswers(c.env.DB, ev.id);
+    const scope = scopeOf(ev.id, principal);
 
     // Asked and not taken: whether there is any budget left, before anything
     // is spent. A curated answer is always free to give, but past the cap it
@@ -347,9 +451,8 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
       }
       const block = answerBlock(result, ev);
       c.header('cache-control', 'no-store');
-      return inPlace
-        ? c.html(block)
-        : c.html(askPage({ ev, curated, thread: youBubble(question) + block, note: null }));
+      if (inPlace) return c.html(block);
+      return await wholePage(curated, youBubble(question) + block);
     }
 
     if (!budget.ok) return reply(budget.who === 'everyone' ? 'busy-today' : 'at-the-cap');
@@ -369,8 +472,7 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
 
     const block = answerBlock(result, ev);
     c.header('cache-control', 'no-store');
-    return inPlace
-      ? c.html(block)
-      : c.html(askPage({ ev, curated, thread: youBubble(question) + block, note: null }));
+    if (inPlace) return c.html(block);
+    return await wholePage(curated, youBubble(question) + block);
   });
 }
