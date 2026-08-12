@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { cp0GuardProbe } from './cp0-probe';
 import { homePage } from './routes/public/home';
 import { signInPage, signUpPage } from './routes/public/signin';
 import { registerCfp } from './routes/public/cfp';
@@ -39,6 +38,7 @@ import marketingCss from './styles/marketing.css';
 
 export type Env = {
   RESEED_ENABLED: string;
+  RESEED_KEY: string;
   SESSION_SECRET: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
@@ -53,12 +53,11 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.get('/healthz', (c) => c.json({ ok: true }));
 
-app.get('/__cp0/guard', async (c) => c.json(await cp0GuardProbe(c.env.DB)));
-
-// CP0 manual reseed door — exercised by hand until boring, then the cron
-// takes over (RESEED_ENABLED). Removed before judging; the cron remains.
+// The manual reseed door, behind a real secret (RESEED_KEY) — the demo world
+// can be rebuilt on purpose, never by a stranger reading a public repo.
 app.post('/__cp0/reseed', async (c) => {
-  if (c.req.header('x-reseed') !== 'first-light-cp0') return c.text('no', 403);
+  const key = c.req.header('x-reseed');
+  if (!c.env.RESEED_KEY || !key || key !== c.env.RESEED_KEY) return c.text('no', 403);
   const { reseed } = await import('./workflows/reseed');
   try {
     return c.json(await reseed(c.env.DB));
