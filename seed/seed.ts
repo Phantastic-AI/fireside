@@ -577,7 +577,7 @@ export function buildSeed(): SeedData {
     [AIE, 'What should I see on the first day?',
      'Thursday runs from 09:30 across five rooms. Open the agenda, filter to Thursday, and star what pulls at you — your list keeps itself.'],
     [AIE, "Which talks are good if I'm new to this?",
-     'Filter the agenda by level — the talks marked for newcomers assume curiosity, not scar tissue. The speaker pages say who each person is.'],
+     'Narrow the agenda to the lightning talks — they assume curiosity, not scar tissue. The speaker pages say who each person is.'],
     [DDC, 'What should I see on the first day?',
      'The conference has already happened — the agenda still stands, and the recordings are on each session page.'],
     [DDC, "Which talks are good if I'm new to this?",

@@ -324,9 +324,11 @@ function asScores(text: string | null): Record<string, number> {
   return out;
 }
 
-/** LIKE with its wildcards taken away: a search for "50%" means "50%". */
-function likePattern(search: string): string {
-  return `%${search.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+/** The search, case-folded for instr(). Not LIKE: D1 refuses a bound LIKE
+ *  pattern much past 50 bytes ("pattern too complex"), and a pasted title is
+ *  longer than that. instr has no pattern language, so nothing to escape. */
+function needleOf(search: string): string {
+  return search.trim().toLowerCase();
 }
 
 // The filter names are the organizer's words (02 §6); these are the states
@@ -343,9 +345,9 @@ const FILTER_SQL: Record<PileFilter, string> = {
   withdrawn: "s.state = 'withdrawn'",
 };
 
-const SEARCH_SQL = `(s.title LIKE ? ESCAPE '\\' OR EXISTS (
+const SEARCH_SQL = `(instr(lower(s.title), ?) > 0 OR EXISTS (
   SELECT 1 FROM participation pa JOIN person pe ON pe.id = pa.person_id
-  WHERE pa.submission_id = s.id AND pe.name LIKE ? ESCAPE '\\'))`;
+  WHERE pa.submission_id = s.id AND instr(lower(pe.name), ?) > 0))`;
 
 /* ------------------------------------------------------------------ *
  * Queries
@@ -471,7 +473,7 @@ export async function pile(
   requireScope(principal, eventId, READ_ROLES);
 
   const search = opts.search?.trim() ? opts.search.trim() : null;
-  const pattern = search ? likePattern(search) : null;
+  const pattern = search ? needleOf(search) : null;
   const searchClause = pattern ? ` AND ${SEARCH_SQL}` : '';
   const searchBindings = pattern ? [pattern, pattern] : [];
   const limitClause = opts.limit && opts.limit > 0 ? ` LIMIT ${Math.floor(opts.limit)}` : '';

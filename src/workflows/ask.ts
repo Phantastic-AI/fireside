@@ -341,6 +341,7 @@ const SYSTEM = [
   '- Two to four short sentences. Never a wall of text.',
   '- Warm, plain, second person. Sentence case. No exclamation marks. No emoji.',
   '- Name real talks, people, rooms and times from THE FACTS. Never invent one.',
+  '- A talk is named by its title. The ids under DOORS belong in "doors", never in a sentence.',
   '- Never describe how you work, and never say what you are.',
   '- Never write a web address or a link. The doors do that.',
   '',
@@ -423,9 +424,27 @@ async function runModel(ai: Ai, facts: Facts, question: string): Promise<ModelSa
     setTimeout(() => reject(new Error('took too long')), PATIENCE_MS)
   );
 
-  const result = (await Promise.race([call, patience])) as unknown as { response?: unknown };
-  const text = typeof result?.response === 'string' ? result.response : '';
-  return text ? parseModel(text) : null;
+  // Workers AI has answered in two shapes: the old `{response}` and the
+  // chat-completion `{choices:[{message:{content}}]}` this model uses now.
+  // Read both; trusting one cost every free-typed question for a while.
+  const result = (await Promise.race([call, patience])) as unknown as {
+    response?: unknown;
+    choices?: { message?: { content?: unknown } }[];
+  };
+  const content = result?.choices?.[0]?.message?.content;
+  const text =
+    typeof result?.response === 'string'
+      ? result.response
+      : typeof content === 'string'
+        ? content
+        : '';
+  const parsed = text ? parseModel(text) : null;
+  if (!parsed) {
+    // What came back, shape and first line, so a silent shrug is explainable
+    // from the log alone. The question itself is not written here.
+    console.log('ask: unusable reply', JSON.stringify(result).slice(0, 300));
+  }
+  return parsed;
 }
 
 /* ------------------------------------------------------------------ *
@@ -448,9 +467,11 @@ export async function answerQuestion(
   let said: ModelSay | null = null;
   try {
     said = await runModel(ai, facts, question);
-  } catch {
+  } catch (e) {
     // A model that will not answer is a state this screen already has a
-    // sentence for. It is not an occasion for a stack trace.
+    // sentence for. It is not an occasion for a stack trace — but the
+    // Worker's own log still gets to know which model refused, and why.
+    console.log('ask: the model did not answer', String(e));
     said = null;
   }
 

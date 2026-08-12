@@ -83,9 +83,11 @@ function rowsOf<T>(res: D1Result<Record<string, unknown>> | undefined): T[] {
   return (res?.results ?? []) as unknown as T[];
 }
 
-/** LIKE with its wildcards taken away: a search for "50%" means "50%". */
-function likePattern(search: string): string {
-  return `%${search.trim().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+/** The search, case-folded for instr(). Not LIKE: D1 refuses a bound LIKE
+ *  pattern much past 50 bytes ("pattern too complex"), and a pasted title is
+ *  longer than that. instr has no pattern language, so nothing to escape. */
+function needleOf(search: string): string {
+  return search.trim().toLowerCase();
 }
 
 /* ------------------------------------------------------------------ *
@@ -106,9 +108,9 @@ export async function peopleList(
   requireScope(principal, eventId, READ_ROLES);
 
   const search = opts.search?.trim() ? opts.search.trim() : null;
-  const pattern = search ? likePattern(search) : null;
+  const pattern = search ? needleOf(search) : null;
   const searchClause = pattern
-    ? " AND (pe.name LIKE ? ESCAPE '\\' OR pe.email LIKE ? ESCAPE '\\' OR pe.organisation LIKE ? ESCAPE '\\')"
+    ? ' AND (instr(lower(pe.name), ?) > 0 OR instr(lower(pe.email), ?) > 0 OR instr(lower(pe.organisation), ?) > 0)'
     : '';
   const searchBindings = pattern ? [pattern, pattern, pattern] : [];
 

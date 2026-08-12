@@ -112,14 +112,16 @@ function slugify(title: string): string {
  */
 async function mintPublicSlug(db: D1Database, eventId: string, title: string): Promise<string> {
   const base = slugify(title);
-  const escaped = base.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+  // substr, not LIKE: D1 refuses a bound LIKE pattern much past 50 bytes
+  // ("pattern too complex"), and a 60-char title base sails right past that.
+  const prefix = `${base}-`;
   const res = await db
     .prepare(
       `SELECT public_slug FROM submission
         WHERE event_id = ?1 AND public_slug IS NOT NULL
-          AND (public_slug = ?2 OR public_slug LIKE ?3 ESCAPE '\\')`
+          AND (public_slug = ?2 OR substr(public_slug, 1, ?3) = ?4)`
     )
-    .bind(eventId, base, `${escaped}-%`)
+    .bind(eventId, base, prefix.length, prefix)
     .all<{ public_slug: string }>();
   const taken = new Set(res.results.map((r) => r.public_slug));
   let candidate = base;

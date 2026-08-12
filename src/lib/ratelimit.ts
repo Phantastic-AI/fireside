@@ -19,8 +19,11 @@
 
 import { checkedBatch, guard, StaleStateError } from './db';
 
-/** Everyone's share of one day, before anybody signs in. */
-export const ANON_DAILY = 6;
+/** Everyone's share of one day, before anybody signs in. A conference's worth
+ *  of people can sit behind one venue address, so this errs generous enough
+ *  that a room of strangers is not one stranger; EVERYONE_DAILY still holds
+ *  the roof on. */
+export const ANON_DAILY = 15;
 /** Signed in, so there is a name behind the asking. */
 export const SIGNED_IN_DAILY = 25;
 /** The whole install's day. Reached first only if something is going wrong. */

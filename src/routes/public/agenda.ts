@@ -9,8 +9,8 @@
 // esc(). No SQL here — reads go through queries/public.ts only.
 //
 // What a visitor can do here, and what each costs:
-//  - Search (?q=) and narrow by day, track and format. All four compose, all
-//    four survive in every chip href, and all four are applied in this file
+//  - Search (?q=) and narrow by day, track, format and room. All five compose,
+//    all five survive in every chip href, and all five are applied in this file
 //    over the DTO the agenda query already returned — no second read, no SQL.
 //  - Star a session. Signed out that is localStorage under the same key
 //    src/islands/stars.js reads ('fireside.stars.' + slug), painted by the
@@ -235,7 +235,12 @@ function tokensOf(q: string): string[] {
 
 function haystack(s: AgendaSession, roles: RoleIndex): string {
   const people = s.speakers.map((p) => `${p.name} ${roleWords(roles.get(p.personId))}`).join(' ');
-  return `${s.title} ${people} ${s.track?.name ?? ''} ${formatLabel(s.format)} ${s.format}`.toLowerCase();
+  return `${s.title} ${people} ${s.track?.name ?? ''} ${s.roomName ?? ''} ${formatLabel(s.format)} ${s.format}`.toLowerCase();
+}
+
+/** The room as it travels in an address: "ballroom-a", never "Ballroom A". */
+function roomSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 /* ------------------------------------------------------------------ *
@@ -307,7 +312,7 @@ function withQuery(path: string, params: Record<string, string | null>): string 
   return qs ? `${u.pathname}?${qs}` : u.pathname;
 }
 
-type Filters = { q: string; day: string; track: string; format: string; embed: boolean };
+type Filters = { q: string; day: string; track: string; format: string; room: string; embed: boolean };
 
 /**
  * Where a link goes from here. On the event's own site, next door. From inside
@@ -408,7 +413,7 @@ function seshCard(
 }
 
 /* ------------------------------------------------------------------ *
- * The published agenda body: header, search, day / track / format
+ * The published agenda body: header, search, day / track / format / room
  * chips, the day-by-day list. Room lanes read as consecutive same-time
  * cards, each naming its own room — the prototype never used a literal
  * multi-column grid either.
@@ -444,12 +449,13 @@ function agendaBody(
   const speakerIds = new Set(allSessions.flatMap((s) => s.speakers.map((sp) => sp.personId)));
 
   const base = `/${slug}/agenda`;
-  const hereUrl = (over: { q?: string | null; day?: string | null; track?: string | null; format?: string | null }) =>
+  const hereUrl = (over: { q?: string | null; day?: string | null; track?: string | null; format?: string | null; room?: string | null }) =>
     withQuery(base, {
       q: over.q !== undefined ? over.q : f.q || null,
       day: over.day !== undefined ? over.day : f.day || null,
       track: over.track !== undefined ? over.track : f.track || null,
       format: over.format !== undefined ? over.format : f.format || null,
+      room: over.room !== undefined ? over.room : f.room || null,
       embed: f.embed ? '1' : null,
     });
 
@@ -476,6 +482,15 @@ function agendaBody(
         formatList.map((x) => chip(hereUrl({ format: x.slug }), f.format === x.slug, esc(x.name))).join('')
       : '';
 
+  // Rooms narrow too — the person running Ballroom A all day reads the agenda
+  // by room, not by track, and so does anyone deciding whether to move seats.
+  const roomList = [...roomNames].sort();
+  const roomChips =
+    roomList.length > 1
+      ? chip(hereUrl({ room: null }), !f.room, 'All rooms') +
+        roomList.map((r) => chip(hereUrl({ room: roomSlug(r) }), f.room === roomSlug(r), esc(r))).join('')
+      : '';
+
   // The search box carries whatever is already narrowed, so typing a word
   // never quietly throws away the day somebody had picked.
   const hidden = (name: string, value: string) =>
@@ -485,6 +500,7 @@ function agendaBody(
     hidden('day', f.day) +
     hidden('track', f.track) +
     hidden('format', f.format) +
+    hidden('room', f.room) +
     (f.embed ? '<input type="hidden" name="embed" value="1">' : '') +
     `<input type="text" name="q" value="${esc(f.q)}" maxlength="${SEARCH_MAX}" autocomplete="off" ` +
     'placeholder="Search talks and speakers" aria-label="Search talks and speakers" ' +
@@ -498,6 +514,7 @@ function agendaBody(
     if (f.day && f.day !== day) return false;
     if (f.track && s.track?.slug !== f.track) return false;
     if (f.format && formatSlug(s.format) !== f.format) return false;
+    if (f.room && (!s.roomName || roomSlug(s.roomName) !== f.room)) return false;
     if (tokens.length) {
       const hay = haystack(s, roles);
       if (!tokens.every((t) => hay.includes(t))) return false;
@@ -512,11 +529,11 @@ function agendaBody(
     if (!inDay.length) continue;
     shown += inDay.length;
     listHtml +=
-      `<div class="dayhead">${esc(weekdayDate(d.day, 'short'))} · ${esc(plural(inDay.length, 'session', 'sessions'))}</div>` +
+      `<h2 class="dayhead">${esc(weekdayDate(d.day, 'short'))} · ${esc(plural(inDay.length, 'session', 'sessions'))}</h2>` +
       `<div class="slot">${inDay.map((s) => seshCard(slug, ag.timezone, s, roles, stars, link)).join('')}</div>`;
   }
 
-  const narrowed = Boolean(f.q || f.day || f.track || f.format);
+  const narrowed = Boolean(f.q || f.day || f.track || f.format || f.room);
 
   if (!allSessions.length) {
     listHtml =
@@ -526,13 +543,13 @@ function agendaBody(
   } else if (!shown && f.q) {
     listHtml =
       '<div class="state-out" style="margin-top:26px"><h2>Nothing matches that — clear the search.</h2>' +
-      '<p>The search reads titles, speakers, tracks and the kind of session.</p>' +
+      '<p>The search reads titles, speakers, rooms, tracks and the kind of session.</p>' +
       `<a class="btn btn-primary" href="${esc(hereUrl({ q: null }))}">Clear the search →</a></div>`;
   } else if (!shown) {
     listHtml =
       '<div class="state-out" style="margin-top:26px"><h2>Nothing here with those filters.</h2>' +
       '<p>The other days and tracks still have plenty.</p>' +
-      `<a class="btn btn-primary" href="${esc(hereUrl({ q: null, day: null, track: null, format: null }))}">Show the whole agenda →</a></div>`;
+      `<a class="btn btn-primary" href="${esc(hereUrl({ q: null, day: null, track: null, format: null, room: null }))}">Show the whole agenda →</a></div>`;
   }
 
   const headLine = joinParts([
@@ -569,6 +586,7 @@ function agendaBody(
     chipRow(dayChips) +
     chipRow(trackChips) +
     chipRow(formatChips) +
+    chipRow(roomChips) +
     resultLine;
 
   // Embed mirrors the prototype: day tabs are dropped, because an embedded
@@ -580,6 +598,7 @@ function agendaBody(
     (allSessions.length ? searchForm : '') +
     chipRow(trackChips) +
     chipRow(formatChips) +
+    chipRow(roomChips) +
     resultLine +
     (allSessions.length
       ? '<p class="sub" style="margin-top:6px">' +
@@ -673,6 +692,7 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
       day: c.req.query('day') || '',
       track: c.req.query('track') || '',
       format: c.req.query('format') || '',
+      room: c.req.query('room') || '',
       embed,
     };
     const nav = eventNav(slug, '/agenda', event.lifecycle === 'open');
