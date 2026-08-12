@@ -295,7 +295,7 @@ function newEventPage(principal: Principal, error?: string, v: NewEventValues = 
       'The date it closes. Speakers can send and edit proposals until then.'
     ) +
     field('Decisions go out by', `<input type="date" name="decide_by" value="${val('decide_by')}" ${inputStyle}>`, 'Shown to speakers on the form and in their portal.') +
-    field('A line for the call page', `<textarea name="cfp_intro" rows="3" maxlength="600" ${inputStyle}>${val('cfp_intro')}</textarea>`) +
+    field('A line for the call page', `<textarea name="cfp_intro" rows="3" maxlength="1200" ${inputStyle}>${val('cfp_intro')}</textarea>`) +
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">' +
     field('Rooms, one per line', `<textarea name="rooms" rows="4" ${inputStyle}>${val('rooms', 'Main stage')}</textarea>`) +
     field('Tracks, one per line', `<textarea name="tracks" rows="4" ${inputStyle}></textarea>`, 'Leave empty to run without tracks.') +

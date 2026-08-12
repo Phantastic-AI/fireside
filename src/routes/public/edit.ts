@@ -230,8 +230,8 @@ function trackField(tracks: TrackOption[], chosen: string): string {
   return (
     '<label class="f" id="f-track"><span class="f-lab">Track</span>' +
     `<div class="radios">${rows}</div>` +
-    '<span class="hint">Where your talk lives in the program — the committee reads by track, ' +
-    "and the tracks become the schedule's lanes.</span></label>"
+    '<span class="hint">Where your talk sits in the program. The tracks become the lanes on ' +
+    'the schedule.</span></label>'
   );
 }
 
@@ -399,9 +399,8 @@ function signedOutPage(ev: EventHome): string {
     `<h1 class="display">${esc(ev.name)}</h1>` +
     '<div class="sec state-out" style="max-width:40em">' +
     '<h2>Sign in to change your proposal.</h2>' +
-    '<p>Every letter we send you carries a link straight back in — the one that says we have your ' +
-    'proposal, and every one after it. Open the most recent one, or sign in with the address you ' +
-    'sent your proposal from and we will send a fresh link.</p>' +
+    '<p>Every letter we send carries a link straight back in. Open the most recent one, or sign ' +
+    'in with the address on your proposal and we will send a fresh one.</p>' +
     '<div class="btnrow">' +
     `<a class="btn btn-primary btn-lg" href="/sign-in">${esc(label('auth.sign_in', 'onstage'))}</a>` +
     `<a class="btn btn-lg" href="/${esc(ev.slug)}/portal">Your portal</a>` +
@@ -440,12 +439,12 @@ function shutPage(ev: EventHome, head: string, why: string, door = 'See where it
 function callShutPage(ev: EventHome): string {
   const closed =
     ev.cfpClosesAt !== null
-      ? `${label('call.closed', 'onstage').replace('{date}', instantOf(ev.cfpClosesAt, ev.timezone))}.`
-      : 'The call for speakers is not taking proposals.';
+      ? `Proposals closed on ${instantOf(ev.cfpClosesAt, ev.timezone)}.`
+      : 'This call is no longer taking proposals.';
   return shutPage(
     ev,
     'The call has closed.',
-    `${closed} The committee is reading what came in, and the words they are reading are the ones that stay.`
+    `${closed} The words you sent are the ones the committee is reading.`
   );
 }
 
@@ -565,6 +564,12 @@ function editPage(o: {
     : 'This one has not gone to the committee yet. Change anything you like — the words you save ' +
       'are the ones that will go.';
 
+  // Under the save. The lede has already said what the committee is holding,
+  // so this is the date, and the one fact a draft still needs.
+  const closing =
+    (sent ? '' : 'Nobody on the committee sees this one yet. ') +
+    (closes ? `The call closes on ${esc(closes)}, and nothing changed after that reaches them.` : '');
+
   const key = `edit-${s.id}`.replace(/[^A-Za-z0-9._-]/g, '');
   const script =
     '<script>' +
@@ -626,14 +631,7 @@ function editPage(o: {
     '<button type="submit" class="btn btn-primary btn-lg">Save these words</button>' +
     `<a class="btn btn-lg" href="/${esc(ev.slug)}/portal">${esc(label('pane.leave', 'onstage'))}</a>` +
     '</div>' +
-    '<p class="hint" style="margin-top:12px;max-width:40em">' +
-    (sent
-      ? 'Until you save, the committee still reads what you sent. '
-      : 'Nobody on the committee sees this one yet. ') +
-    (closes
-      ? `The call closes on ${esc(closes)}, and nothing changed after that reaches them.`
-      : '') +
-    '</p>' +
+    (closing ? `<p class="hint" style="margin-top:12px;max-width:40em">${closing}</p>` : '') +
     '</form>';
 
   const body =

@@ -259,8 +259,8 @@ function trackField(tracks: TrackOption[], chosen: string): string {
   return (
     '<label class="f" id="f-track"><span class="f-lab">Track</span>' +
     `<div class="radios">${rows}</div>` +
-    '<span class="hint">Where your talk lives in the program — the committee reads by track, ' +
-    "and the tracks become the schedule's lanes.</span></label>"
+    '<span class="hint">Where your talk sits in the program. The tracks become the lanes on ' +
+    'the schedule.</span></label>'
   );
 }
 
@@ -433,9 +433,11 @@ function coBlock(rows: readonly CoRow[]): string {
 
 function factRail(ev: EventHome): string {
   const bar = '<span style="opacity:.4">│</span>';
+  // The rail is read by somebody deciding whether to spend an evening writing,
+  // so the first fact is their own next move with the date on it.
   const state =
     ev.cfpClosesAt !== null
-      ? label('call.open', 'onstage').replace('{date}', instantOf(ev.cfpClosesAt, ev.timezone))
+      ? `Send yours by ${instantOf(ev.cfpClosesAt, ev.timezone)}`
       : '';
   const bits = [
     state ? `<span>${esc(state)}</span>` : '',
@@ -491,7 +493,7 @@ function speakerStrip(ev: EventHome, speakers: GallerySpeaker[]): string {
   return (
     '<div class="sec"><h2 class="display" style="font-size:26px">Already on the program</h2>' +
     `<p class="sub" style="margin:6px 0 14px">${num(ev.counts.speakers)} ` +
-    `${ev.counts.speakers === 1 ? 'person' : 'people'} so far. The committee is still reading.</p>` +
+    `${ev.counts.speakers === 1 ? 'person' : 'people'} so far.</p>` +
     `<div class="gal">${cards}</div>` +
     `<p style="margin-top:14px"><a class="link" href="/${esc(ev.slug)}/speakers">` +
     'See everyone speaking →</a></p></div>'
@@ -648,7 +650,7 @@ function cfpPage(o: {
     '<span class="counter" data-saved></span>' +
     '</div>' +
     '<p class="hint" style="margin-top:12px;max-width:40em">' +
-    'Nothing is lost while you write: this page keeps itself on your own device as you type. ' +
+    'Nothing is lost while you write — this page keeps what you type on your own device. ' +
     (closes ? `You can change every word until the call closes on ${esc(closes)}. ` : '') +
     `Up to ${num(ev.maxSubmissions)} ${ev.maxSubmissions === 1 ? 'proposal' : 'proposals'} per person.</p>` +
     '</form>';
@@ -677,25 +679,24 @@ function cfpPage(o: {
 
 /** The call, not open. Two different sentences, because they are two different days. */
 function callShutPage(ev: EventHome, opensLater: boolean): string {
+  // Dates, and nothing about who is reading them: after the call closes the
+  // only thing this page owes a speaker is when it shut and when they hear.
   const closed = ev.cfpClosesAt !== null
-    ? label('call.closed', 'onstage').replace('{date}', instantOf(ev.cfpClosesAt, ev.timezone))
-    : 'The call for speakers is not taking proposals.';
+    ? `Proposals closed on ${instantOf(ev.cfpClosesAt, ev.timezone)}`
+    : 'This call is not taking proposals';
   const opens = ev.cfpOpensAt !== null
-    ? label('call.before', 'onstage').replace('{date}', instantOf(ev.cfpOpensAt, ev.timezone))
-    : 'The call for speakers opens later this year.';
+    ? `It opens on ${instantOf(ev.cfpOpensAt, ev.timezone)}`
+    : 'It opens later this year';
   const past = ev.lifecycle === 'happened';
 
   const card = opensLater
     ? '<div class="state-out"><h2>The call has not opened yet.</h2>' +
-      `<p>${esc(opens)}. Everything you need to write a proposal is on the event page until then.</p>` +
+      `<p>${esc(opens)}. Until then, the event page has the dates and the venue.</p>` +
       `<a class="btn btn-primary" href="/${esc(ev.slug)}">See the event →</a></div>`
     : '<div class="state-out"><h2>The call has closed.</h2>' +
-      `<p>${esc(closed)}.` +
-      (ev.decideBy && !past ? ` Decisions go out by ${esc(dayOf(ev.decideBy))}.` : '') +
-      '</p>' +
-      (ev.counts.proposals > 0
-        ? `<p class="aside">${num(ev.counts.proposals)} proposals came in. Reading them all is the best week of the year.</p>`
-        : '') +
+      `<p>${esc(closed)}` +
+      (ev.decideBy && !past ? `, and decisions go out by ${esc(dayOf(ev.decideBy))}` : '') +
+      '.</p>' +
       (past
         ? `<a class="btn btn-primary" href="/${esc(ev.slug)}/agenda">See the program →</a>`
         : `<a class="btn btn-primary" href="/${esc(ev.slug)}/speakers">See who is speaking →</a>`) +
@@ -723,7 +724,7 @@ function thanksPage(ev: EventHome, email: string, callOpen: boolean): string {
     '<div class="state-out" style="max-width:40em">' +
     '<h2>Your proposal is in.</h2>' +
     // The organizer's own sentence when they wrote one; ours when they did not.
-    `<p>${esc(ev.cfpSuccessMessage ?? 'The committee has it, and you can change every word until the call closes.')}` +
+    `<p>${esc(ev.cfpSuccessMessage ?? 'You can change every word until the call closes.')}` +
     (ev.decideBy ? ` Decisions go out by <b>${esc(dayOf(ev.decideBy))}</b>.` : '') +
     '</p>' +
     `<p><b>${esc(email)}</b> is the address on it. The decision goes there, and it is how you ` +
@@ -732,8 +733,8 @@ function thanksPage(ev: EventHome, email: string, callOpen: boolean): string {
     // rather than on the form itself: changing a proposal means proving it is
     // yours, and signing in is something the portal already knows how to ask.
     (closes
-      ? `<p>The call closes on <b>${esc(closes)}</b>. Nothing you change after that reaches the ` +
-        'committee, so this is the moment to fix the title you are not sure about. ' +
+      ? `<p>The call closes on <b>${esc(closes)}</b>. After that your words are set, so this is ` +
+        'the moment to change the title you are not sure about. ' +
         (callOpen
           ? `<a class="link" href="/${esc(ev.slug)}/portal">Change a word from your portal →</a>`
           : '') +

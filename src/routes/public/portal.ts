@@ -250,16 +250,15 @@ function signedOutPage(ev: EventHome): string {
     `<h1 class="display">${esc(ev.name)}</h1>` +
     '<div class="sec state-out" style="max-width:40em">' +
     '<h2>Sign in to see where your talk stands.</h2>' +
-    '<p>Every letter we send you carries a link straight back into this portal — the one that ' +
-    'says we have your proposal, the decision, every reminder after it. Open the most recent one, ' +
-    'or sign in with the address you sent your proposal from and we will send a fresh link.</p>' +
+    '<p>Every letter we send carries a link straight back in. Open the most recent one, or sign ' +
+    'in with the address on your proposal and we will send a fresh one.</p>' +
     '<div class="btnrow">' +
     `<a class="btn btn-primary btn-lg" href="/sign-in">${esc(label('auth.sign_in', 'onstage'))}</a>` +
     (ev.lifecycle === 'open'
       ? `<a class="btn btn-lg" href="/${esc(ev.slug)}/cfp">Send a proposal</a>`
       : `<a class="btn btn-lg" href="/${esc(ev.slug)}/agenda">See the program</a>`) +
     '</div>' +
-    '<p class="aside">A portal belongs to one speaker. Nothing in it is public.</p>' +
+    '<p class="aside">Nothing in here is public.</p>' +
     '</div></div>';
 
   return page({
@@ -298,8 +297,7 @@ function withdrawBlock(slug: string, s: PortalSubmission): string {
     `<details class="task" style="flex:1 1 100%;margin-bottom:0">` +
     '<summary><span class="tname">Withdraw this proposal</span></summary>' +
     '<div class="tbody">' +
-    '<p>The committee sees that you have pulled it and it leaves their list. This page cannot ' +
-    'put it back afterwards.</p>' +
+    '<p>It leaves the committee’s list, and you cannot put it back.</p>' +
     `<form method="post" action="/${esc(slug)}/portal/withdraw" style="margin-top:10px">` +
     `<input type="hidden" name="proposal" value="${esc(s.id)}">` +
     '<button class="btn btn-danger btn-sm" type="submit">Withdraw it</button>' +
@@ -374,8 +372,8 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
         head: `${label('submission.waitlisted', 'onstage')}.`,
         body:
           title +
-          '<p class="sub" style="margin-top:6px">The committee has not closed the door on this ' +
-          'one. If a room opens up, this is the list they come back to.</p>' +
+          '<p class="sub" style="margin-top:6px">If a room opens up, this is the list they come ' +
+          'back to.</p>' +
           note,
         bot: withdrawBlock(ev.slug, s),
       };
@@ -732,7 +730,7 @@ function profileCard(view: PortalView, onTheProgram: boolean): string {
     '<div class="card card-pad sec" style="max-width:46em">' +
     '<h2 class="display" style="font-size:22px;margin-bottom:4px">How you appear on the program</h2>' +
     '<p class="sub" style="margin-bottom:14px">These are the words that go on the printed program ' +
-    'and on your speaker page. Change them whenever you like — the program reads them fresh.</p>' +
+    'and on your speaker page. Change them whenever you like.</p>' +
     photo +
     '<hr class="rule">' +
     words +
@@ -755,11 +753,15 @@ function portalPage(
   const tz = ev.timezone;
   const slug = esc(ev.slug);
 
+  // Who you are, where you are, and the way out — one line, because a signed-in
+  // page with no name on it and no way to leave is a page you get lost on.
   const head =
     '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
     face(view.profile, 56) +
     '<div><h1 class="display" style="font-size:32px">Your portal</h1>' +
-    `<p class="sub">${esc(view.profile.name)} · ${esc(ev.name)}</p></div></div>` +
+    `<p class="sub">${esc(view.profile.name)} · ${esc(ev.name)} · ` +
+    `<a class="link" href="/sign-out">${esc(label('auth.sign_out', 'onstage'))}</a></p>` +
+    '</div></div>' +
     noteLine(note);
 
   // Nothing sent yet: one card that names the next thing, not three empty ones.
@@ -841,14 +843,21 @@ function portalPage(
         `<a class="link" href="/${slug}/cfp">Send another proposal →</a></p>`
       : '';
 
-  const body =
-    '<div class="wrap" style="padding-top:44px">' +
-    head +
-    `<div class="sec" style="max-width:46em">${cards}${another}</div>` +
+  const talksSection = `<div class="sec" style="max-width:46em">${cards}${another}</div>`;
+  const todoSection =
     '<div class="sec" style="max-width:46em">' +
     '<h2 class="display" style="font-size:26px;margin-bottom:14px">To do</h2>' +
     todo +
-    '</div>' +
+    '</div>';
+  // Owed before standing. A speaker with something due should read the date
+  // before anything else; a speaker with nothing due should not open on an
+  // empty list, so the talks lead instead.
+  const owes = tasks.some((t) => t.status === 'open');
+
+  const body =
+    '<div class="wrap" style="padding-top:44px">' +
+    head +
+    (owes ? todoSection + talksSection : talksSection + todoSection) +
     '<div class="sec" style="max-width:46em">' +
     '<h2 class="display" style="font-size:26px;margin-bottom:6px">Messages</h2>' +
     '<p class="sub" style="margin-bottom:8px">Everything the committee has sent you, newest first.</p>' +

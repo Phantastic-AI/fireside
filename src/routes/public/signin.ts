@@ -42,9 +42,9 @@ export function signInPage(note?: string): string {
     '</div>' +
     '<p class="sub sec">New here? <a class="link" href="/sign-up">Create an account</a> — organizers start a conference, speakers find their proposals waiting.</p>' +
     '<div class="card card-pad" style="margin-top:8px"><p class="sub" style="margin:0">Looking around first? ' +
-    'The two conferences running here belong to <b>naomi@example.org</b>, password ' +
+    'Both conferences here belong to <b>naomi@example.org</b>, password ' +
     '<b>read-them-before-they-go</b> — sign in as her and the whole backstage is yours to walk. ' +
-    'Speakers and reviewers use the email-a-link door; for @example.org addresses the link prints right here.</p></div>' +
+    'Speakers and reviewers get a mailed link; for @example.org addresses it prints right here.</p></div>' +
     '</div></main>' +
     `<footer class="foot"><div class="wrap foot-in"><span class="fname">${NAME}</span><span>An open-source call for speakers.</span></div></footer></div>`;
 

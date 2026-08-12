@@ -1779,7 +1779,7 @@ export const SEED_QUESTIONS: {
   { scope: "public", text: "Is there parking at the venue?", timesAsked: 9, answered: false },
   { scope: "public", text: "Will the talks be recorded?", timesAsked: 22, answered: true },
   { scope: "public", text: "Is lunch included, and can you do gluten free?", timesAsked: 17, answered: true },
-  { scope: "public", text: "What time do doors open on the first day?", timesAsked: 14, answered: true },
+  { scope: "public", text: "What time can I pick up my badge on the first day?", timesAsked: 14, answered: true },
   { scope: "public", text: "Which sessions are good if I am new to this?", timesAsked: 11, answered: true },
   { scope: "public", text: "Is there a quiet room?", timesAsked: 6, answered: true },
   { scope: "public", text: "How do I get to Pier 57 from the airport?", timesAsked: 5, answered: true },

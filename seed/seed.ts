@@ -121,15 +121,21 @@ export function buildSeed(): SeedData {
   const DDC = 'ev-ddc-clt';
   d.event.push({
     id: AIE, slug: 'aie-nyc', name: 'AI Engineer New York 2026',
-    tagline: 'The room where the people actually shipping this stuff compare notes.',
+    tagline: 'Two days at Pier 57 for the people running AI systems in production.',
     starts_on: '2026-09-03', ends_on: '2026-09-04',
     timezone: 'America/New_York', tz_label: 'All times ET',
     venue_name: 'Pier 57', venue_address: 'Pier 57, New York',
     cfp_opens_at: utc(2026, 7, 21, 12), cfp_closes_at: ET(2026, 8, 20, 23, 59),
+    // The organizer's own offer, in the organizer's own voice: what the room
+    // is, what a good talk looks like here, what a speaker gets, and the two
+    // dates that decide whether it is worth an evening. Every fact in it is
+    // true of this seeded conference — sixty sessions, five rooms, the
+    // recording promise the concierge already makes, three proposals apiece,
+    // and no travel budget.
     cfp_intro:
-      'This is the room where the people actually shipping this stuff compare notes. We want the talk you would give to your own team on a Monday — the rollout that failed twice, the eval that changed your mind, the number your CFO now quotes back at you. Bring the receipts.',
+      'AI Engineer New York is two days at Pier 57: sixty sessions across five rooms. We want the talk you would give your own team on a Monday — the rollout that failed twice, the eval that changed your mind, the number your CFO now quotes back at you. Talks are thirty or forty-five minutes, panels the same, lightning talks fifteen, workshops ninety in a room with tables. Every session is professionally recorded and goes up free on its own page within two weeks. Send up to three proposals, each read on its own, and refine the title and abstract until the call closes on 20 August. We cannot cover travel, and you should know that before you start writing. Everybody hears back by 27 August.',
     cfp_success_message:
-      'The committee has it now. You can edit every word until the call closes.',
+      'The committee has it. You can change every word until the call closes.',
     questions: JSON.stringify(CFP_QUESTIONS),
     max_submissions: 3, decide_by: '2026-08-27',
     current_round: 1,
@@ -150,9 +156,11 @@ export function buildSeed(): SeedData {
     timezone: 'America/New_York', tz_label: 'All times ET',
     venue_name: 'The Foundry', venue_address: 'The Foundry, Charlotte',
     cfp_opens_at: utc(2025, 6, 1, 12), cfp_closes_at: ET5(2025, 8, 1, 23, 59),
+    // Lighter than New York's, and honest about what a volunteer conference
+    // can promise: two rooms, one camera that does not make it everywhere.
     cfp_intro:
-      'Charlotte has run this for eleven years on volunteer time and a spreadsheet. Talks about the boring parts are the most welcome ones.',
-    cfp_success_message: 'The committee has it. Decisions go out in early August.',
+      'Charlotte has run this for eleven years on volunteer time and a spreadsheet. Two days at The Foundry, two rooms, no keynote — talks about the boring parts are the most welcome ones. Talks are thirty or forty-five minutes, lightning talks fifteen, workshops ninety in the room with tables. We record what we can, and what we record goes up free on the session page. Send up to two proposals and change any word until the call closes on 1 August.',
+    cfp_success_message: 'It is in. You can change every word until the call closes.',
     questions: JSON.stringify([]),
     max_submissions: 2, decide_by: '2025-08-06',
     current_round: 1, round_scorecards: JSON.stringify({}),
