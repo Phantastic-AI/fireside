@@ -615,7 +615,14 @@ export function settle(sentences: string[]): string[] {
       .replace(/\s+/g, ' ')
       .trim();
     if (!clean) continue;
-    out.push(clean.length > MAX_SENTENCE_CHARS ? `${clean.slice(0, MAX_SENTENCE_CHARS - 1).trimEnd()}…` : clean);
+    // A sentence that quotes the prompt's own scaffolding at the reader is not
+    // an answer. Dropping it lets the unsure block say the honest thing.
+    if (/\bTHE FACTS\b|\bTHE QUESTION\b|\bDOORS\b/.test(clean)) continue;
+    // The register again: a sentence starts with a capital and ends with a
+    // stop, whoever wrote it.
+    let cased = clean.charAt(0).toUpperCase() + clean.slice(1);
+    if (!/[.?…:]$/.test(cased)) cased += '.';
+    out.push(cased.length > MAX_SENTENCE_CHARS ? `${cased.slice(0, MAX_SENTENCE_CHARS - 1).trimEnd()}…` : cased);
     if (out.length === MAX_SENTENCES) break;
   }
   return out;

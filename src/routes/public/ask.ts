@@ -332,14 +332,29 @@ function greeting(intents: IntentChip[]): string {
 }
 
 /** The greeting and the chips, and nothing else: no page, no FAQ, no shell.
- *  The island appends it to an empty thread and keeps it for the visit. */
-function panelFragment(ev: EventHome, intents: IntentChip[]): string {
+ *  The island appends it to an empty thread and keeps it for the visit.
+ *  data-cc-who is the identity mark the island keys the kept thread to, so a
+ *  conversation held for one person is never painted for the next one on the
+ *  same tab. It is a hash, not a name: what lingers in a shared browser's
+ *  sessionStorage should not say who was here. Empty means a stranger. */
+function panelFragment(ev: EventHome, intents: IntentChip[], who: string): string {
   return (
-    '<div class="cc-fs">' +
+    `<div class="cc-fs" data-cc-who="${esc(who)}">` +
     `<p class="cc-lead">${esc(greeting(intents))}</p>` +
     chipRow(ev, intents) +
     '</div>'
   );
+}
+
+async function whoMark(personId: string | null): Promise<string> {
+  if (!personId) return '';
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`fireside-cc:${personId}`)
+  );
+  return Array.from(new Uint8Array(digest).slice(0, 8))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 /* ------------------------------------------------------------------ *
@@ -400,7 +415,7 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
     if (c.req.query('panel')) {
       const offered = await offeredIntents(c.env.DB, ev, principal);
       c.header('cache-control', 'private, no-store');
-      return c.html(panelFragment(ev, offered));
+      return c.html(panelFragment(ev, offered, await whoMark(principal?.personId ?? null)));
     }
     const [curated, intents] = await Promise.all([
       curatedAnswers(c.env.DB, ev.id),

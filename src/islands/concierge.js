@@ -18,7 +18,10 @@
 // The conversation lives in sessionStorage, keyed by the event, so walking
 // from the agenda to a speaker's page keeps what you were told — and closing
 // the tab ends it, because a question asked on a shared laptop in a hallway
-// should not be waiting there tomorrow.
+// should not be waiting there tomorrow. The same hallway is why the thread is
+// also keyed to a person: the panel fragment carries an identity mark, and a
+// kept thread is only ever painted for the person it was kept for. Signing
+// out, or in as somebody else, drops it instead of replaying it.
 
 function conciergeIsland() {
   var box = document.getElementById('concierge');
@@ -29,10 +32,12 @@ function conciergeIsland() {
   var ask = '/' + encodeURIComponent(slug) + '/ask';
   var THREAD = 'fireside.cc.thread.' + slug;
   var OPEN = 'fireside.cc.open.' + slug;
+  var WHO = 'fireside.cc.who.' + slug;
 
   var open = false;
   var busy = false;
   var kept = '';     // the conversation so far, as the server's own markup
+  var who = '';      // the identity mark the thread was kept under
   var thread = null; // the scrolling middle of the panel, while it is up
 
   // The brand's flame, the same path the masthead draws (lib/html.ts FLAME).
@@ -72,19 +77,32 @@ function conciergeIsland() {
   function recall() {
     try {
       kept = sessionStorage.getItem(THREAD) || '';
+      who = sessionStorage.getItem(WHO) || '';
       open = sessionStorage.getItem(OPEN) === '1';
     } catch (e) { /* a private window: the conversation lasts this page only */ }
   }
 
-  // A conversation is written down when it is settled, never mid-question: a
-  // thread with the typing dots still in it would come back from a walk across
-  // the site with an answer that is never going to arrive.
+  // A conversation is written down without its typing dots: a thread kept
+  // mid-question comes back showing what was asked, not dots for an answer
+  // that is never going to arrive.
   function keep() {
-    if (thread && !thread.querySelector('[data-cc-wait]')) kept = thread.innerHTML;
+    if (thread) {
+      var settled = thread.cloneNode(true);
+      var w = settled.querySelector('[data-cc-wait]');
+      if (w) w.remove();
+      kept = settled.innerHTML;
+    }
     try {
       sessionStorage.setItem(THREAD, kept);
+      sessionStorage.setItem(WHO, who);
       sessionStorage.setItem(OPEN, open ? '1' : '0');
     } catch (e) { /* nowhere to keep it; the panel still works */ }
+  }
+
+  /** The identity mark the server stamped on a panel fragment. */
+  function markerOf(html) {
+    var m = /data-cc-who="([^"]*)"/.exec(html);
+    return m ? m[1] : '';
   }
 
   // ---- pieces the panel grows -------------------------------------------
@@ -121,17 +139,19 @@ function conciergeIsland() {
   function paint(focus) {
     document.body.classList.toggle('cc-open', open);
     if (!open) {
-      // The old thread is let go of but not dropped: a reply still in flight
-      // lands in it, detached, and is written down for the next time the panel
-      // comes up. Closing the panel does not lose the answer you asked for.
       box.innerHTML = FAB;
+      // Focus goes back to the button that stands where the panel stood, so
+      // closing with the keyboard does not drop the reader at the top of the
+      // page.
+      if (focus) {
+        var fb = box.querySelector('.cc-fab');
+        if (fb) fb.focus();
+      }
       return;
     }
     box.innerHTML = panelHtml();
     thread = box.querySelector('[data-cc-thread]');
-    if (kept) thread.innerHTML = kept;
-    else greet();
-    land();
+    greet();
     if (focus) {
       var el = box.querySelector('[data-cc-in]');
       if (el) el.focus();
@@ -146,18 +166,23 @@ function conciergeIsland() {
     keep();
   }
 
-  // The first paint: the greeting and the chips this reader has earned, asked
-  // for once and then kept in the thread, so a walk around the site does not
-  // ask again. A greeting that never lands is not written down, so the next
-  // open retries it.
+  // Every paint starts by asking the server who is here as well as what to
+  // open with: the fragment carries the identity mark. When the mark matches,
+  // the kept thread comes back; when it differs — a sign-out, or somebody else
+  // signing in on the same tab — the kept thread is dropped, never replayed.
+  // When the fetch fails, the kept thread stays unpainted rather than shown
+  // unverified, and the way to the full page remains.
   function greet() {
     var wait = waiting();
     thread.appendChild(wait);
     fetch(ask + '?panel=1', { credentials: 'same-origin' })
       .then(function (r) { return r.text(); })
       .then(function (html) {
+        var now = markerOf(html);
+        if (now !== who) { kept = ''; who = now; }
         wait.remove();
-        thread.insertAdjacentHTML('beforeend', html);
+        if (kept) thread.innerHTML = kept;
+        else thread.insertAdjacentHTML('beforeend', html);
         keep();
         land();
       })
@@ -217,7 +242,18 @@ function conciergeIsland() {
     var t = e.target;
     if (!t || !t.closest) return;
     if (t.closest('[data-cc-open]')) { show(true, true); return; }
-    if (t.closest('[data-cc-close]')) { show(false, false); return; }
+    if (t.closest('[data-cc-close]')) { show(false, true); return; }
+    // Following an answer somewhere ends the exchange: the panel is recorded
+    // closed so it is not standing in front of the page it just chose — which
+    // on a phone is the whole screen. The browser does the walking.
+    var walk = t.closest('a[href]');
+    if (walk && thread && thread.contains(walk) &&
+        !e.metaKey && !e.ctrlKey && !e.shiftKey && walk.target !== '_blank') {
+      open = false;
+      keep();
+      document.body.classList.remove('cc-open');
+      return;
+    }
     // The chips are the Ask screen's own, rendered by the same builder: `i` is
     // a question the program answers on the spot, `q` is one for the model.
     var chip = t.closest('button[name="i"],button[name="q"]');
@@ -241,7 +277,7 @@ function conciergeIsland() {
   });
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && open) show(false, false);
+    if (e.key === 'Escape' && open) show(false, true);
   });
 
   recall();

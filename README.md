@@ -17,7 +17,7 @@ front door. Two conferences are running: **AI Engineer New York 2026**
 (mid-drama: a thousand proposals in, six hundred and ten decisions made and
 not yet sent) and **DevOps Days Charlotte 2025** (finished, recordings up).
 
-| Door | Where | Who you are |
+| Way in | Where | Who you are |
 | --- | --- | --- |
 | The call for speakers | [/aie-nyc/cfp](https://fireside.phantastic.ai/aie-nyc/cfp) | A hopeful speaker, no account needed |
 | The agenda | [/aie-nyc/agenda](https://fireside.phantastic.ai/aie-nyc/agenda) | Anyone, on one bar of venue wifi |
