@@ -17,8 +17,15 @@ export class ScopeError extends Error {
   }
 }
 
-/** Reading the pile and a proposal: every backstage standing, viewers included. */
+/** Reading the pile and a proposal: every backstage standing, viewers included.
+ *  'reviewer' is deliberately NOT here. That standing is the reading room and
+ *  nothing else, and the pile, the proposals and the people carry the names a
+ *  blind round exists to keep out of it. */
 export const READ_ROLES: readonly string[] = ['owner', 'approver', 'editor', 'viewer'];
+/** The reading room itself: the organizer's standings, plus the one that is
+ *  only the reading. Wider than READ_ROLES on purpose — a reviewer belongs in
+ *  exactly this set and no other. */
+export const REVIEW_ROLES: readonly string[] = [...READ_ROLES, 'reviewer'];
 /** The letters are the telling act, so a viewer does not get to read the outbox. */
 export const LETTER_ROLES: readonly string[] = ['owner', 'approver', 'editor'];
 /** Changing the event itself — settings, team, the agenda's shape. */

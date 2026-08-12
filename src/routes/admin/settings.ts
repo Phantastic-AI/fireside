@@ -29,6 +29,7 @@ import { initialsOf } from '../../queries/public';
 import {
   eventSettings,
   eventIdBySlug,
+  reviewerOnly,
   EVENT_ROLES,
   type EventRole,
   type EventSettings,
@@ -41,7 +42,12 @@ import {
   type ScorecardKey,
   type ScorecardKind,
 } from '../../queries/reviews';
-import { principalFromCookie, type Principal } from '../../workflows/account';
+import {
+  principalFromCookie,
+  makeMagicLink,
+  isRealAddress,
+  type Principal,
+} from '../../workflows/account';
 import {
   saveEventFacts,
   saveQuestions,
@@ -72,6 +78,7 @@ const STANDING_WORD: Record<string, string> = {
   approver: 'Approver',
   editor: 'Editor',
   viewer: 'Viewer',
+  reviewer: 'Reviewer',
   organizer: 'Organizer',
 };
 
@@ -80,6 +87,7 @@ const STANDING_POWER: Record<EventRole, string> = {
   approver: 'Decides proposals and sends the letters. Changes the event too.',
   editor: 'Changes the event, the questions and the agenda. Does not decide.',
   viewer: 'Reads the proposals and the program. Changes nothing.',
+  reviewer: 'Reads and scores the proposals handed to them, with the names hidden. Sees nothing else here.',
 };
 
 const word = (standing: string): string => STANDING_WORD[standing] ?? STANDING_WORD['viewer'] ?? '';
@@ -167,19 +175,48 @@ const ANCHOR: Record<Section, string> = {
   link: 'the-link',
 };
 
-type Outcome = { where: Section; line: string; refused: boolean };
+/** `field` names the one input the sentence is about. An outcome that names a
+ *  field says its piece beside that field and nowhere else — a refusal about a
+ *  date read at the top of the section, next to the name, is a refusal about
+ *  nothing. */
+type Outcome = { where: Section; line: string; refused: boolean; field?: string };
 
 const SAID: Record<Said, Outcome> = {
   event_saved: { where: 'event', line: 'Saved. The public page and the call read from this.', refused: false },
-  event_name_needed: { where: 'event', line: 'A conference needs a name. Nothing was changed.', refused: true },
+  event_name_needed: {
+    where: 'event',
+    field: 'name',
+    line: 'A conference needs a name. Nothing was changed.',
+    refused: true,
+  },
   event_cap: {
     where: 'event',
+    field: 'cap',
     line: 'How many proposals per person has to be a whole number from one to ten. Nothing was changed.',
     refused: true,
   },
   event_date: {
     where: 'event',
+    field: 'decide_by',
     line: 'The decision date is written as 2026-08-27. Nothing was changed.',
+    refused: true,
+  },
+  event_opens_date: {
+    where: 'event',
+    field: 'call_opens',
+    line: 'The day the call opens is written as 2026-08-01. Nothing was changed.',
+    refused: true,
+  },
+  event_closes_date: {
+    where: 'event',
+    field: 'call_closes',
+    line: 'The day the call closes is written as 2026-08-27. Nothing was changed.',
+    refused: true,
+  },
+  event_closes_first: {
+    where: 'event',
+    field: 'call_closes',
+    line: 'The call cannot close before it opens — this day falls earlier than the day above. Nothing was changed.',
     refused: true,
   },
   event_moved: { where: 'event', line: 'This conference moved while the page was open. Nothing was changed.', refused: true },
@@ -262,12 +299,19 @@ const SAID: Record<Said, Outcome> = {
   },
 
   team_added: { where: 'team', line: 'Added. They see this conference the next time they sign in.', refused: false },
+  // The sentence stops at what is certainly true. The link below carries its
+  // own heading, so a sentence promising one is a sentence that can be wrong.
+  team_invited: {
+    where: 'team',
+    line: 'Added, and an account was made for them — they have no password yet.',
+    refused: false,
+  },
   team_role_changed: { where: 'team', line: 'Changed. It takes effect on their next screen.', refused: false },
   team_removed: { where: 'team', line: 'Taken off. They no longer see this conference.', refused: false },
-  team_email_needed: { where: 'team', line: 'An email address is needed. Nothing was changed.', refused: true },
-  team_no_person: {
+  team_email_needed: {
     where: 'team',
-    line: 'Nobody signs in with that address. Ask them to make an account first, then add them here.',
+    field: 'email',
+    line: 'An address they could sign in with is needed — one @, and a domain after it. Nothing was changed.',
     refused: true,
   },
   team_already: { where: 'team', line: 'They are already on this conference. Their standing is in the list.', refused: true },
@@ -277,7 +321,7 @@ const SAID: Record<Said, Outcome> = {
     line: 'That would leave the conference with nobody who owns it. Make somebody else an owner first.',
     refused: true,
   },
-  team_standing_unknown: { where: 'team', line: 'That is not one of the four standings. Nothing was changed.', refused: true },
+  team_standing_unknown: { where: 'team', line: 'That is not one of the five standings. Nothing was changed.', refused: true },
   team_moved: { where: 'team', line: 'The list changed while this page was open. This is how it stands now.', refused: true },
 
   room_added: { where: 'rooms', line: 'Added. It is ready to hold a session.', refused: false },
@@ -323,12 +367,20 @@ function isSaid(value: string): value is Said {
 function saidIn(here: Section, said: Said | null): string {
   if (said === null) return '';
   const out = SAID[said];
-  if (out.where !== here) return '';
+  // An outcome that names a field says its piece there instead — never twice.
+  if (out.where !== here || out.field !== undefined) return '';
   return (
     `<div class="notebox" style="margin:0 0 16px${out.refused ? ';border-left-color:var(--danger)' : ''}">` +
     esc(out.line) +
     '</div>'
   );
+}
+
+/** The sentence for one input, when the last press was about that input. */
+function saidAt(name: string, said: Said | null): string | undefined {
+  if (said === null) return undefined;
+  const out = SAID[said];
+  return out.field === name ? out.line : undefined;
 }
 
 /* ------------------------------------------------------------------ *
@@ -345,20 +397,29 @@ function field(o: {
   rows?: number;
   placeholder?: string;
   type?: string;
+  /** Set only where a refusal has to be able to scroll to this input; ids on
+   *  this page have to stay unique, and the repeated cards reuse names. */
+  anchored?: boolean;
+  /** What was wrong with what arrived, said here rather than at the top. */
+  wrong?: string;
 }): string {
+  const bad = o.wrong !== undefined ? ' aria-invalid="true"' : '';
   const control = o.area
-    ? `<textarea name="${esc(o.name)}" rows="${o.rows ?? 4}"` +
+    ? `<textarea name="${esc(o.name)}" rows="${o.rows ?? 4}"${bad}` +
       (o.placeholder ? ` placeholder="${esc(o.placeholder)}"` : '') +
       `>${esc(o.value)}</textarea>`
-    : `<input type="${o.type ?? 'text'}" name="${esc(o.name)}" value="${esc(o.value)}"` +
+    : `<input type="${o.type ?? 'text'}" name="${esc(o.name)}" value="${esc(o.value)}"${bad}` +
       (o.placeholder ? ` placeholder="${esc(o.placeholder)}"` : '') +
       '>';
   return (
-    '<label class="f"><span class="f-lab">' +
+    `<label class="f"${o.anchored ? ` id="f-${esc(o.name)}"` : ''}><span class="f-lab">` +
     esc(o.labelText) +
     (o.optional ? '<span class="opt">optional</span>' : '') +
     '</span>' +
     control +
+    (o.wrong !== undefined
+      ? `<span class="hint" style="color:var(--danger)">${esc(o.wrong)}</span>`
+      : '') +
     (o.hint ? `<span class="hint">${esc(o.hint)}</span>` : '') +
     '</label>'
   );
@@ -413,7 +474,13 @@ function eventSection(ev: EventSettings, said: Said | null, nowMs: number): stri
     `<p class="sub" style="margin:6px 0 14px">${call ? esc(`${call}. `) : ''}${esc(decide)}</p>` +
     saidIn('event', said) +
     `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/settings/event">` +
-    field({ name: 'name', labelText: 'What it is called', value: ev.name }) +
+    field({
+      name: 'name',
+      labelText: 'What it is called',
+      value: ev.name,
+      anchored: true,
+      wrong: saidAt('name', said),
+    }) +
     field({
       name: 'tagline',
       labelText: 'The line under the name',
@@ -446,6 +513,8 @@ function eventSection(ev: EventSettings, said: Said | null, nowMs: number): stri
       name: 'cap',
       labelText: 'How many proposals per person',
       value: String(ev.maxSubmissions),
+      anchored: true,
+      wrong: saidAt('cap', said),
       hint: 'Once somebody reaches it, the call stops taking new ones from them and points them at their portal.',
     }) +
     field({
@@ -454,6 +523,8 @@ function eventSection(ev: EventSettings, said: Said | null, nowMs: number): stri
       value: callDayOf(ev.cfpOpensAt),
       optional: true,
       placeholder: '2026-08-01',
+      anchored: true,
+      wrong: saidAt('call_opens', said),
       hint: 'Written as 2026-08-01. Leave both dates blank and the call is shut.',
     }) +
     field({
@@ -462,6 +533,8 @@ function eventSection(ev: EventSettings, said: Said | null, nowMs: number): stri
       value: callDayOf(ev.cfpClosesAt),
       optional: true,
       placeholder: '2026-08-27',
+      anchored: true,
+      wrong: saidAt('call_closes', said),
       hint: 'Proposals can be sent and edited until the end of this day.',
     }) +
     field({
@@ -469,6 +542,8 @@ function eventSection(ev: EventSettings, said: Said | null, nowMs: number): stri
       labelText: 'Decisions go out by',
       value: ev.decideBy ?? '',
       placeholder: '2026-08-27',
+      anchored: true,
+      wrong: saidAt('decide_by', said),
       hint: 'The date the call promises and every letter repeats. Written as 2026-08-27.',
     }) +
     '<div class="btnrow"><button class="btn btn-primary" type="submit">Save the event</button>' +
@@ -906,7 +981,13 @@ function scorecardSection(ev: EventSettings, said: Said | null): string {
  * 3 — the team (D-026)
  * ------------------------------------------------------------------ */
 
-function teamSection(ev: EventSettings, said: Said | null, confirmOff: string | null): string {
+function teamSection(
+  ev: EventSettings,
+  said: Said | null,
+  confirmOff: string | null,
+  /** The way in for somebody the last press made an account for. */
+  invite: { link: string; emailed: boolean } | null
+): string {
   const settings = `/admin/${encodeURIComponent(ev.slug)}/settings`;
 
   const rows = ev.team
@@ -984,12 +1065,37 @@ function teamSection(ev: EventSettings, said: Said | null, confirmOff: string | 
         value: '',
         type: 'email',
         placeholder: 'name@example.org',
-        hint: 'It has to be an address that already signs in here. Nothing is sent to them and nothing is created.',
+        anchored: true,
+        wrong: saidAt('email', said),
+        hint: 'If nobody signs in with it yet, this makes their account and hands you a sign-in link for them.',
+      }) +
+      field({
+        name: 'name',
+        labelText: 'Their name',
+        value: '',
+        optional: true,
+        placeholder: 'Sam Okonkwo',
+        hint: 'Only used if the account is new. Leave it blank and the address stands in until they change it.',
       }) +
       `<label class="f"><span class="f-lab">What they may do</span>${standingSelect('role', 'viewer', 'What they may do')}</label>` +
       '<div class="btnrow"><button class="btn btn-primary" type="submit">Add them</button></div>' +
       '</form>'
     : '<p class="hint" style="margin-top:12px">Only an owner changes who is on this list.</p>';
+
+  // A new account has no password and no history, so the link is the whole of
+  // their way in. It is shown here whether or not it also went by email: an
+  // address that cannot receive mail would otherwise be an invitation to
+  // nowhere.
+  const way =
+    invite === null
+      ? ''
+      : '<div class="card card-pad" style="max-width:46em;margin-bottom:14px">' +
+        '<label class="f" style="margin-bottom:0"><span class="f-lab">Their sign-in link</span>' +
+        `<input type="text" readonly value="${esc(invite.link)}">` +
+        `<span class="hint">${esc(
+          (invite.emailed ? 'Sent to them as well. ' : 'Pass it on however you reach them. ') +
+            'It works for the next two hours, and after that they can ask for a fresh one from the sign-in page.'
+        )}</span></label></div>`;
 
   return (
     `<div class="sec" id="${ANCHOR.team}">` +
@@ -1000,6 +1106,7 @@ function teamSection(ev: EventSettings, said: Said | null, confirmOff: string | 
     '</div>' +
     '<p class="hint" style="margin-bottom:14px">Everybody here signs in as themselves. A conference always keeps at least one owner.</p>' +
     saidIn('team', said) +
+    way +
     (ev.teamCount === 0 ? empty : table) +
     powers +
     add +
@@ -1058,6 +1165,7 @@ function settingsPage(o: {
   said: Said | null;
   confirm: string | null;
   who: string | null;
+  invite: { link: string; emailed: boolean } | null;
   origin: string;
   nowMs: number;
 }): string {
@@ -1072,7 +1180,7 @@ function settingsPage(o: {
     roomsTracksSection(ev, o.said) +
     questionsSection(ev, o.said) +
     scorecardSection(ev, o.said) +
-    teamSection(ev, o.said, confirmOff) +
+    teamSection(ev, o.said, confirmOff, o.invite) +
     linkSection(ev, o.said, o.origin, o.confirm === 'link');
 
   return page({
@@ -1094,8 +1202,13 @@ function settingsPage(o: {
  * Routes
  * ------------------------------------------------------------------ */
 
-const back = (slug: string, said: Said): string =>
-  `/admin/${encodeURIComponent(slug)}/settings?note=${encodeURIComponent(said)}#${ANCHOR[SAID[said].where]}`;
+/** Back to the screen, landed on the thing the sentence is about: the field
+ *  when the outcome names one, otherwise the section it belongs to. */
+const back = (slug: string, said: Said): string => {
+  const out = SAID[said];
+  const at = out.field !== undefined ? `f-${out.field}` : ANCHOR[out.where];
+  return `/admin/${encodeURIComponent(slug)}/settings?note=${encodeURIComponent(said)}#${at}`;
+};
 
 export function registerSettings(app: Hono<{ Bindings: Env }>): void {
   app.get('/admin/:eventSlug/settings', async (c) => {
@@ -1108,6 +1221,8 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
 
     let ev: EventSettings | null;
     try {
+      // eventSettings reads behind EDIT_ROLES, which no reviewer holds, so a
+      // reviewer arrives at the same refusal as somebody with no standing.
       ev = await eventSettings(c.env.DB, principal, c.req.param('eventSlug'));
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
@@ -1116,6 +1231,15 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
     if (!ev) return c.notFound();
 
     const note = c.req.query('note') ?? '';
+    // The link this screen wrote itself one redirect ago, and nothing else:
+    // anything not addressed at this origin is somebody else's idea.
+    const key = c.req.query('key') ?? '';
+    const origin = new URL(c.req.url).origin;
+    const invite =
+      note === 'team_invited' && key.startsWith(`${origin}/sign-in/magic?t=`)
+        ? { link: key, emailed: c.req.query('sent') === '1' }
+        : null;
+
     // These screens hold email addresses and a link that needs no sign-in.
     c.header('cache-control', 'private, no-store');
     return c.html(
@@ -1125,7 +1249,8 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
         said: isSaid(note) ? note : null,
         confirm: c.req.query('confirm') ?? null,
         who: c.req.query('who') ?? null,
-        origin: new URL(c.req.url).origin,
+        invite,
+        origin,
         nowMs: Date.now(),
       })
     );
@@ -1147,6 +1272,10 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
     if (!principal) return c.redirect('/sign-in', 303);
     const eventId = await eventIdBySlug(c.env.DB, slug);
     if (!eventId) return c.notFound();
+    // A reviewer holds the reading room and nothing else. Every workflow below
+    // asks for EDIT_ROLES or TEAM_ROLES and would refuse anyway; saying it here
+    // keeps the wall standing whichever way those sets move.
+    if (reviewerOnly(principal, eventId)) return c.html(deniedPage(), 403);
     const body = await c.req.parseBody();
     try {
       const said = await run(principal, eventId, body);
@@ -1281,12 +1410,58 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
     })
   );
 
-  app.post('/admin/:eventSlug/settings/team/add', (c) =>
-    write(c, (principal, eventId, body) => {
-      const { text } = reader(body);
-      return addToTeam(c.env.DB, principal, eventId, text('email'), text('role'));
-    })
-  );
+  // Adding somebody who has never signed in makes their account, so this one
+  // write has a second half: they need a door. The link is minted here, sent
+  // where mail can reach, and handed back on the screen either way — an
+  // invitation nobody can act on is not an invitation.
+  app.post('/admin/:eventSlug/settings/team/add', (c) => {
+    let landed: string | null = null;
+    return write(
+      c,
+      async (principal, eventId, body) => {
+        const { text } = reader(body);
+        const res = await addToTeam(
+          c.env.DB,
+          principal,
+          eventId,
+          text('email'),
+          text('name'),
+          text('role')
+        );
+        if (res.invited === null) return res.said;
+
+        const origin = new URL(c.req.url).origin;
+        const link = await makeMagicLink(c.env.SESSION_SECRET, origin, res.invited.personId);
+        let emailed = false;
+        if (isRealAddress(res.invited.email)) {
+          // Mail that will not go is not a reason to lose the person who was
+          // just added: the link comes back on the screen either way, and the
+          // sentence beside it only claims a send that happened.
+          try {
+            await c.env.EMAIL.send({
+              to: res.invited.email,
+              from: { email: c.env.FROM_EMAIL, name: 'Fireside' },
+              subject: 'Your sign-in link',
+              text:
+                `Hello ${res.invited.name},\n\n${principal.name} has put you on the team for a ` +
+                `conference on Fireside. Here is your sign-in link:\n\n${link}\n\n` +
+                'It works for the next two hours. Ask for a fresh one from the sign-in page any time after that.',
+            });
+            emailed = true;
+          } catch {
+            emailed = false;
+          }
+        }
+        landed =
+          `/admin/${encodeURIComponent(c.req.param('eventSlug') ?? '')}/settings` +
+          `?note=${encodeURIComponent(res.said)}&key=${encodeURIComponent(link)}` +
+          (emailed ? '&sent=1' : '') +
+          `#${ANCHOR.team}`;
+        return res.said;
+      },
+      () => landed
+    );
+  });
 
   app.post('/admin/:eventSlug/settings/team/standing', (c) =>
     write(c, (principal, eventId, body) => {

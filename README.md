@@ -109,6 +109,7 @@ npx wrangler d1 create fireside          # then put the id in wrangler.jsonc
 npx wrangler d1 execute fireside --remote --file schema/0001_init.sql
 npx wrangler d1 execute fireside --remote --file schema/0002_roles.sql
 npx wrangler d1 execute fireside --remote --file schema/0003_passwords.sql
+npx wrangler d1 execute fireside --remote --file schema/0004_reviewer_role.sql
 npx wrangler secret put SESSION_SECRET   # any long random string
 npx wrangler deploy
 ```

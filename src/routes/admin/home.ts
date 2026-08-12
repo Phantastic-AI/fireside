@@ -35,12 +35,12 @@
 //    no rows) and that no other exported admin query aggregates. Rather than
 //    inventing numbers, the doors into Agenda, People, Green room and Slides
 //    below carry a plain sentence instead of a count.
-//  - `event_role` values ('owner' | 'approver' | 'editor' | 'viewer') and
-//    the install-wide 'organizer' standing have no entry in lib/labels.ts —
-//    §6 only tracks the onstage participation roles (speaker/co-speaker/
-//    host). The events-index card still needs to show "your standing" per
-//    the brief, so it is capitalized locally rather than invented as a new
-//    label-map entry this parcel has no authority to add.
+//  - `event_role` values ('owner' | 'approver' | 'editor' | 'viewer' |
+//    'reviewer') and the install-wide 'organizer' standing have no entry in
+//    lib/labels.ts — §6 only tracks the onstage participation roles
+//    (speaker/co-speaker/host). The events-index card still needs to show
+//    "your standing" per the brief, so it is capitalized locally rather than
+//    invented as a new label-map entry this parcel has no authority to add.
 //  - The backstageShell `who` field follows the convention already set by
 //    the Outbox parcel (src/routes/admin/outbox.ts): the principal's plain
 //    name, with no role suffix — not the prototype's hardcoded single-
@@ -86,8 +86,14 @@ const STANDING_WORD: Record<string, string> = {
   approver: 'Approver',
   editor: 'Editor',
   viewer: 'Viewer',
+  reviewer: 'Reviewer',
 };
 const standingWord = (s: string): string => STANDING_WORD[s] ?? s;
+
+/** Standings that open into the reading room rather than the organizer's desk.
+ *  A reviewer holds nothing else at all; a viewer still reads the organizer's
+ *  screens from the nav, and that is unchanged. */
+const LANDS_IN_REVIEWS = new Set(['viewer', 'reviewer']);
 
 /* ------------------------------------------------------------------ *
  * Dates, read cold — no timezone conversion for a day key that is already
@@ -169,7 +175,7 @@ function eventCard(ev: AdminEvent): string {
   const dot = ev.lifecycle === 'open' ? '' : ' closed';
   // A pure reviewer's card is a door to her own room — no decision facts,
   // which are the organizer's weather, not hers.
-  if (ev.standing === 'viewer') {
+  if (LANDS_IN_REVIEWS.has(ev.standing)) {
     return (
       `<a class="card evcard" href="/admin/${slug}/reviews">` +
       `<h3>${esc(ev.name)}</h3>` +
@@ -518,8 +524,9 @@ export function registerAdminHome(app: Hono<{ Bindings: Env }>): void {
         if (!exists) return c.notFound();
         return c.html(deniedPage(), 403);
       }
-      // A pure reviewer's landing is her own room, not the organizer's desk.
-      if (ev.standing === 'viewer') return c.redirect(`/admin/${ev.slug}/reviews`);
+      // A pure reviewer's landing is her own room, not the organizer's desk —
+      // and for the 'reviewer' standing it is the only room there is.
+      if (LANDS_IN_REVIEWS.has(ev.standing)) return c.redirect(`/admin/${ev.slug}/reviews`);
       const { counts } = await pile(c.env.DB, principal, ev.id, 'all', { limit: 0 });
       return c.html(programPage(principal, ev, counts));
     } catch (e) {

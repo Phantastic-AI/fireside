@@ -55,6 +55,7 @@ import {
   type SlidesStatus,
 } from '../../queries/admin';
 import { eventDayKey } from '../../queries/public';
+import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { eventByGreenRoomNonce } from '../../queries/greenroom-token';
 import {
@@ -236,7 +237,11 @@ async function eventFor(
   slug: string
 ): Promise<AdminEvent | undefined> {
   const events = await adminEvents(db, principal);
-  return events.find((e) => e.slug === slug);
+  const ev = events.find((e) => e.slug === slug);
+  // A reviewer holds the reading room and nothing else. The run of show and the
+  // slides board both name speakers, so both are the same refusal to them as to
+  // somebody with no standing at all — one wall, at the only door in.
+  return ev && reviewerOnly(principal, ev.id) ? undefined : ev;
 }
 
 function hasScope(principal: Principal, eventId: string, allowed: readonly string[]): boolean {

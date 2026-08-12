@@ -39,6 +39,7 @@ import {
   type OutboxMessage,
   type SubmissionState,
 } from '../../queries/admin';
+import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { requireDecider } from '../../workflows/decide';
 import { releaseDecisions } from '../../workflows/release';
@@ -773,7 +774,11 @@ async function eventFor(
   slug: string
 ): Promise<AdminEvent | undefined> {
   const events = await adminEvents(db, principal);
-  return events.find((e) => e.slug === slug);
+  const ev = events.find((e) => e.slug === slug);
+  // A reviewer holds the reading room and nothing else. Not the letters, and
+  // not the fact that a letter exists — so the refusal is the plain one, which
+  // says nothing about this conference having an outbox at all.
+  return ev && reviewerOnly(principal, ev.id) ? undefined : ev;
 }
 
 /** A viewer holds the event but not the letters — say that, not "not yours". */

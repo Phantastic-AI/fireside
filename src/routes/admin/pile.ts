@@ -36,6 +36,7 @@ import {
   type SubmissionState,
 } from '../../queries/admin';
 import { initialsOf } from '../../queries/public';
+import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { requireDecider, stageDecision, type Decision } from '../../workflows/decide';
 // The island is hand-written browser JS, deliberately outside the TypeScript
@@ -649,6 +650,12 @@ function backTo(slug: string, filter: PileFilter, search: string | undefined, do
 
 /* ------------------------------------------------------------------ *
  * Routes
+ *
+ * Somebody whose standing here is 'reviewer' holds the reading room and
+ * nothing else, so this whole file is shut to them in the same words a
+ * stranger gets. The check is at each door rather than left to the scope sets
+ * in queries/admin.ts, because this screen carries names and employers and a
+ * blind round is only blind while that stays true.
  * ------------------------------------------------------------------ */
 
 export function registerPile(app: Hono<{ Bindings: Env }>): void {
@@ -664,6 +671,7 @@ export function registerPile(app: Hono<{ Bindings: Env }>): void {
       const events = await adminEvents(c.env.DB, principal);
       const ev = events.find((e) => e.slug === c.req.param('eventSlug'));
       if (!ev) return c.html(deniedPage(), 403);
+      if (reviewerOnly(principal, ev.id)) return c.html(deniedPage(), 403);
 
       const filter = filterOf(c.req.query('f'));
       const search = searchOf(c.req.query('q'));
@@ -709,6 +717,7 @@ export function registerPile(app: Hono<{ Bindings: Env }>): void {
       const events = await adminEvents(c.env.DB, principal);
       const ev = events.find((e) => e.slug === c.req.param('eventSlug'));
       if (!ev) return c.html(deniedPage(), 403);
+      if (reviewerOnly(principal, ev.id)) return c.html(deniedPage(), 403);
 
       const filter = filterOf(c.req.query('f'));
       const search = searchOf(c.req.query('q'));
@@ -781,6 +790,7 @@ export function registerPile(app: Hono<{ Bindings: Env }>): void {
       const events = await adminEvents(c.env.DB, principal);
       const ev = events.find((e) => e.slug === slug);
       if (!ev) return c.html(deniedPage(), 403);
+      if (reviewerOnly(principal, ev.id)) return c.html(deniedPage(), 403);
       eventId = ev.id;
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);

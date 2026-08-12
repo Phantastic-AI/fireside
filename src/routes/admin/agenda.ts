@@ -31,6 +31,7 @@ import {
   type BuilderWaiting,
 } from '../../queries/builder';
 import { initialsOf } from '../../queries/public';
+import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import {
   cancelSession,
@@ -596,6 +597,11 @@ export function registerAdminAgenda(app: Hono<{ Bindings: Env }>): void {
         c.req.query('day')
       );
       if (!view) return c.notFound();
+      // A reviewer holds the reading room and nothing else. The builder names
+      // every accepted speaker, so it refuses in the plain words rather than
+      // opening read-only. Checked on the way out because the slug becomes an
+      // event id inside the read, and nothing has been rendered yet.
+      if (reviewerOnly(principal, view.eventId)) return c.html(deniedPage(), 403);
       c.header('cache-control', 'private, no-store');
       return c.html(builderPage(view, principal, c.req.query()));
     } catch (e) {
@@ -620,6 +626,7 @@ export function registerAdminAgenda(app: Hono<{ Bindings: Env }>): void {
     const day = field(form, 'day');
     const eventId = await eventIdBySlug(c.env.DB, slug);
     if (!eventId) return c.notFound();
+    if (reviewerOnly(principal, eventId)) return c.html(deniedPage(), 403);
     if (!talk || !room || !Number.isFinite(at)) {
       return c.redirect(back(slug, { day, note: 'moved' }), 303);
     }
@@ -659,6 +666,7 @@ export function registerAdminAgenda(app: Hono<{ Bindings: Env }>): void {
     const day = field(form, 'day');
     const eventId = await eventIdBySlug(c.env.DB, slug);
     if (!eventId) return c.notFound();
+    if (reviewerOnly(principal, eventId)) return c.html(deniedPage(), 403);
     if (!talk) return c.redirect(back(slug, { day, note: 'moved' }), 303);
     try {
       const res = await clearPlacement(c.env.DB, principal, eventId, talk);
@@ -687,6 +695,7 @@ export function registerAdminAgenda(app: Hono<{ Bindings: Env }>): void {
     const note = field(form, 'note');
     const eventId = await eventIdBySlug(c.env.DB, slug);
     if (!eventId) return c.notFound();
+    if (reviewerOnly(principal, eventId)) return c.html(deniedPage(), 403);
     if (!talk) return c.redirect(back(slug, { day, note: 'moved' }), 303);
     try {
       const res = await cancelSession(c.env.DB, principal, eventId, talk, note);
@@ -714,6 +723,7 @@ export function registerAdminAgenda(app: Hono<{ Bindings: Env }>): void {
     const day = field(form, 'day');
     const eventId = await eventIdBySlug(c.env.DB, slug);
     if (!eventId) return c.notFound();
+    if (reviewerOnly(principal, eventId)) return c.html(deniedPage(), 403);
     if (!talk) return c.redirect(back(slug, { day, note: 'moved' }), 303);
     try {
       const res = await restoreSession(c.env.DB, principal, eventId, talk);
@@ -754,6 +764,7 @@ export function registerAdminAgenda(app: Hono<{ Bindings: Env }>): void {
     const placed = Number(field(form, 'placed'));
     const eventId = await eventIdBySlug(c.env.DB, slug);
     if (!eventId) return c.notFound();
+    if (reviewerOnly(principal, eventId)) return c.html(deniedPage(), 403);
     if (!Number.isFinite(placed)) return c.redirect(back(slug, { day, note: 'count-moved' }), 303);
     try {
       const res =

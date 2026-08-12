@@ -28,6 +28,7 @@ import {
   type SubmissionState,
 } from '../../queries/admin';
 import { eventBySlug, initialsOf, eventDayKey } from '../../queries/public';
+import { reviewerOnly } from '../../queries/settings';
 import {
   peopleList,
   personDetail,
@@ -492,7 +493,10 @@ async function resolveEvent(
     throw e;
   }
   const event = events.find((e) => e.slug === slug);
-  if (event) return { event };
+  // A reviewer holds the reading room and nothing else, and this screen carries
+  // names, phone numbers and what everyone still owes. Same refusal a stranger
+  // gets, in the same words — this file has no trimmed version of itself.
+  if (event) return reviewerOnly(principal, event.id) ? { deny: true } : { event };
   const exists = await eventBySlug(db, slug);
   return exists ? { deny: true } : null;
 }

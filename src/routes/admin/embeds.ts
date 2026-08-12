@@ -34,6 +34,7 @@ import {
   type AdminEvent,
 } from '../../queries/admin';
 import { agenda, type AgendaSession } from '../../queries/public';
+import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 
 /* ------------------------------------------------------------------ *
@@ -74,7 +75,10 @@ async function eventFor(
   slug: string
 ): Promise<AdminEvent | undefined> {
   const events = await adminEvents(db, principal);
-  return events.find((e) => e.slug === slug);
+  const ev = events.find((e) => e.slug === slug);
+  // A reviewer holds the reading room and nothing else — handing the program
+  // out to the world is not theirs, so this screen is the plain refusal.
+  return ev && reviewerOnly(principal, ev.id) ? undefined : ev;
 }
 
 /* ------------------------------------------------------------------ *

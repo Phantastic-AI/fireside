@@ -452,7 +452,9 @@ export function buildSeed(): SeedData {
 
   // -- roles, reviews ----------------------------------------------------
   d.event_role.push({ person_id: 'marcus-delacroix', event_id: DDC, role: 'owner', granted_at: utc(2025, 5, 20, 12), granted_by: null });
-  d.event_role.push({ person_id: 'lena-fischer', event_id: AIE, role: 'viewer', granted_at: utc(2026, 8, 1, 12), granted_by: 'naomi-adeyemi' });
+  // Lena is the demonstration of the reviewer standing: the reading room and
+  // nothing else. The blind round only proves itself if she holds that word.
+  d.event_role.push({ person_id: 'lena-fischer', event_id: AIE, role: 'reviewer', granted_at: utc(2026, 8, 1, 12), granted_by: 'naomi-adeyemi' });
 
   const lena = 'lena-fischer';
   const reviewable = subs.filter((s) => s.hand && ['submitted', 'waitlisted', 'accepted'].includes(s.state)).slice(0, 24);

@@ -38,6 +38,9 @@ export type Said =
   | 'event_name_needed'
   | 'event_cap'
   | 'event_date'
+  | 'event_opens_date'
+  | 'event_closes_date'
+  | 'event_closes_first'
   | 'event_moved'
   | 'questions_saved'
   | 'questions_words_needed'
@@ -55,10 +58,10 @@ export type Said =
   | 'scorecard_scored'
   | 'scorecard_moved'
   | 'team_added'
+  | 'team_invited'
   | 'team_role_changed'
   | 'team_removed'
   | 'team_email_needed'
-  | 'team_no_person'
   | 'team_already'
   | 'team_gone'
   | 'team_last_owner'
@@ -107,6 +110,15 @@ export type EventFacts = {
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
+/** A day the calendar actually has. The shape check passes 2026-13-45, and
+ *  Date.parse quietly rolls 2025-02-30 forward into March — neither is the day
+ *  somebody typed, so neither is a day this page saves. */
+function isDay(day: string): boolean {
+  if (!ISO_DAY.test(day)) return false;
+  const ms = Date.parse(`${day}T00:00:00Z`);
+  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 10) === day;
+}
+
 /**
  * Dates and time zone are deliberately not here: moving them after proposals
  * are in moves every session already placed on the agenda, and that is a
@@ -127,13 +139,15 @@ export async function saveEventFacts(
   if (!Number.isInteger(cap) || cap < 1 || cap > 10) return 'event_cap';
 
   const decideBy = trimmed(facts.decideBy);
-  if (decideBy !== '' && !ISO_DAY.test(decideBy)) return 'event_date';
+  if (decideBy !== '' && !isDay(decideBy)) return 'event_date';
 
+  // Each date refuses in its own name, because the screen puts the sentence
+  // beside the input it is about and a shared code cannot say which one moved.
   const opensOn = trimmed(facts.callOpensOn);
   const closesOn = trimmed(facts.callClosesOn);
-  if (opensOn !== '' && !ISO_DAY.test(opensOn)) return 'event_date';
-  if (closesOn !== '' && !ISO_DAY.test(closesOn)) return 'event_date';
-  if (closesOn !== '' && opensOn !== '' && closesOn < opensOn) return 'event_date';
+  if (opensOn !== '' && !isDay(opensOn)) return 'event_opens_date';
+  if (closesOn !== '' && !isDay(closesOn)) return 'event_closes_date';
+  if (closesOn !== '' && opensOn !== '' && closesOn < opensOn) return 'event_closes_first';
   const opensAt = opensOn === '' ? null : Date.parse(`${opensOn}T00:00:00Z`);
   const closesAt = closesOn === '' ? null : Date.parse(`${closesOn}T23:59:59Z`);
 
@@ -507,41 +521,102 @@ const LAST_OWNER_SQL = `SELECT 1 WHERE ?3 <> 'owner'
   AND EXISTS (SELECT 1 FROM event_role WHERE event_id = ?1 AND person_id = ?2 AND role = 'owner')
   AND (SELECT COUNT(*) FROM event_role WHERE event_id = ?1 AND role = 'owner') < 2`;
 
+/** What an add did. `invited` is set only when the add made the account, since
+ *  somebody who has never signed in has no way in until they are handed one. */
+export type TeamAdd = {
+  said: Said;
+  invited: { personId: string; email: string; name: string } | null;
+};
+
+/** A name from the address, for the person who did not type one. A name goes
+ *  on programs, so it is never left blank — and it is theirs to correct the
+ *  first time they sign in. */
+function nameFromEmail(address: string): string {
+  const at = address.indexOf('@');
+  const words = address
+    .slice(0, at > 0 ? at : address.length)
+    .split(/[._+-]+/)
+    .filter((w) => w !== '')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1));
+  return words.join(' ') || address;
+}
+
+/** An address somebody could actually sign in with — one @, something either side. */
+const ADDRESS = /^[^\s@]+@[^\s@.]+\.[^\s@]+$/;
+
+/**
+ * Put somebody on the conference. If nobody signs in with that address yet,
+ * the account and the standing are made together in one batch, so a half-added
+ * person — a row with no standing, or a standing pointing at nobody — cannot
+ * exist. The guard is the address itself: two owners typing the same one at
+ * the same moment produce one account, not two.
+ */
 export async function addToTeam(
   db: D1Database,
   principal: Principal,
   eventId: string,
   email: string,
+  name: string,
   role: string
-): Promise<Said> {
+): Promise<TeamAdd> {
   requireScope(principal, eventId, TEAM_ROLES);
 
-  const address = trimmed(email);
-  if (address === '') return 'team_email_needed';
-  if (!isEventRole(role)) return 'team_standing_unknown';
+  const address = trimmed(email).toLowerCase();
+  if (address === '') return { said: 'team_email_needed', invited: null };
+  if (!ADDRESS.test(address)) return { said: 'team_email_needed', invited: null };
+  if (!isEventRole(role)) return { said: 'team_standing_unknown', invited: null };
 
   const person = await findPersonByEmail(db, address);
-  if (!person) return 'team_no_person';
-  if ((await standingOf(db, eventId, person.id)) !== null) return 'team_already';
 
+  if (person) {
+    if ((await standingOf(db, eventId, person.id)) !== null) {
+      return { said: 'team_already', invited: null };
+    }
+    try {
+      await checkedBatch(
+        db,
+        [
+          guard(db, 'SELECT 1 FROM event_role WHERE event_id = ?1 AND person_id = ?2', eventId, person.id),
+          db
+            .prepare(
+              'INSERT INTO event_role (person_id, event_id, role, granted_at, granted_by) VALUES (?1,?2,?3,?4,?5)'
+            )
+            .bind(person.id, eventId, role, now(), principal.personId),
+        ],
+        [0, 1]
+      );
+    } catch (e) {
+      if (stale(e)) return { said: 'team_already', invited: null };
+      throw e;
+    }
+    return { said: 'team_added', invited: null };
+  }
+
+  const called = trimmed(name).slice(0, 120) || nameFromEmail(address);
+  const personId = newId('per');
   try {
     await checkedBatch(
       db,
       [
-        guard(db, 'SELECT 1 FROM event_role WHERE event_id = ?1 AND person_id = ?2', eventId, person.id),
+        guard(db, 'SELECT 1 FROM person WHERE email = ?1', address),
+        db
+          .prepare(
+            'INSERT INTO person (id, email, name, sort_name, share_contact, created_at) VALUES (?1,?2,?3,?3,?4,?5)'
+          )
+          .bind(personId, address, called, '{}', now()),
         db
           .prepare(
             'INSERT INTO event_role (person_id, event_id, role, granted_at, granted_by) VALUES (?1,?2,?3,?4,?5)'
           )
-          .bind(person.id, eventId, role, now(), principal.personId),
+          .bind(personId, eventId, role, now(), principal.personId),
       ],
-      [0, 1]
+      [0, 1, 1]
     );
   } catch (e) {
-    if (stale(e)) return 'team_already';
+    if (stale(e)) return { said: 'team_already', invited: null };
     throw e;
   }
-  return 'team_added';
+  return { said: 'team_invited', invited: { personId, email: address, name: called } };
 }
 
 export async function changeStanding(

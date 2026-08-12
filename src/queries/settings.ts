@@ -24,12 +24,33 @@ import { scorecardFor, SCORED_SQL, RECUSED_SQL, type ScorecardKey } from './revi
 /** Touching another person's standing is the owner's own act (D-026). */
 export const TEAM_ROLES: readonly string[] = ['owner'];
 
-export type EventRole = 'owner' | 'approver' | 'editor' | 'viewer';
+export type EventRole = 'owner' | 'approver' | 'editor' | 'viewer' | 'reviewer';
 
-export const EVENT_ROLES: readonly EventRole[] = ['owner', 'approver', 'editor', 'viewer'];
+/** Widest power first, and the reviewer last, because their standing is the
+ *  narrowest of the five: the pile they were handed, and nothing else. */
+export const EVENT_ROLES: readonly EventRole[] = [
+  'owner',
+  'approver',
+  'editor',
+  'viewer',
+  'reviewer',
+];
 
 export function isEventRole(value: string): value is EventRole {
   return (EVENT_ROLES as readonly string[]).includes(value);
+}
+
+/**
+ * Somebody whose whole standing here is the reading.
+ *
+ * 'reviewer' is deliberately in none of the sets in queries/admin.ts — not
+ * READ_ROLES, not LETTER_ROLES, not EDIT_ROLES — so every organizer chokepoint
+ * refuses it already. Each organizer screen says the same thing at its own
+ * door as well, so the refusal cannot be undone by widening a set somewhere
+ * else. Install-wide organizers are never this, whatever row they hold.
+ */
+export function reviewerOnly(principal: Principal, eventId: string): boolean {
+  return principal.role !== 'organizer' && principal.eventRoles[eventId] === 'reviewer';
 }
 
 export type TeamMember = {
@@ -194,7 +215,7 @@ export async function eventSettings(
            FROM event_role r JOIN person p ON p.id = r.person_id
            WHERE r.event_id = ?
            ORDER BY CASE r.role WHEN 'owner' THEN 0 WHEN 'approver' THEN 1
-                                WHEN 'editor' THEN 2 ELSE 3 END, p.name`
+                                WHEN 'editor' THEN 2 WHEN 'viewer' THEN 3 ELSE 4 END, p.name`
         )
         .bind(ev.id),
       // Answers already given, counted per question. The CASE keeps a

@@ -42,6 +42,7 @@ import {
   type SubmissionState,
 } from '../../queries/admin';
 import { cfpQuestions, type CfpQuestion } from '../../queries/public';
+import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { requireDecider, stageDecision, type Decision } from '../../workflows/decide';
 import { createTask, TASK_KINDS } from '../../workflows/tasks';
@@ -984,6 +985,10 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
       const events = await adminEvents(c.env.DB, principal);
       const ev = events.find((e) => e.slug === slug);
       if (!ev) return c.html(deniedPage(), 403);
+      // This page names the person who wrote the proposal, their employer and
+      // their history. A reviewer scores it blind on their own screen, so this
+      // one is shut to them outright, not trimmed.
+      if (reviewerOnly(principal, ev.id)) return c.html(deniedPage(), 403);
 
       const [p, questions] = await Promise.all([
         proposal(c.env.DB, principal, ev.id, id),
@@ -1030,6 +1035,7 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
       const events = await adminEvents(c.env.DB, principal);
       const ev = events.find((e) => e.slug === slug);
       if (!ev) return c.html(deniedPage(), 403);
+      if (reviewerOnly(principal, ev.id)) return c.html(deniedPage(), 403);
       // Said here in this screen's words rather than letting the workflow's
       // ScopeError become a heading — a refusal is a sentence, not a stack.
       if (!mayDecide(principal, ev.id)) {
@@ -1095,6 +1101,7 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
       const events = await adminEvents(c.env.DB, principal);
       const ev = events.find((e) => e.slug === slug);
       if (!ev) return c.html(deniedPage(), 403);
+      if (reviewerOnly(principal, ev.id)) return c.html(deniedPage(), 403);
       if (!mayAsk(principal, ev.id)) {
         return c.html(deniedPage('Asking speakers for things is held by this event’s organizers.'), 403);
       }
