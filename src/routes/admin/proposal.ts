@@ -434,7 +434,7 @@ function reviewsSection(p: Proposal, slug: string, inPlay: boolean): string {
       '<div class="state-out"><h2>This one is on nobody’s list.</h2>' +
       '<p>Put it in front of the committee and their scores land here, next to the words they ' +
       'were reading when they gave them.</p>' +
-      `<div class="btnrow"><a class="btn btn-primary" href="/admin/${esc(slug)}/reviews">Hand it to a reviewer →</a></div>` +
+      `<div class="btnrow"><a class="btn btn-primary" href="/admin/${esc(slug)}/reviews?hand=${encodeURIComponent(p.id)}#hand">Hand it to a reviewer →</a></div>` +
       '</div></div>'
     );
   }
@@ -670,7 +670,7 @@ function scoreBox(p: Proposal, slug: string): string {
         `<span class="display" style="font-size:30px;font-variant-numeric:tabular-nums">${esc(String(p.score))}</span>` +
         '</div>'
       : '<p class="sub">Nobody has put a number on this one.</p>' +
-        `<p style="margin-top:8px"><a class="link" style="font-size:14px" href="/admin/${esc(slug)}/reviews">Hand it to a reviewer →</a></p>`;
+        `<p style="margin-top:8px"><a class="link" style="font-size:14px" href="/admin/${esc(slug)}/reviews?hand=${encodeURIComponent(p.id)}#hand">Hand it to a reviewer →</a></p>`;
   const notes = p.scoreNotes
     ? `<div style="margin-top:12px"><h4>Our notes</h4><p class="sub">${esc(p.scoreNotes)}</p>` +
       '<div class="hint">Only organizers see this.</div></div>'

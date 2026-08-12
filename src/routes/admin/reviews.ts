@@ -43,6 +43,17 @@
 //   NUDGING — one click, and the only act here that leaves the building. Being
 //     undoable is not the question for a note that says "these are waiting";
 //     being repeatable is, so a second one inside the day is refused.
+//   HANDING ONE OVER — one click, and the narrowest act in the room. `?hand=`
+//     opens a card for one proposal, the chair picks one reader, and one empty
+//     row lands on that reader's list. Same law as the hand-out below it: an
+//     empty row holds nobody's work, and the take-back one table down undoes it
+//     for as long as it stays empty.
+//
+// THE LIST IS A LIST, not a wall. Fifty rows a page, plain prev and next links
+// that carry the search with them, and a title search — never a name, because
+// the read underneath is blind and a search predicate is the quietest place a
+// name could get in. A `?open=` link from anywhere in the product is answered
+// with the page that holds that scorecard rather than with the top of the pile.
 //
 // No client script. The scales are radios, the folds are links, the writes are
 // forms — a reviewer on a hotel wifi gets the whole screen in one round trip.
@@ -53,17 +64,21 @@ import { esc, page, backstageShell, deniedPage } from '../../lib/html';
 import { label, FORMAT_KEY, LEVEL_KEY, type LabelKey } from '../../lib/labels';
 import { ScopeError } from '../../queries/admin';
 import {
+  averageOf,
+  handTarget,
+  queuePosition,
   reviewEvent,
   reviewQueue,
   reviewTeam,
   roundStanding,
   stagedReviews,
-  weightedAverage,
-  windowSize,
+  needleOf,
+  pageNumber,
   NUDGE_HOURS,
   PAGE,
-  MOST,
+  SEARCH_MAX,
   TEXT_MARK_MAX,
+  type HandTarget,
   type QueueRow,
   type ReviewEvent,
   type ReviewQueue,
@@ -78,6 +93,7 @@ import {
   upsertReview,
   submitReviews,
   handOutAssignments,
+  handToReviewer,
   takeBackAssignments,
   stepAside,
   openNextRound,
@@ -86,6 +102,7 @@ import {
   HANDOUT_CAP,
   type ReviewOutcome,
   type AssignOutcome,
+  type HandOneOutcome,
   type NudgeOutcome,
   type RoundOutcome,
   type StepAsideOutcome,
@@ -282,6 +299,41 @@ function roundSaid(code: RoundOutcome, round: number): string {
   }
 }
 
+const HAND_CODES: readonly HandOneOutcome[] = [
+  'handed',
+  'already',
+  'decided',
+  'nobody',
+  'moved',
+  'trouble',
+];
+
+function handCode(raw: string | undefined): HandOneOutcome | null {
+  return HAND_CODES.find((c) => c === raw) ?? null;
+}
+
+/**
+ * What handing one proposal to one reader says afterwards. The reader is named
+ * because the chair chose them by name; the proposal is not, because the card
+ * that asked the question is still on the screen underneath the sentence.
+ */
+function handSaid(code: HandOneOutcome, name: string): string {
+  switch (code) {
+    case 'handed':
+      return `${name} has it. It is on their list for this round, with nothing in it yet.`;
+    case 'already':
+      return `${name} already has that one this round, so nothing was written.`;
+    case 'decided':
+      return 'That one has an answer already, so there is nothing to hand out.';
+    case 'nobody':
+      return 'Nobody was chosen, so nothing was handed out.';
+    case 'moved':
+      return 'It moved while you were looking. Read it again, then hand it over.';
+    case 'trouble':
+      return 'That did not go through. Try it once more.';
+  }
+}
+
 const NUDGE_CODES: readonly NudgeOutcome[] = [
   'nudged',
   'recent',
@@ -325,20 +377,46 @@ const queueUrl = (slug: string, q: Record<string, string | number | undefined> =
   return `/admin/${encodeURIComponent(slug)}/reviews${tail ? `?${tail}` : ''}`;
 };
 
+/**
+ * Which slice of the queue a person is looking at: the search they typed and
+ * the page they are on. It rides in every link and every form on the screen,
+ * because a reviewer who saves a mark on page four of "agents" has to come back
+ * to page four of "agents" — a save that returned her to the top of an
+ * unsearched list would lose her place fifty rows at a time.
+ *
+ * The round is not in it: this room is always the round the committee is on,
+ * and every read below is scoped to it.
+ */
+type View = { q: string; page: number };
+
+const HERE: View = { q: '', page: 1 };
+
+/** The two parameters of a view, left out when they are the defaults. */
+const seen = (v: View): Record<string, string | number | undefined> => ({
+  q: v.q || undefined,
+  p: v.page > 1 ? v.page : undefined,
+});
+
 // Back to the top of the list, not to the proposal just saved: `#said` is the
 // outcome sentence, and the band that says how many reviews are staged sits
 // directly under it. Landing on the row instead would scroll both off the
 // screen — which is exactly how a reviewer finishes an evening with eight
 // staged reviews she never submitted (audit risk 1). The row she just saved is
 // the first one under the band anyway, because staged sorts to the top.
-const backTo = (slug: string, note: string, show: number): string =>
-  `${queueUrl(slug, { show: show > PAGE ? show : undefined, note })}#said`;
+const backTo = (slug: string, note: string, v: View): string =>
+  `${queueUrl(slug, { ...seen(v), note })}#said`;
 
 /** Where a hand-out comes back to: the team table, with its own sentence over it. */
 const teamUrl = (
   slug: string,
   q: Record<string, string | number | undefined>
 ): string => `${queueUrl(slug, q)}#team`;
+
+/** Where handing one proposal comes back to: the card that asked, still open. */
+const handUrl = (
+  slug: string,
+  q: Record<string, string | number | undefined>
+): string => `${queueUrl(slug, q)}#hand`;
 
 /* ------------------------------------------------------------------ *
  * One row: a proposal, its scales, and where my marks stand
@@ -408,12 +486,20 @@ function criterion(k: ScorecardKey, mark: string | number | undefined): string {
   );
 }
 
-/** A weighted average, to one decimal. One number, one word for what it is. */
-function weighted(card: ScorecardKey[], scores: Scores): string {
-  const value = weightedAverage(card, scores);
-  return value === null
+/**
+ * An average, to one decimal, and the true word for it.
+ *
+ * "3.3 weighted" over three marks on a card where every line counts the same is
+ * a plain mean claiming an arithmetic nobody asked for — so the word is only
+ * printed when the lines this reviewer marked carry more than one weight
+ * between them. When they do not, the number says what it is: an average.
+ */
+function mean(card: ScorecardKey[], scores: Scores): string {
+  const a = averageOf(card, scores);
+  return a === null
     ? ''
-    : `<span class="score">${value.toFixed(1)}</span> <span class="sub">weighted</span>`;
+    : `<span class="score">${a.value.toFixed(1)}</span> ` +
+      `<span class="sub">${a.weighted ? 'weighted average' : 'average'}</span>`;
 }
 
 /**
@@ -464,15 +550,19 @@ function rowHead(row: QueueRow, ev: ReviewEvent): string {
   );
 }
 
-function abstractBlock(row: QueueRow, slug: string, show: number, open: boolean): string {
+function abstractBlock(row: QueueRow, slug: string, v: View, open: boolean): string {
   const text = (row.abstract ?? '').trim();
   if (!text) {
     return '<p class="sub" style="margin-top:10px">Nothing written in the body of this one.</p>';
   }
   const folded = clip(text);
   const anchor = `#p-${encodeURIComponent(row.id)}`;
-  const wide = queueUrl(slug, { show: show > PAGE ? show : undefined, open: row.id }) + anchor;
-  const shut = queueUrl(slug, { show: show > PAGE ? show : undefined }) + anchor;
+  // `p` rides even on page one, because a bare ?open= is the shape a deep link
+  // from anywhere else arrives in — and that shape is answered with a redirect
+  // to the page holding the row. A fold-out that looked like a deep link would
+  // bounce through it on every click.
+  const wide = queueUrl(slug, { q: v.q || undefined, p: v.page, open: row.id }) + anchor;
+  const shut = queueUrl(slug, { q: v.q || undefined, p: v.page }) + anchor;
   if (open) {
     return (
       `<div class="abstract" style="font-size:16.5px;margin-top:10px">${paragraphs(text)}</div>` +
@@ -490,13 +580,13 @@ function abstractBlock(row: QueueRow, slug: string, show: number, open: boolean)
 function queueRow(
   row: QueueRow,
   ev: ReviewEvent,
-  show: number,
+  v: View,
   open: boolean,
   stepping: boolean
 ): string {
   const head =
     `<h2 class="display" style="font-size:22px;line-height:1.25">${esc(row.title)}</h2>` +
-    abstractBlock(row, ev.slug, show, open);
+    abstractBlock(row, ev.slug, v, open);
 
   // Stepped aside: finished, and finished with nothing in it. No marks to read
   // back, because there are none — that is the whole point of the row.
@@ -515,7 +605,7 @@ function queueRow(
   // Submitted: fixed for this round. The marks stay legible, the controls go.
   if (row.mySubmittedAt !== null) {
     const marks = marksLine(ev.scorecard, row.myScores);
-    const mean = weighted(ev.scorecard, row.myScores);
+    const average = mean(ev.scorecard, row.myScores);
     return (
       `<div class="card card-pad" id="p-${esc(row.id)}" style="margin-top:14px">` +
       rowHead(row, ev) +
@@ -523,7 +613,7 @@ function queueRow(
       '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">' +
       `<span class="chip s-accepted">Scored ${esc(onDay(row.mySubmittedAt, ev.timezone))}</span>` +
       (marks ? `<span class="sub">${marks}</span>` : '') +
-      (mean ? `<span class="sub">${mean}</span>` : '') +
+      (average ? `<span class="sub">${average}</span>` : '') +
       '</div>' +
       writtenMarks(ev.scorecard, row.myScores) +
       (row.myNote
@@ -535,16 +625,21 @@ function queueRow(
 
   const lines = ev.scorecard.map((k) => criterion(k, row.myScores[k.key])).join('');
   const anchor = `#p-${encodeURIComponent(row.id)}`;
-  const aside = queueUrl(ev.slug, {
-    show: show > PAGE ? show : undefined,
-    stepaside: row.id,
-  }) + anchor;
+  const aside = queueUrl(ev.slug, { ...seen(v), stepaside: row.id }) + anchor;
+  // The chair reads the pile to hand it out, so the act belongs on the row she
+  // is reading — not only on the proposal's own screen one click away.
+  const over = ev.everything
+    ? `<a class="btn btn-quiet" href="${esc(
+        queueUrl(ev.slug, { ...seen(v), hand: row.id }) + '#hand'
+      )}">Hand it to a reader</a>`
+    : '';
 
   const card =
     `<form class="card card-pad" id="p-${esc(row.id)}" method="post" style="margin-top:14px"` +
     ` action="/admin/${encodeURIComponent(ev.slug)}/reviews/stage">` +
     `<input type="hidden" name="on" value="${esc(row.id)}">` +
-    `<input type="hidden" name="show" value="${show}">` +
+    `<input type="hidden" name="q" value="${esc(v.q)}">` +
+    `<input type="hidden" name="p" value="${v.page}">` +
     rowHead(row, ev) +
     head +
     `<div style="margin-top:16px">${lines}</div>` +
@@ -554,6 +649,7 @@ function queueRow(
     `${esc(row.myNote ?? '')}</textarea></label>` +
     '<div class="btnrow" style="margin-top:14px">' +
     `<button class="btn btn-primary" type="submit">${esc(say('review.save'))}</button>` +
+    over +
     // The quiet half of the pair. A reviewer who knows the speaker should not
     // have to hunt for the way out, and should not trip over it either.
     (stepping ? '' : `<a class="btn btn-quiet" href="${esc(aside)}">I know this speaker — step aside</a>`) +
@@ -567,7 +663,7 @@ function queueRow(
 
   // The confirm sits under the card rather than inside it: the card is a form
   // already, and a form inside a form is not a thing a browser will send.
-  const shut = queueUrl(ev.slug, { show: show > PAGE ? show : undefined }) + anchor;
+  const shut = queueUrl(ev.slug, seen(v)) + anchor;
   return (
     card +
     '<div class="card card-pad" style="margin-top:10px;border-left:3px solid var(--danger)">' +
@@ -578,10 +674,124 @@ function queueRow(
     `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/step-aside"` +
     ' class="btnrow" style="margin-top:12px">' +
     `<input type="hidden" name="on" value="${esc(row.id)}">` +
-    `<input type="hidden" name="show" value="${show}">` +
+    `<input type="hidden" name="q" value="${esc(v.q)}">` +
+    `<input type="hidden" name="p" value="${v.page}">` +
     '<button class="btn btn-danger" type="submit">Step aside</button>' +
     `<a class="btn btn-quiet" href="${esc(shut)}">Keep it on my list</a>` +
     '</form></div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * One proposal, one reader
+ * ------------------------------------------------------------------ */
+
+/**
+ * The card `?hand=<proposal>` opens: this one proposal, the committee, and one
+ * button.
+ *
+ * The round-robin below hands out a pile. This hands out a proposal — the act
+ * a chair reaches for when one arrives late, when the person who knows the
+ * subject should see it, or when a reader who is drowning should not get any
+ * more. It is a deciders' control, and it names the proposal out loud: the
+ * queue is blind, but the chair handing work out is not reading blind, and
+ * "hand this one over" is not a question that can be asked without saying
+ * which one.
+ *
+ * Each reader's line carries what they are already holding, because the fix
+ * for one person holding a whole call is being able to see it at the moment of
+ * choosing. Whoever already has this proposal is named in a sentence instead of
+ * offered as a choice — the row exists, and a second one is not a thing the
+ * schema will hold.
+ */
+function handCard(
+  ev: ReviewEvent,
+  team: TeamReader[],
+  target: HandTarget | null,
+  v: View,
+  said: string | null
+): string {
+  const shut = queueUrl(ev.slug, seen(v));
+  const sentence = said
+    ? `<div class="standing" role="status" style="margin-top:12px">${esc(said)}</div>`
+    : '';
+  const head = `<h2 class="display" style="font-size:22px">${esc(say('review.assign'))}</h2>`;
+  const framed = (inner: string): string =>
+    `<section class="sec" id="hand"><div class="card card-pad">${head}${inner}</div></section>`;
+
+  if (!target) {
+    return framed(
+      sentence +
+        '<p class="sub" style="margin-top:10px">That proposal is not on this conference, so ' +
+        'there is nothing to hand out.</p>' +
+        `<p style="margin:10px 0 0"><a class="link" href="${esc(shut)}">Back to the list</a></p>`
+    );
+  }
+
+  const title = `<p style="margin-top:10px;font-weight:640">${esc(target.title)}</p>`;
+
+  if (!target.undecided) {
+    return framed(
+      sentence +
+        title +
+        '<p class="sub" style="margin-top:6px">This one has an answer already, so it is off ' +
+        'the committee&#39;s list. Nothing can be handed out on it.</p>' +
+        `<p style="margin:10px 0 0"><a class="link" href="/admin/${encodeURIComponent(ev.slug)}` +
+        `/submissions/${encodeURIComponent(target.id)}">See where it stands</a>` +
+        `<span class="sep"> · </span><a class="link" href="${esc(shut)}">Back to the list</a></p>`
+    );
+  }
+
+  const holding = team.filter((r) => target.holders.includes(r.personId));
+  const free = team.filter((r) => !target.holders.includes(r.personId));
+  const held =
+    holding.length > 0
+      ? `<p class="sub" style="margin-top:6px">${esc(
+          `Already reading it: ${holding.map((r) => r.name).join(', ')}.`
+        )}</p>`
+      : '';
+
+  if (free.length === 0) {
+    return framed(
+      sentence +
+        title +
+        held +
+        '<p class="sub" style="margin-top:6px">Everyone who reads on this conference already ' +
+        'has this one.</p>' +
+        `<p style="margin:10px 0 0"><a class="link" href="${esc(shut)}">Back to the list</a></p>`
+    );
+  }
+
+  // Nothing is ticked to begin with. A default here would be a name the chair
+  // did not choose, on a control whose whole point is choosing the name.
+  const who = free
+    .map(
+      (r) =>
+        '<label class="radio"><input type="radio" name="who" value="' +
+        `${esc(r.personId)}"><span><span class="rname">${esc(r.name)}</span>` +
+        `<span class="rsub"> · ${esc(
+          r.assigned === 0 ? 'holding nothing' : `holding ${num(r.assigned)}`
+        )}</span></span></label>`
+    )
+    .join('');
+
+  return framed(
+    sentence +
+      title +
+      held +
+      `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/hand-one">` +
+      `<input type="hidden" name="on" value="${esc(target.id)}">` +
+      `<input type="hidden" name="q" value="${esc(v.q)}">` +
+      `<input type="hidden" name="p" value="${v.page}">` +
+      '<div class="f-lab" style="margin:14px 0 8px">Who should read this one' +
+      '<span class="opt">what each of them is already holding is beside their name</span></div>' +
+      `<div class="btnrow" style="flex-wrap:wrap">${who}</div>` +
+      '<div class="btnrow" style="margin-top:16px;align-items:center">' +
+      '<button class="btn btn-primary" type="submit">Hand it over</button>' +
+      `<a class="btn btn-quiet" href="${esc(shut)}">Not now</a>` +
+      '<span class="sub">It lands on their list empty. Taking it back is one button below, ' +
+      'until they write in it.</span>' +
+      '</div></form>'
   );
 }
 
@@ -592,17 +802,24 @@ function queueRow(
 // D-026 tiers have no §6 entry, so no label key exists for them; the same
 // literal map the rest of backstage uses is the honest place for them.
 //
-// GAP, for the doc owner, on the same shelf: §1.23 gained three facts this
-// room now shows and §6 has a row for none of them — "Stepped aside" (a review
-// finished with nothing in it), "Nudge" (the chair's reminder), and the word
-// "weighted" beside an average. They are written as literals here and in
-// settings until §6 carries them; when it does, they move and these go.
+// GAP, for the doc owner, on the same shelf: §1.23 gained four facts this room
+// now shows and §6 has a row for none of them — "Stepped aside" (a review
+// finished with nothing in it), "Nudge" (the chair's reminder), and the two
+// words an average may carry, "average" and "weighted average", which are not
+// interchangeable: the second is only true when the marked lines carry
+// different weights. They are written as literals here and in settings until §6
+// carries them; when it does, they move and these go.
+// Word for word what settings says (STANDING_WORD there), because two screens
+// naming the same standing differently is how a team list stops being read.
+// 'viewer' and 'reviewer' are two standings and two words: one reads the whole
+// backstage, the other reads only what was handed to them.
 const STANDING: Record<string, string> = {
   organizer: 'Organizer',
   owner: 'Owner',
   approver: 'Approver',
   editor: 'Editor',
-  viewer: 'Reviewer',
+  viewer: 'Viewer',
+  reviewer: 'Reviewer',
 };
 
 /** One reader's line: what they are carrying, and how far in they are. */
@@ -753,7 +970,7 @@ function handOutForm(ev: ReviewEvent, team: TeamReader[], pile: number): string 
     .join('');
 
   return (
-    `<form class="card card-pad" method="post" style="margin-top:16px"` +
+    `<form class="card card-pad" id="handout" method="post" style="margin-top:16px"` +
     ` action="/admin/${encodeURIComponent(ev.slug)}/reviews/hand-out">` +
     '<div class="f-lab" style="margin-bottom:8px">Give every undecided proposal to</div>' +
     `<div class="btnrow">${each.join('')}<span class="sub">readers</span></div>` +
@@ -766,6 +983,39 @@ function handOutForm(ev: ReviewEvent, team: TeamReader[], pile: number): string 
     'Anyone already holding one keeps it.</span>' +
     '</div>' +
     '</form>'
+  );
+}
+
+/**
+ * The proposals that came in after the pile went out.
+ *
+ * A hand-out is a deliberate act on the pile as it stood, and nothing is
+ * assigned quietly afterwards — so a proposal sent in this morning is on
+ * nobody's list, and says so on its own screen, while a reader's list from last
+ * week still holds three hundred. Both facts are true, and read together they
+ * look like a contradiction unless somebody says this sentence. This is the
+ * sentence, with the two ways out beside it.
+ */
+function newArrivals(ev: ReviewEvent, standing: RoundStanding): string {
+  const n = standing.unassigned;
+  if (n === 0) return '';
+  const said =
+    n === 1
+      ? 'One undecided proposal is on nobody’s list this round. It came in after the pile ' +
+        'was handed out, and nothing is assigned without you — so it waits here until you ' +
+        'hand it out.'
+      : `${num(n)} undecided proposals are on nobody’s list this round. They came in after ` +
+        'the pile was handed out, and nothing is assigned without you — so they wait here ' +
+        'until you hand them out.';
+  return (
+    '<div class="notebox" style="margin-top:16px">' +
+    `<p style="margin:0">${esc(said)}</p>` +
+    '<p style="margin:8px 0 0">' +
+    '<a class="link" href="#handout">Hand out again — it only gives out what nobody holds</a>' +
+    '<span class="sep"> · </span>' +
+    `<a class="link" href="/admin/${encodeURIComponent(ev.slug)}/submissions?f=undecided">` +
+    'Open one and hand it to a reader yourself</a></p>' +
+    '</div>'
   );
 }
 
@@ -810,6 +1060,7 @@ function whoReadsWhat(
     '</tr></thead><tbody>' +
     team.map((r) => teamRow(r, ev, nowMs)).join('') +
     '</tbody></table></div>' +
+    newArrivals(ev, standing) +
     (pile > 0
       ? handOutForm(ev, team, pile)
       : '<p class="sub" style="margin-top:16px">Nothing is undecided on this program, ' +
@@ -823,15 +1074,75 @@ function whoReadsWhat(
  * The queue
  * ------------------------------------------------------------------ */
 
+/**
+ * The search box. Titles, and the screen says so — a reviewer who types a
+ * speaker's name into this and gets nothing should be told why by the label
+ * rather than left guessing whether the search is broken or the room is blind.
+ *
+ * It appears when there is more of the list than one page holds, or when a
+ * search is already on. Eight proposals do not need finding; a control that has
+ * nothing to do is a control that teaches people to stop reading the screen.
+ */
+function searchBar(ev: ReviewEvent, q: ReviewQueue, v: View): string {
+  if (q.total <= PAGE && v.q === '') return '';
+  return (
+    '<div class="searchbar">' +
+    `<form method="get" action="/admin/${encodeURIComponent(ev.slug)}/reviews"` +
+    ' style="display:contents">' +
+    `<input type="text" name="q" value="${esc(v.q)}" maxlength="${SEARCH_MAX}" ` +
+    'placeholder="Search these titles" aria-label="Search these titles">' +
+    '<button class="btn" type="submit">Search</button>' +
+    '</form>' +
+    (v.q ? `<a class="link" href="${esc(queueUrl(ev.slug))}">Clear the search</a>` : '') +
+    '</div>'
+  );
+}
+
+/**
+ * Where in the list this page sits, and the two plain doors out of it.
+ *
+ * Links rather than a control: every one of them is a whole address, so the
+ * back button, a bookmark and a middle click all behave, and the search and the
+ * page number ride together because losing either one costs a reviewer her
+ * place fifty rows at a time.
+ */
+function pager(ev: ReviewEvent, q: ReviewQueue, v: View): string {
+  const first = (q.page - 1) * PAGE + 1;
+  const last = first + q.shown - 1;
+  const showing =
+    q.matching === 0
+      ? ''
+      : q.pages === 1
+        ? `Showing all ${num(q.matching)}.`
+        : `Showing ${num(first)}–${num(last)} of ${num(q.matching)}.`;
+  const about = v.q ? ` Matching “${v.q}”.` : '';
+  if (q.pages <= 1) {
+    return `<p class="sub" style="margin-top:20px">${esc(showing + about)}</p>`;
+  }
+  const back = queueUrl(ev.slug, { q: v.q || undefined, p: q.page > 2 ? q.page - 1 : undefined });
+  const on = queueUrl(ev.slug, { q: v.q || undefined, p: q.page + 1 });
+  return (
+    '<div class="sec" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">' +
+    (q.page > 1 ? `<a class="btn" href="${esc(back)}">← The ${num(PAGE)} before these</a>` : '') +
+    (q.page < q.pages ? `<a class="btn" href="${esc(on)}">The next ${num(PAGE)} →</a>` : '') +
+    `<span class="sub">${esc(`${showing}${about} Page ${num(q.page)} of ${num(q.pages)}.`)}</span>` +
+    '</div>'
+  );
+}
+
 function queuePage(
   principal: Principal,
   ev: ReviewEvent,
   q: ReviewQueue,
   opts: {
-    show: number;
+    view: View;
     open: string | null;
+    /** True when an ?open= link named something this queue does not hold. */
+    openMissed: boolean;
     note: string | null;
     stepaside: string | null;
+    /** The ?hand= card, when one was asked for: its proposal and its sentence. */
+    hand: { target: HandTarget | null; said: string | null } | null;
     team: TeamReader[];
     /** The sentence the last act on the chair's half of the room left behind. */
     teamSaid: string | null;
@@ -840,15 +1151,32 @@ function queuePage(
     nowMs: number;
   }
 ): string {
+  const v = opts.view;
   const note = noteFor(opts.note ?? undefined);
   // The event's timezone is already in the footer of every backstage screen;
   // floating it into this counts line as well costs a phone a whole line and
   // says nothing twice.
   const round = esc(say('review.round', { n: num(q.round) }));
-  // `#said` — where every save comes back to, with the staged band under it.
-  const said = note
-    ? `<div class="sec standing" id="said" role="status">${esc(note)}</div>`
+  // `#said` — where every save comes back to, with the staged band under it. A
+  // deep link that named a proposal this queue does not hold says so in the
+  // same place, because a link that lands nowhere is worse than one that lands
+  // with an explanation.
+  const missed = opts.openMissed
+    ? ev.everything
+      ? 'That proposal is not in this round’s queue. It has either been decided or was ' +
+        'never sent in.'
+      : 'That proposal is not on your list this round, so there is nothing here to score.'
+    : null;
+  const sentence = note ?? missed;
+  const said = sentence
+    ? `<div class="sec standing" id="said" role="status">${esc(sentence)}</div>`
     : '<span id="said"></span>';
+  // The chair's control for one proposal. It renders only for the standing that
+  // may hand work out, and only when the address asked for it.
+  const hand =
+    ev.everything && opts.hand
+      ? handCard(ev, opts.team, opts.hand.target, v, opts.hand.said)
+      : '';
   const team =
     ev.everything && opts.standing
       ? whoReadsWhat(
@@ -898,7 +1226,7 @@ function queuePage(
           'The rest of the pile is not yours to read, and there is nothing here you are ' +
           `keeping anyone waiting on.</p>${door}</div>`;
 
-    return shell(principal, ev, head + empty + team);
+    return shell(principal, ev, head + hand + empty + team);
   }
 
   const staged =
@@ -931,24 +1259,24 @@ function queuePage(
                 `${num(q.recused)} stepped aside. That's everything on your list.`
             )}</b></div>`;
 
-  const rows = q.rows
-    .map((r) => queueRow(r, ev, opts.show, opts.open === r.id, opts.stepaside === r.id))
-    .join('');
-
-  // Three honest endings, and never a button that would come back unchanged:
-  // more to fetch, all of it already here, or a screenful that has reached its
-  // ceiling — in which case the rest arrive as these ones are finished.
-  const showing = `Showing ${esc(num(q.shown))} of ${esc(num(q.total))}.`;
-  const more =
-    q.shown >= q.total
-      ? `<p class="sub" style="margin-top:20px">Showing all ${esc(num(q.total))}.</p>`
-      : opts.show < MOST
-        ? '<div class="sec" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">' +
-          `<a class="btn" href="${esc(queueUrl(ev.slug, { show: opts.show + PAGE }))}">` +
-          `Show ${esc(num(Math.min(PAGE, q.total - q.shown)))} more</a>` +
-          `<span class="sub">${showing}</span></div>`
-        : `<p class="sub" style="margin-top:20px">${showing} The rest come up as you ` +
-          'work through these.</p>';
+  // Nothing on this page, and three different reasons for it: a search that
+  // reaches nothing, an address asking for a page past the end, or a list that
+  // is genuinely empty (handled above). Each one names its own way back.
+  const list =
+    q.rows.length > 0
+      ? q.rows
+          .map((r) => queueRow(r, ev, v, opts.open === r.id, opts.stepaside === r.id))
+          .join('') + pager(ev, q, v)
+      : q.matching === 0
+        ? '<div class="sec state-out"><h2>Nothing here matches that.</h2>' +
+          `<p>${esc(`No proposal on this list has “${v.q}” in its title.`)} ` +
+          `${esc(say('review.blind'))}</p>` +
+          `<a class="btn btn-primary" href="${esc(queueUrl(ev.slug))}">Back to the whole list →</a>` +
+          '</div>'
+        : '<div class="sec state-out"><h2>That page is past the end.</h2>' +
+          `<p>${esc(`There ${q.pages === 1 ? 'is one page' : `are ${num(q.pages)} pages`} in this list.`)}</p>` +
+          `<a class="btn btn-primary" href="${esc(queueUrl(ev.slug, { q: v.q || undefined }))}">` +
+          'Back to the first page →</a></div>';
 
   // The exception, said out loud. A chair reading three hundred proposals
   // should know she is reading them because she hands them out, not because
@@ -983,7 +1311,11 @@ function queuePage(
     '</div>' +
     said;
 
-  return shell(principal, ev, head + staged + done + team + rows + more);
+  return shell(
+    principal,
+    ev,
+    head + hand + staged + done + team + searchBar(ev, q, v) + list
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -1011,16 +1343,16 @@ function confirmPage(
 
   const list = staged
     .map((s) => {
-      const mean = weighted(ev.scorecard, s.scores);
+      const average = mean(ev.scorecard, s.scores);
       const marks = marksLine(ev.scorecard, s.scores);
       return (
         '<div style="padding:14px 18px;border-bottom:1px solid var(--line-soft)">' +
         `<div style="font-weight:640">${esc(s.title)}</div>` +
-        (marks || mean
+        (marks || average
           ? '<div class="sub" style="margin-top:4px">' +
             marks +
-            (marks && mean ? '<span class="sep"> · </span>' : '') +
-            mean +
+            (marks && average ? '<span class="sep"> · </span>' : '') +
+            average +
             '</div>'
           : '') +
         (s.note ? `<div class="sub" style="margin-top:5px">${esc(s.note)}</div>` : '') +
@@ -1101,6 +1433,18 @@ async function enter(
 const HTML = { 'content-type': 'text/html; charset=utf-8' };
 
 /**
+ * The slice of the queue a form came back from. Same treatment as the query
+ * string it was rendered from: a stranger's word until it is trimmed, folded
+ * and counted, because a form field is as easy to hand-write as an address.
+ */
+function viewFrom(form: Record<string, unknown>): View {
+  return {
+    q: needleOf(typeof form['q'] === 'string' ? form['q'] : undefined),
+    page: pageNumber(typeof form['p'] === 'string' ? form['p'] : undefined),
+  };
+}
+
+/**
  * What came back off the card, checked line by line against the card itself.
  *
  * A scale keeps a whole number inside its own range; a select keeps a word
@@ -1144,13 +1488,52 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
       return c.html(confirmPage(principal, ev, staged));
     }
 
-    const show = windowSize(c.req.query('show'));
-    // The team read and the round read only happen for the standing that may
-    // hand the pile out, so a reviewer's screen costs what it costed before.
-    const [q, team, standing] = await Promise.all([
-      reviewQueue(c.env.DB, principal, ev, { show }),
+    const view: View = {
+      q: needleOf(c.req.query('q')),
+      page: pageNumber(c.req.query('p')),
+    };
+    const openId = (c.req.query('open') ?? '').trim();
+
+    // A deep link arrives as an id and nothing else — a proposal's, or the id
+    // of a review row on it — and the queue it points into is paged, so the id
+    // alone is not an address. Turn it into one: the page holding that row,
+    // with the row's own anchor on the end.
+    //
+    // THE REDIRECT CANNOT LOOP. It fires only when the address is not already
+    // the canonical one — no page asked for, or the wrong page asked for — and
+    // what it sends back always names the right page, so the second request
+    // renders. Every ?open= link this file writes already carries its page.
+    let openMissed = false;
+    if (openId) {
+      const asked = c.req.query('p');
+      let spot = await queuePosition(c.env.DB, principal, ev, openId, view.q);
+      // Searched down to a page that does not hold it: the proposal wins over
+      // the search, and the address comes back without one.
+      const dropSearch = spot === null && view.q !== '';
+      if (dropSearch) spot = await queuePosition(c.env.DB, principal, ev, openId, '');
+      if (spot === null) {
+        openMissed = true;
+      } else if (dropSearch || asked === undefined || spot.page !== view.page) {
+        return c.redirect(
+          queueUrl(ev.slug, {
+            q: dropSearch ? undefined : view.q || undefined,
+            p: spot.page,
+            open: spot.submissionId,
+          }) + `#p-${encodeURIComponent(spot.submissionId)}`,
+          303
+        );
+      }
+    }
+
+    // The team read, the round read and the one-proposal card only happen for
+    // the standing that may hand work out, so a reviewer's screen costs what it
+    // costed before.
+    const handAsked = ev.everything ? (c.req.query('hand') ?? '').trim() : '';
+    const [q, team, standing, target] = await Promise.all([
+      reviewQueue(c.env.DB, principal, ev, { page: view.page, q: view.q }),
       ev.everything ? reviewTeam(c.env.DB, principal, ev) : Promise.resolve([]),
       ev.everything ? roundStanding(c.env.DB, principal, ev) : Promise.resolve(null),
+      handAsked ? handTarget(c.env.DB, principal, ev, handAsked) : Promise.resolve(null),
     ]);
 
     // One act happened, so one sentence comes back. Each code is checked
@@ -1159,16 +1542,20 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     const rnd = ev.everything ? roundCode(c.req.query('round')) : null;
     const nudged = ev.everything ? nudgeCode(c.req.query('nudged')) : null;
     // A name off the address bar would be a stranger's word. This one is
-    // matched back to the committee the screen already read.
-    const nudgedWho = c.req.query('who');
-    const nudgedName = team.find((r) => r.personId === nudgedWho)?.name ?? 'That reader';
+    // matched back to the committee the screen already read — the nudge and the
+    // one-proposal hand both name a reader, and both name them this way.
+    const whoAsked = c.req.query('who');
+    const whoName = team.find((r) => r.personId === whoAsked)?.name ?? 'That reader';
+    const handed = ev.everything ? handCode(c.req.query('handed')) : null;
 
     return c.html(
       queuePage(principal, ev, q, {
-        show,
-        open: c.req.query('open') ?? null,
+        view,
+        open: openId || null,
+        openMissed,
         note: c.req.query('note') ?? null,
         stepaside: c.req.query('stepaside') ?? null,
+        hand: handAsked ? { target, said: handed ? handSaid(handed, whoName) : null } : null,
         team,
         standing,
         opening: ev.everything && c.req.query('open_round') === String(ev.round + 1),
@@ -1178,7 +1565,7 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
           : rnd
             ? roundSaid(rnd, ev.round)
             : nudged
-              ? nudgeSaid(nudged, nudgedName, tally(c.req.query('open_left')))
+              ? nudgeSaid(nudged, whoName, tally(c.req.query('open_left')))
               : null,
       })
     );
@@ -1192,9 +1579,9 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     const { principal, ev } = opened;
 
     const form = await c.req.parseBody();
-    const show = windowSize(typeof form['show'] === 'string' ? form['show'] : undefined);
+    const view = viewFrom(form);
     const on = typeof form['on'] === 'string' ? form['on'] : '';
-    if (!on) return c.redirect(backTo(ev.slug, 'moved', show), 303);
+    if (!on) return c.redirect(backTo(ev.slug, 'moved', view), 303);
 
     const note = typeof form['note'] === 'string' ? form['note'].slice(0, 2000) : null;
     const outcome = await upsertReview(
@@ -1206,7 +1593,7 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
       scoresFrom(form, ev.scorecard),
       note
     );
-    return c.redirect(backTo(ev.slug, outcome, show), 303);
+    return c.redirect(backTo(ev.slug, outcome, view), 303);
   });
 
   // ONE CONFIRM, AND IT DOES NOT COME BACK. The link put the sentence on the
@@ -1218,10 +1605,10 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     const { principal, ev } = opened;
 
     const form = await c.req.parseBody();
-    const show = windowSize(typeof form['show'] === 'string' ? form['show'] : undefined);
+    const view = viewFrom(form);
     const on = typeof form['on'] === 'string' ? form['on'] : '';
     const outcome = await stepAside(c.env.DB, principal, ev.id, ev.round, on);
-    return c.redirect(backTo(ev.slug, `aside_${outcome}`, show), 303);
+    return c.redirect(backTo(ev.slug, `aside_${outcome}`, view), 303);
   });
 
   // SECOND PASS — the number the reviewer read rides in the form, and the
@@ -1238,7 +1625,9 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
       10
     );
     const res = await submitReviews(c.env.DB, principal, ev.id, ev.round, expected);
-    return c.redirect(backTo(ev.slug, res.outcome, PAGE), 303);
+    // Submitting empties the top of the list, so it comes back to the first
+    // page of it: the rows she was reading are the ones that just went.
+    return c.redirect(backTo(ev.slug, res.outcome, HERE), 303);
   });
 
   // THE HAND-OUT — one guarded batch, one sentence back. The refusal for a
@@ -1271,6 +1660,43 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     } catch (e) {
       if (e instanceof ScopeError) {
         return new Response(deniedPage('Handing this pile out is not yours to do.'), {
+          status: 403,
+          headers: HTML,
+        });
+      }
+      throw e;
+    }
+  });
+
+  // ONE PROPOSAL TO ONE READER — the act ?hand= opens, and the answer to a
+  // late arrival that is on nobody's list. It comes back to the same card so a
+  // chair can hand the same proposal to a second reader without finding it
+  // again, and the card carries the sentence for what just happened.
+  app.post('/admin/:eventSlug/reviews/hand-one', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const opened = await enter(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'), slug);
+    if (opened instanceof Response) return opened;
+    const { principal, ev } = opened;
+
+    const form = await c.req.parseBody();
+    const view = viewFrom(form);
+    const on = typeof form['on'] === 'string' ? form['on'] : '';
+    const who = typeof form['who'] === 'string' ? form['who'] : '';
+
+    try {
+      const outcome = await handToReviewer(c.env.DB, principal, ev.id, ev.round, on, who);
+      return c.redirect(
+        handUrl(ev.slug, {
+          ...seen(view),
+          hand: on || undefined,
+          handed: outcome,
+          who: who || undefined,
+        }),
+        303
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) {
+        return new Response(deniedPage('Handing this one out is not yours to do.'), {
           status: 403,
           headers: HTML,
         });

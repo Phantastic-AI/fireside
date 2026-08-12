@@ -14,7 +14,7 @@
 // or deletes a submitted row.
 
 import { checkedBatch, guard, newId, now } from '../lib/db';
-import { requireScope, READ_ROLES } from '../queries/admin';
+import { requireScope, REVIEW_ROLES } from '../queries/admin';
 import {
   MY_STAGED_SQL,
   UNTOUCHED_SQL,
@@ -90,7 +90,7 @@ export async function upsertReview(
   scores: Scores,
   note: string | null
 ): Promise<ReviewOutcome> {
-  requireScope(principal, eventId, READ_ROLES);
+  requireScope(principal, eventId, REVIEW_ROLES);
 
   const existing = await db
     .prepare(
@@ -198,7 +198,7 @@ export async function submitReviews(
   expectedCount: number,
   nowMs: number = now()
 ): Promise<SubmitResult> {
-  requireScope(principal, eventId, READ_ROLES);
+  requireScope(principal, eventId, REVIEW_ROLES);
   if (!Number.isInteger(expectedCount) || expectedCount < 1) {
     return { outcome: 'nothing', submitted: 0 };
   }
@@ -418,6 +418,125 @@ export async function handOutAssignments(
 }
 
 /**
+ * The closed set for handing one proposal to one reader.
+ *
+ *   'handed'  — one empty row exists now, on that reader's list, this round
+ *   'already' — that reader already holds it this round; nothing was written
+ *   'decided' — the proposal has an answer, or is not on this event
+ *   'nobody'  — nobody was chosen, or that person does not read here
+ *   'moved'   — one of those facts changed between the reading and the click
+ *   'trouble' — something unexpected; nothing was written
+ */
+export type HandOneOutcome =
+  | 'handed'
+  | 'already'
+  | 'decided'
+  | 'nobody'
+  | 'moved'
+  | 'trouble';
+
+/**
+ * One proposal, one reader, one row.
+ *
+ * The round-robin above is how a pile is shared out; this is how a chair says
+ * "you read this one" — the act she reached for when a proposal arrived late,
+ * or when the one person who knows the subject should see it. Without it the
+ * only assignment in the product was "give everything to everyone", which is
+ * how one reader ends an afternoon holding a whole call.
+ *
+ * ONE CLICK, on the same reading as the hand-out: an empty row holds nobody's
+ * work, and taking it back is one button on the team table. Nothing leaves the
+ * building and no average moves.
+ *
+ * The four guards are the four facts the screen showed, checked again inside
+ * the batch: the round the page was rendered in is still the round the
+ * committee is on, the proposal is still undecided, it is not already on that
+ * reader's list, and that person may read here. The third is also a UNIQUE
+ * constraint in the schema, so it cannot be got round — the guard exists to
+ * turn a constraint failure into a sentence a chair can act on.
+ */
+export async function handToReviewer(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  round: number,
+  submissionId: string,
+  personId: string
+): Promise<HandOneOutcome> {
+  requireDecider(principal, eventId);
+  if (!submissionId || !personId) return 'nobody';
+
+  const before = await db
+    .prepare(
+      // `IS` rather than `=` on internal_role, for the reason nudgeReviewer
+      // states: null = 'organizer' is null, which is neither yes nor no.
+      `SELECT s.state AS state,
+              (SELECT COUNT(*) FROM review rv
+                WHERE rv.submission_id = s.id
+                  AND rv.reviewer_person_id = ?2 AND rv.round = ?3) AS held,
+              (SELECT COUNT(*) FROM person p
+                WHERE p.id = ?2
+                  AND (p.internal_role IS 'organizer'
+                       OR EXISTS (SELECT 1 FROM event_role er
+                                   WHERE er.event_id = ?4 AND er.person_id = p.id))) AS may_read
+         FROM submission s WHERE s.id = ?1 AND s.event_id = ?4`
+    )
+    .bind(submissionId, personId, round, eventId)
+    .first<{ state: string; held: number; may_read: number }>();
+
+  if (!before || before.state !== 'submitted') return 'decided';
+  if (before.may_read !== 1) return 'nobody';
+  if (before.held > 0) return 'already';
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(db, 'SELECT 1 FROM event WHERE id = ?1 AND current_round <> ?2', eventId, round),
+        guard(
+          db,
+          `SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM submission s
+                                       WHERE s.id = ?1 AND s.event_id = ?2
+                                         AND s.state = 'submitted')`,
+          submissionId,
+          eventId
+        ),
+        guard(
+          db,
+          `SELECT 1 FROM review rv
+            WHERE rv.submission_id = ?1 AND rv.reviewer_person_id = ?2 AND rv.round = ?3`,
+          submissionId,
+          personId,
+          round
+        ),
+        guard(
+          db,
+          `SELECT 1 FROM person p
+            WHERE p.id = ?1 AND p.internal_role IS NOT 'organizer'
+              AND NOT EXISTS (SELECT 1 FROM event_role er
+                               WHERE er.event_id = ?2 AND er.person_id = p.id)`,
+          personId,
+          eventId
+        ),
+        db
+          .prepare(
+            `INSERT INTO review
+               (id, submission_id, reviewer_person_id, round, scores, note, submitted_at)
+             VALUES (?1, ?2, ?3, ?4, '{}', NULL, NULL)`
+          )
+          .bind(newId('rev'), submissionId, personId, round),
+      ],
+      [0, 0, 0, 0, 1],
+      STALE
+    );
+  } catch (e) {
+    const outcome = outcomeOf(e, 'handToReviewer');
+    return outcome === 'moved' ? 'moved' : 'trouble';
+  }
+  return 'handed';
+}
+
+/**
  * Take back the assignments one reader has not written in.
  *
  * The refusal is structural rather than polite: the cohort below is
@@ -519,7 +638,7 @@ export async function stepAside(
   submissionId: string,
   nowMs: number = now()
 ): Promise<StepAsideOutcome> {
-  requireScope(principal, eventId, READ_ROLES);
+  requireScope(principal, eventId, REVIEW_ROLES);
   if (!submissionId) return 'gone';
 
   const existing = await db

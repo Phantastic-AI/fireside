@@ -28,8 +28,19 @@
 // the same standing workflows/decide.ts gates on, read through `everything`
 // below rather than restated here.
 //
-// Scope is READ_ROLES: viewers review. Lena Fischer holds 'viewer' on AI
-// Engineer New York and this is the one backstage screen that is hers.
+// THE SEARCH IS BLIND TOO. A queue row shows a title, so the search reads a
+// title — see TITLE_MATCHES. A predicate that reached `participation` for a
+// name would put an author's identity inside a blind read without leaving a
+// mark on the screen, which is the quietest way this file could be undone.
+//
+// Scope is REVIEW_ROLES, and this file is the only one that uses it: every
+// backstage standing that may read, plus 'reviewer', the standing that is the
+// reading room and nothing else. READ_ROLES stays narrower on purpose — the
+// pile, the proposals and the people carry the names a blind round exists to
+// keep out — so a person whose whole standing is reading passes here and is
+// refused everywhere else. Lena Fischer walks in through this line, and
+// `everything` below stays false for her: deciding is what opens the pile, and
+// 'reviewer' does not decide.
 //
 // TWO FACTS THIS FILE ADDED WHEN THE ROOM GREW, both of them shapes rather
 // than columns, because the schema is the one thing a deadline should not be
@@ -45,7 +56,7 @@
 //   line nobody marked is a missing opinion rather than a nought.
 
 import type { Principal } from '../workflows/account';
-import { requireScope, READ_ROLES } from './admin';
+import { requireScope, REVIEW_ROLES } from './admin';
 import { requireDecider } from '../workflows/decide';
 
 /* ------------------------------------------------------------------ *
@@ -188,6 +199,13 @@ export type ReviewQueue = {
   total: number;
   /** How many of `total` are on screen right now. */
   shown: number;
+  /** The search this list was read under, case-folded. Empty when there is none. */
+  q: string;
+  /** Rows the search reaches inside this view. Equals `total` with no search. */
+  matching: number;
+  /** The page on screen, 1-based, and how many pages `matching` makes. */
+  page: number;
+  pages: number;
   /** Handed to me this round, whichever view I am reading in. */
   assigned: number;
   /** Handed to me this round on ANY proposal, decided since or not. */
@@ -240,6 +258,15 @@ export type RoundStanding = {
   onRecord: number;
   /** Reviews finished by stepping aside this round. */
   stepped: number;
+  /**
+   * Undecided proposals with no review row at all this round — nobody's list.
+   *
+   * This is the number that makes "this one is on nobody's list" and "327
+   * assigned" true on the same evening: a hand-out is a deliberate act on the
+   * pile as it stood, and everything that arrives afterwards waits here until
+   * somebody hands it out. Nothing auto-assigns; the screen says the number.
+   */
+  unassigned: number;
   /** True when the next round already has a scorecard written for it. */
   nextCardExists: boolean;
 };
@@ -304,21 +331,37 @@ function asScores(text: string | null): Scores {
 export const TEXT_MARK_MAX = 600;
 
 /**
- * The window a reviewer reads in one sitting, and its ceiling.
+ * One page of the queue, and the furthest page an address may ask for.
  *
- * The ceiling is not a limit on the work — it is a limit on one page. The
- * order below puts finished reviews last, so submitting a batch drops those
- * rows out of the window and the next oldest proposals move up into it: the
- * queue walks the whole pile a sitting at a time without ever building a
- * thousand-row screen.
+ * Fifty rows is a sitting, and it is what a phone can carry in one round trip.
+ * Three hundred rows on one page is not a queue, it is a wall — which is what
+ * a reviewer holding a whole call was handed before this was a number.
+ *
+ * Paging is by page number rather than by a window that grows, because a
+ * reviewer who saves a mark has to come back to the rows she was reading, and
+ * a page number survives that round trip where a window size cannot.
  */
-export const PAGE = 20;
-export const MOST = 100;
+export const PAGE = 50;
 
-export function windowSize(raw: string | undefined): number {
+/** A ceiling on the offset, not on the work: past this the address is noise. */
+export const MOST_PAGES = 400;
+
+export function pageNumber(raw: string | undefined): number {
   const n = Number.parseInt(raw ?? '', 10);
-  if (!Number.isFinite(n)) return PAGE;
-  return Math.max(PAGE, Math.min(MOST, Math.floor(n / PAGE) * PAGE || PAGE));
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(MOST_PAGES, n);
+}
+
+/** The longest search this file carries. A pasted title is shorter than this. */
+export const SEARCH_MAX = 120;
+
+/**
+ * The search, case-folded for instr(). Not LIKE: D1 refuses a bound LIKE
+ * pattern much past 50 bytes ("pattern too complex"), and a pasted title is
+ * longer than that. instr has no pattern language, so nothing needs escaping.
+ */
+export function needleOf(raw: string | undefined): string {
+  return (raw ?? '').trim().slice(0, SEARCH_MAX).toLowerCase();
 }
 
 /** The most lines one round's scorecard may carry, and the most choices one. */
@@ -417,6 +460,29 @@ export function weightedAverage(card: ScorecardKey[], scores: Scores): number | 
   return bottom === 0 ? null : top / bottom;
 }
 
+/** One average, and whether the word "weighted" is true of it. */
+export type MarksAverage = { value: number; weighted: boolean };
+
+/**
+ * The same arithmetic, with the one fact the screen needs to name it.
+ *
+ * "3.3 weighted" over 4, 2 and 4 on a card where every line counts the same is
+ * a plain mean wearing a word it has not earned — the weights are all 2, so
+ * nothing was weighted by anything. A committee reading that has been told
+ * their scorecard is doing something it is not. `weighted` is true only when
+ * the lines this reviewer actually marked carry more than one weight between
+ * them, because a heavy line nobody answered weights nothing.
+ */
+export function averageOf(card: ScorecardKey[], scores: Scores): MarksAverage | null {
+  const value = weightedAverage(card, scores);
+  if (value === null) return null;
+  const weights = new Set<number>();
+  for (const k of card) {
+    if (k.kind === 'scale' && typeof scores[k.key] === 'number') weights.add(k.weight);
+  }
+  return { value, weighted: weights.size > 1 };
+}
+
 /* ------------------------------------------------------------------ *
  * Queries
  * ------------------------------------------------------------------ */
@@ -451,7 +517,7 @@ export async function reviewEvent(
     .bind(slug)
     .first<EventSqlRow>();
   if (!row) return null;
-  requireScope(principal, row.id, READ_ROLES);
+  requireScope(principal, row.id, REVIEW_ROLES);
   return {
     id: row.id,
     slug: row.slug,
@@ -492,7 +558,51 @@ type QueueCountRow = {
 };
 
 /**
- * My queue for this round: what was handed to me, mine-first.
+ * THE ONE ORDER the queue is read in, and the one a deep link counts positions
+ * against. Two statements order by these names; if they ever ordered by two
+ * different strings, "page 4 of the list" and "the page this proposal is on"
+ * would name different pages, and the ?open= link would land beside its own
+ * scorecard rather than on it.
+ *
+ * The order is the evening's own: what I have staged and not finished sits at
+ * the top, then what I have not touched, then what I have already submitted —
+ * so the boundary between "done for now" and "next" is one line on the screen.
+ * Within each group the longest-waiting proposal comes first.
+ *
+ * The keys are computed as named columns rather than repeated inside each
+ * ORDER BY, because the position count wraps them in a window function and a
+ * window is the last place a long expression should be written twice.
+ */
+const QUEUE_ORDER_COLUMNS =
+  `CASE WHEN rv.id IS NOT NULL AND ${MY_STAGED_SQL} THEN 0 ELSE 1 END AS o_staged,
+   CASE WHEN rv.submitted_at IS NOT NULL THEN 1 ELSE 0 END AS o_done,
+   s.submitted_at IS NULL AS o_nodate,
+   s.submitted_at AS o_waited`;
+
+/**
+ * The same order, by the names above, with the last tie broken on the proposal
+ * itself. The id is named by the caller because the list query joins three
+ * tables that all have one — a bare `id` there is ambiguous, and SQLite says so
+ * rather than guessing.
+ */
+const QUEUE_ORDER_BY = (id: string): string =>
+  `o_staged, o_done, o_nodate, o_waited, ${id}`;
+
+/**
+ * The search, over the title and nothing else.
+ *
+ * A search may only read what the row it filters already shows, and a queue row
+ * shows a title. Reaching into `participation` for a name here would put an
+ * author's identity inside a blind read — the exact fact this file exists to
+ * keep out — and it would do it invisibly, because a search predicate leaves no
+ * mark on the screen. It stays title-only in the chair's view as well: she has
+ * the proposals list for names, and one predicate is one thing to be sure of.
+ */
+const TITLE_MATCHES = (param: string): string => `instr(lower(s.title), ${param}) > 0`;
+
+/**
+ * My queue for this round: what was handed to me, mine-first, one page at a
+ * time, and only what a search reaches when one is asked for.
  *
  * THE ASSIGNMENT PREDICATE IS THE JOIN. `rv.id IS NOT NULL` turns the outer
  * join into "proposals with a review row for me this round", which is the
@@ -501,47 +611,54 @@ type QueueCountRow = {
  * `event.everything`, and it is not a query-string opt-in — it is the standing
  * that lets a person decide, read once, in reviewEvent.
  *
- * The order is the evening's own: what I have staged and not finished sits at
- * the top, then what I have not touched, then what I have already submitted —
- * so the boundary between "done for now" and "next" is one line on the screen,
- * and finished work sinks out of the way instead of being scrolled past twice.
- * Within each group the longest-waiting proposal comes first.
- *
- * Windowed, because the chair's view of a thousand-proposal call is three
- * hundred rows and page weight is a product requirement. `total` is always the
- * truth for the view being read; `shown` is what came back.
+ * Paged, because a call of three hundred proposals is three hundred scorecards
+ * and page weight is a product requirement. `total` is the truth for the view
+ * being read whatever the search says, `matching` is what the search reaches,
+ * and `shown` is what came back on this page — three numbers, because a
+ * masthead that changed its counts when somebody typed would be lying about
+ * the evening.
  */
 export async function reviewQueue(
   db: D1Database,
   principal: Principal,
   event: ReviewEvent,
-  opts: { show?: number } = {}
+  opts: { page?: number; q?: string } = {}
 ): Promise<ReviewQueue> {
-  requireScope(principal, event.id, READ_ROLES);
-  const show = Math.max(PAGE, Math.min(MOST, Math.floor(opts.show ?? PAGE)));
+  requireScope(principal, event.id, REVIEW_ROLES);
+  const page = Math.max(1, Math.min(MOST_PAGES, Math.floor(opts.page ?? 1)));
+  const needle = needleOf(opts.q);
+  const offset = (page - 1) * PAGE;
 
   const MINE = 'rv.reviewer_person_id = ?2 AND rv.round = ?3';
   const ASSIGNED_TO_ME = event.everything ? '' : ' AND rv.id IS NOT NULL';
 
-  const [rowRes, countRes, mineRes] = await db.batch<Record<string, unknown>>([
-    db
-      .prepare(
-        `SELECT s.id, s.title, s.abstract, s.format, s.requested_min, s.level, s.submitted_at,
+  const rowStatement = db
+    .prepare(
+      `SELECT s.id, s.title, s.abstract, s.format, s.requested_min, s.level, s.submitted_at,
                 t.slug AS track_slug, t.name AS track_name, t.colour AS track_colour,
                 rv.scores AS my_scores, rv.note AS my_note,
                 rv.submitted_at AS my_submitted_at,
                 CASE WHEN rv.id IS NOT NULL AND ${MY_STAGED_SQL} THEN 1 ELSE 0 END AS staged,
-                CASE WHEN rv.id IS NOT NULL AND ${RECUSED_SQL} THEN 1 ELSE 0 END AS recused
+                CASE WHEN rv.id IS NOT NULL AND ${RECUSED_SQL} THEN 1 ELSE 0 END AS recused,
+                ${QUEUE_ORDER_COLUMNS}
            FROM submission s
            LEFT JOIN track t ON t.id = s.track_id
            LEFT JOIN review rv ON rv.submission_id = s.id AND ${MINE}
-          WHERE s.event_id = ?1 AND s.state = 'submitted'${ASSIGNED_TO_ME}
-          ORDER BY staged DESC,
-                   CASE WHEN rv.submitted_at IS NOT NULL THEN 1 ELSE 0 END,
-                   s.submitted_at IS NULL, s.submitted_at, s.id
-          LIMIT ?4`
-      )
-      .bind(event.id, principal.personId, event.round, show),
+          WHERE s.event_id = ?1 AND s.state = 'submitted'${ASSIGNED_TO_ME}` +
+        (needle ? ` AND ${TITLE_MATCHES('?6')}` : '') +
+        ` ORDER BY ${QUEUE_ORDER_BY('s.id')}
+          LIMIT ?4 OFFSET ?5`
+    )
+    // Bound exactly as far as the statement reaches: a value bound to a
+    // placeholder the SQL does not carry is an error, not a spare.
+    .bind(
+      ...(needle
+        ? [event.id, principal.personId, event.round, PAGE, offset, needle]
+        : [event.id, principal.personId, event.round, PAGE, offset])
+    );
+
+  const statements = [
+    rowStatement,
     // Both numbers in one pass over the same predicate, so "yours" and "the
     // whole pile" can never be counted from two different piles.
     db
@@ -568,7 +685,30 @@ export async function reviewQueue(
           WHERE s.event_id = ?1 AND rv.reviewer_person_id = ?2 AND rv.round = ?3`
       )
       .bind(event.id, principal.personId, event.round),
-  ]);
+  ];
+
+  // The fourth statement exists only when somebody typed. With no search the
+  // whole view matches, and counting that twice would be a round trip spent
+  // proving what the count above already says.
+  if (needle) {
+    statements.push(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n
+             FROM submission s
+             LEFT JOIN review rv ON rv.submission_id = s.id AND ${MINE}
+            WHERE s.event_id = ?1 AND s.state = 'submitted'${ASSIGNED_TO_ME}
+              AND ${TITLE_MATCHES('?4')}`
+        )
+        .bind(event.id, principal.personId, event.round, needle)
+    );
+  }
+
+  const answered = await db.batch<Record<string, unknown>>(statements);
+  const rowRes = answered[0];
+  const countRes = answered[1];
+  const mineRes = answered[2];
+  const matchRes = answered[3];
 
   const c = rowsOf<QueueCountRow>(countRes)[0];
   const mineCounts = rowsOf<{ mine: number; mine_done: number }>(mineRes)[0];
@@ -596,6 +736,8 @@ export async function reviewQueue(
     myRecused: r.recused === 1,
   }));
 
+  const matching = needle ? (rowsOf<{ n: number }>(matchRes)[0]?.n ?? 0) : total;
+
   return {
     eventId: event.id,
     round: event.round,
@@ -603,6 +745,10 @@ export async function reviewQueue(
     rows,
     total,
     shown: rows.length,
+    q: needle,
+    matching,
+    page,
+    pages: Math.max(1, Math.ceil(matching / PAGE)),
     assigned,
     mine: mineCounts?.mine ?? 0,
     mineDone: mineCounts?.mine_done ?? 0,
@@ -616,6 +762,126 @@ export async function reviewQueue(
     // proposal she has recused herself from would be asking for a mark she is
     // not allowed to give.
     left: total - submitted - recused,
+  };
+}
+
+/** Where one proposal sits in the queue as this person reads it. */
+export type QueueSpot = { submissionId: string; page: number };
+
+/**
+ * The page a deep link has to land on.
+ *
+ * A link from anywhere else in the product carries an id — a proposal's, or the
+ * id of a review row on it — and the queue it points into is paged, so the id
+ * alone is not an address. This counts the row's position in the queue's own
+ * order — QUEUE_ORDER_BY, the names the list itself is read by — and turns it
+ * into the page number that holds it. Null when the row is not in this person's
+ * queue at all, which is a sentence the screen says rather than a dead end.
+ *
+ * A reviewer resolves only her own review rows. She would learn nothing from
+ * anybody else's — this file selects no names — but an id she was never given
+ * is not hers to turn into an address either.
+ */
+export async function queuePosition(
+  db: D1Database,
+  principal: Principal,
+  event: ReviewEvent,
+  rawId: string,
+  q?: string
+): Promise<QueueSpot | null> {
+  requireScope(principal, event.id, REVIEW_ROLES);
+  const id = rawId.trim();
+  if (!id) return null;
+  const needle = needleOf(q);
+
+  const ownRow = event.everything ? '' : ' AND rv.reviewer_person_id = ?3';
+  const found = await db
+    .prepare(
+      `SELECT s.id AS id FROM submission s
+        WHERE s.event_id = ?2
+          AND (s.id = ?1
+               OR EXISTS (SELECT 1 FROM review rv
+                           WHERE rv.id = ?1 AND rv.submission_id = s.id${ownRow}))
+        LIMIT 1`
+    )
+    .bind(...(event.everything ? [id, event.id] : [id, event.id, principal.personId]))
+    .first<{ id: string }>();
+  if (!found) return null;
+
+  const MINE = 'rv.reviewer_person_id = ?2 AND rv.round = ?3';
+  const ASSIGNED_TO_ME = event.everything ? '' : ' AND rv.id IS NOT NULL';
+  const spot = await db
+    .prepare(
+      // The order lives in one place, so the page this counts and the page the
+      // list renders cannot be two different pages. The keys are computed in
+      // the innermost select and the window orders by their names — plain SQL
+      // rather than a subquery inside a window definition.
+      `SELECT pos FROM (
+         SELECT id, ROW_NUMBER() OVER (ORDER BY ${QUEUE_ORDER_BY('id')}) AS pos
+           FROM (SELECT s.id AS id, ${QUEUE_ORDER_COLUMNS}
+                   FROM submission s
+                   LEFT JOIN review rv ON rv.submission_id = s.id AND ${MINE}
+                  WHERE s.event_id = ?1 AND s.state = 'submitted'${ASSIGNED_TO_ME}` +
+        (needle ? ` AND ${TITLE_MATCHES('?5')}` : '') +
+        `)) WHERE id = ?4`
+    )
+    .bind(
+      ...(needle
+        ? [event.id, principal.personId, event.round, found.id, needle]
+        : [event.id, principal.personId, event.round, found.id])
+    )
+    .first<{ pos: number }>();
+  if (!spot) return null;
+  return { submissionId: found.id, page: Math.max(1, Math.ceil(spot.pos / PAGE)) };
+}
+
+/**
+ * One proposal, as the chair reads it before handing it to one reader.
+ *
+ * The title only, because that is all the control needs to name what it is
+ * about to hand out — and the ids of whoever already holds it this round, so
+ * the picker can say "she has it" instead of offering a second copy of the same
+ * row. Reviewer ids are not author identity; this stays as blind as the rest of
+ * the file, and it is decider-only besides.
+ */
+export type HandTarget = {
+  id: string;
+  title: string;
+  /** Undecided — the only state a proposal can be handed out in. */
+  undecided: boolean;
+  /** Readers already holding a row for it this round. */
+  holders: string[];
+};
+
+export async function handTarget(
+  db: D1Database,
+  principal: Principal,
+  event: ReviewEvent,
+  rawId: string
+): Promise<HandTarget | null> {
+  requireDecider(principal, event.id);
+  const id = rawId.trim();
+  if (!id) return null;
+
+  const [oneRes, heldRes] = await db.batch<Record<string, unknown>>([
+    db
+      .prepare('SELECT s.id, s.title, s.state FROM submission s WHERE s.id = ?1 AND s.event_id = ?2')
+      .bind(id, event.id),
+    db
+      .prepare(
+        `SELECT rv.reviewer_person_id AS person_id FROM review rv
+          WHERE rv.submission_id = ?1 AND rv.round = ?2`
+      )
+      .bind(id, event.round),
+  ]);
+
+  const row = rowsOf<{ id: string; title: string; state: string }>(oneRes)[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    title: row.title,
+    undecided: row.state === 'submitted',
+    holders: rowsOf<{ person_id: string }>(heldRes).map((r) => r.person_id),
   };
 }
 
@@ -655,7 +921,7 @@ export async function reviewTeam(
   principal: Principal,
   event: ReviewEvent
 ): Promise<TeamReader[]> {
-  requireScope(principal, event.id, READ_ROLES);
+  requireScope(principal, event.id, REVIEW_ROLES);
   const res = await db
     .prepare(
       `SELECT p.id AS person_id, p.name, er.role AS event_role, p.internal_role,
@@ -712,22 +978,34 @@ export async function roundStanding(
   principal: Principal,
   event: ReviewEvent
 ): Promise<RoundStanding> {
-  requireScope(principal, event.id, READ_ROLES);
-  const row = await db
-    .prepare(
-      `SELECT COUNT(CASE WHEN ${SCORED_SQL} THEN 1 END) AS on_record,
-              COUNT(CASE WHEN ${RECUSED_SQL} THEN 1 END) AS stepped
-         FROM review rv
-         JOIN submission s ON s.id = rv.submission_id
-        WHERE s.event_id = ?1 AND rv.round = ?2`
-    )
-    .bind(event.id, event.round)
-    .first<{ on_record: number; stepped: number }>();
+  requireScope(principal, event.id, REVIEW_ROLES);
+  const [standRes, waitingRes] = await db.batch<Record<string, unknown>>([
+    db
+      .prepare(
+        `SELECT COUNT(CASE WHEN ${SCORED_SQL} THEN 1 END) AS on_record,
+                COUNT(CASE WHEN ${RECUSED_SQL} THEN 1 END) AS stepped
+           FROM review rv
+           JOIN submission s ON s.id = rv.submission_id
+          WHERE s.event_id = ?1 AND rv.round = ?2`
+      )
+      .bind(event.id, event.round),
+    // Undecided and in nobody's hands: the arrivals a hand-out has not reached.
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM submission s
+          WHERE s.event_id = ?1 AND s.state = 'submitted'
+            AND NOT EXISTS (SELECT 1 FROM review rv
+                             WHERE rv.submission_id = s.id AND rv.round = ?2)`
+      )
+      .bind(event.id, event.round),
+  ]);
+  const row = rowsOf<{ on_record: number; stepped: number }>(standRes)[0];
   const next = asObject(event.scorecardsRaw)[String(event.round + 1)];
   return {
     round: event.round,
     onRecord: row?.on_record ?? 0,
     stepped: row?.stepped ?? 0,
+    unassigned: rowsOf<{ n: number }>(waitingRes)[0]?.n ?? 0,
     nextCardExists: Array.isArray(next) && next.length > 0,
   };
 }
@@ -743,7 +1021,7 @@ export async function stagedReviews(
   eventId: string,
   round: number
 ): Promise<StagedReview[]> {
-  requireScope(principal, eventId, READ_ROLES);
+  requireScope(principal, eventId, REVIEW_ROLES);
   const res = await db
     .prepare(
       `SELECT rv.submission_id, s.title, rv.scores, rv.note
