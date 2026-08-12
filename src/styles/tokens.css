@@ -1,0 +1,65 @@
+/* Lifted verbatim from prototype/index.html — the binding visual contract.
+   Change the prototype first, then re-lift. */
+
+/* ============================================================
+   FIRESIDE UI — one token set, two registers.
+   Onstage  = public + speaker. Sched-warm, roomy, serif moment.
+   Backstage = organizer. Calm professional density, ember accent.
+   No webfonts, no network requests, nothing under 13px.
+   ============================================================ */
+
+:root{
+  /* paper + ink */
+  --ink:#221E17; --ink-soft:#3B342A; --muted:#726858; --muted-2:#8E8474;
+  --card:#FFFFFF;
+  --line:#E7DFD3; --line-soft:#F0E9DE; --field-line:#D8CEBE; --placeholder:#B4A996;
+
+  /* ember — the one accent */
+  --ember:#B14D14; --ember-btn:#A94E15; --ember-btn-hi:#93400F;
+  --ember-wash:#FAEEE3; --ember-line:#E9CBAB;
+
+  --go:#1B6E45; --go-wash:#E9F1EB;
+  --danger:#9E241C; --danger-wash:#F8E9E7;
+  --highlight:#FFF1B8;
+
+  /* tracks — the same colour on the call, the list, the agenda, the public page */
+  --t-platform:#186B78;   --t-platform-w:#E2EFF1;
+  --t-practice:#8B3A62;   --t-practice-w:#F7E7EE;
+  --t-leadership:#6E6224; --t-leadership-w:#F2EEDC;
+  --t-delivery:#186B78;   --t-delivery-w:#E2EFF1;
+  --t-reliability:#8B3A62;--t-reliability-w:#F7E7EE;
+
+  --serif:'Iowan Old Style','Palatino Linotype',Palatino,'Book Antiqua',Georgia,'Times New Roman',serif;
+  --sans:ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI Variable Text','Segoe UI','Helvetica Neue',Helvetica,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace;
+
+  --r:10px; --r-sm:7px;
+  --shadow:0 1px 1px rgba(34,30,23,.035), 0 2px 6px rgba(34,30,23,.05);
+  --shadow-lift:0 2px 4px rgba(34,30,23,.06), 0 10px 28px rgba(34,30,23,.10);
+}
+
+/* ---------- base / reset ---------- */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:#EFE9E0;color:var(--ink);font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+img,svg{max-width:100%}
+button{font:inherit;color:inherit}
+a{color:inherit}
+
+/* ---------- registers: the paper-token variants ----------
+   .onstage / .backstage redefine --paper and --paper-deep for their
+   subtree — this is the prototype's "dark-scheme or paper variant"
+   mechanism (there is no literal dark theme; the two registers are the
+   variants). .stage is the structural wrapper that consumes --paper as
+   its background and is placed on the same element as the register
+   class, so it stays with the token definitions it depends on rather
+   than being split into shared.css. */
+.onstage{--paper:#FAF7F2;--paper-deep:#F1EADD;font-size:16.5px;line-height:1.55}
+.backstage{--paper:#F6F3EE;--paper-deep:#EDE8DF;font-size:15px;line-height:1.5}
+.stage{background:var(--paper);min-height:100vh;display:flex;flex-direction:column}
+
+/* ---------- responsive: base/reset ---------- */
+@media (max-width:720px){
+  html,body{overflow-x:hidden}
+}

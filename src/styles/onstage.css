@@ -1,0 +1,158 @@
+/* Fireside — onstage.css
+   Split from prototype/index.html: public + speaker-facing register.
+   The masthead's .mast/.mast-in/.mast nav* rules live here, but the shared
+   .brand piece (also used by the backstage .bs-top) moved to shared.css —
+   see that file's header comment for the usage evidence. Likewise .foot and
+   .evcards/.evcard were moved to shared.css because screenAdminEvents(), a
+   backstage screen, renders both.
+
+   Excluded as prototype scaffolding: none in this file — the prototype's
+   persona-switcher bar (#chrome) and its chrome-clearance paddings
+   (.starcount,.bulkbar{padding-right:330px} / {bottom:56px}) are excluded in
+   shared.css, where the combined onstage+backstage selectors lived. */
+
+/* ---------- masthead: onstage ---------- */
+.mast{border-bottom:1px solid var(--line);background:var(--paper);position:sticky;top:0;z-index:30;
+  backdrop-filter:saturate(1.1) blur(6px)}
+.mast-in{display:flex;align-items:center;gap:18px;height:58px}
+.mast nav{margin-left:auto;display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.mast nav a{text-decoration:none;font-size:14.5px;color:var(--ink-soft);padding:7px 11px;border-radius:8px;white-space:nowrap}
+.mast nav a:hover{background:var(--paper-deep)}
+.mast nav a[aria-current]{color:var(--ember);font-weight:620;background:var(--ember-wash)}
+
+/* ---------- mirror grid (anti-features) — pairs align, row by row ---------- */
+.mirror{display:grid;grid-template-columns:1fr 1fr;gap:0 30px;border-top:1px solid var(--line);margin-top:8px}
+.mirror h3{font-size:14px;letter-spacing:.03em;padding:16px 0 10px;font-weight:700;align-self:end}
+.mirror h3.hh{color:var(--danger)}
+.mirror h3.hp{color:var(--go)}
+.mi{padding:12px 0 12px 26px;position:relative;border-top:1px solid var(--line-soft);
+  font-size:15px;line-height:1.5;color:var(--ink-soft)}
+.mi::before{position:absolute;left:2px;top:12px;font-weight:700}
+.mi.hate::before{content:"✗";color:var(--danger)}
+.mi.proud::before{content:"✓";color:var(--go)}
+.mi.proud{color:var(--ink)}
+.confess{grid-column:1/-1;border-top:1px solid var(--line);padding:16px 0 0;margin:6px 0 0;
+  font-style:italic;color:var(--muted);font-family:var(--serif);font-size:15.5px}
+
+/* ---------- public agenda ---------- */
+.dayhead{font-size:13px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);
+  font-weight:700;margin:30px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.slot{display:flex;flex-direction:column;gap:12px;margin-bottom:12px}
+.sesh{display:flex;gap:0;background:var(--card);border:1px solid var(--line);border-left:5px solid var(--tc);
+  border-radius:var(--r);overflow:hidden;transition:box-shadow .15s,transform .15s}
+.sesh:hover{box-shadow:var(--shadow-lift)}
+.sesh-main{flex:1;padding:15px 17px;min-width:0}
+.sesh-when{display:flex;gap:9px;align-items:baseline;font-size:13.5px;color:var(--muted);margin-bottom:5px;flex-wrap:wrap}
+.sesh-when .time{font-weight:700;color:var(--ink-soft);font-variant-numeric:tabular-nums;font-size:14.5px}
+.sesh-when .room{font-weight:600;color:var(--ink-soft)}
+.sesh h3{font-family:var(--serif);font-size:20px;font-weight:600;line-height:1.24;letter-spacing:-.01em;margin:0 0 8px}
+.sesh h3 a{text-decoration:none}
+.sesh h3 a:hover{text-decoration:underline;text-decoration-color:var(--tc);text-underline-offset:3px}
+.sesh-by{display:flex;align-items:center;gap:9px;font-size:14.5px;color:var(--ink-soft);flex-wrap:wrap}
+.sesh-meta{margin-top:9px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13.5px;color:var(--muted)}
+.starbtn{flex:none;width:56px;border:0;border-left:1px solid var(--line-soft);background:transparent;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted-2);
+  transition:color .14s,background .14s}
+.starbtn:hover{background:var(--paper-deep);color:var(--ember)}
+.starbtn[aria-pressed=true]{color:var(--ember)}
+.starbtn svg{transition:transform .2s cubic-bezier(.2,.9,.3,1.4)}
+.starbtn[aria-pressed=true] svg{transform:scale(1.14)}
+.starcount{position:sticky;bottom:0;background:var(--paper);border-top:1px solid var(--line);
+  padding:13px 0;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:14.5px;z-index:20}
+
+/* ---------- speaker gallery ---------- */
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px}
+.gcard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px;
+  text-decoration:none;display:flex;flex-direction:column;gap:9px;align-items:flex-start;
+  transition:transform .16s cubic-bezier(.2,.9,.3,1.1),box-shadow .16s}
+.gcard:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift)}
+.gcard .gname{font-family:var(--serif);font-size:19px;font-weight:600;line-height:1.2}
+.gcard .grole{font-size:13.5px;color:var(--muted);line-height:1.4}
+.gcard .gtalk{font-size:14px;color:var(--ink-soft);border-top:1px solid var(--line-soft);padding-top:9px;width:100%}
+
+/* ---------- portal ---------- */
+.pcard{border-radius:var(--r);border:1px solid var(--line);background:var(--card);overflow:hidden;margin-bottom:18px}
+.pcard .top{padding:18px 20px;border-bottom:1px solid var(--line-soft)}
+.pcard .bot{padding:15px 20px;background:var(--paper);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.pcard.accepted{border-left:5px solid var(--go)}
+.pcard.declined{border-left:5px solid var(--muted-2)}
+.pcard.undecided{border-left:5px solid var(--ember)}
+.pcard h3{font-family:var(--serif);font-size:22px;font-weight:600;line-height:1.24;margin:8px 0 6px}
+.bigwhen{font-family:var(--serif);font-size:20px;font-weight:600}
+.task{border:1px solid var(--line);border-radius:var(--r-sm);margin-bottom:10px;background:var(--card)}
+.task summary{padding:13px 15px;cursor:pointer;display:flex;gap:11px;align-items:center;flex-wrap:wrap;
+  list-style:none;font-size:15px}
+.task summary::-webkit-details-marker{display:none}
+.task summary::after{content:"›";margin-left:auto;color:var(--muted);font-size:19px;transition:transform .15s}
+.task[open] summary::after{transform:rotate(90deg)}
+.task .tbody{padding:0 15px 15px;border-top:1px solid var(--line-soft);padding-top:13px;font-size:14.5px}
+.task .tname{font-weight:620}
+.done .tname{text-decoration:line-through;text-decoration-color:var(--muted-2);color:var(--muted)}
+
+/* embed mode strips chrome (the #chrome/#concierge selectors below are
+   inert in production — #chrome is the excluded prototype persona
+   switcher, kept verbatim per the "don't split rules" constraint) */
+.embed .mast,.embed .foot,.embed #chrome,.embed #concierge{display:none}
+.embed main{padding-top:8px}
+
+/* ============================================================
+   PHONE. Verified at 390px — onstage subset. See tokens.css /
+   shared.css for the base-reset and shared-register phone rules.
+   ============================================================ */
+.eg{display:none}
+.mirror h3.hm{display:none}
+
+@media (max-width:720px){
+  /* --- landing: the mirror reads as pairs, complaint then answer --- */
+  .mirror{grid-template-columns:1fr;gap:0}
+  .mirror h3.hh,.mirror h3.hp{display:none}
+  .mirror h3.hm{display:block;color:var(--ink);padding:16px 0 4px}
+  .mi.hate{border-top:1px solid var(--line);padding:14px 0 2px 26px;font-weight:560;color:var(--ink)}
+  .mi.proud{border-top:0;padding:6px 0 16px 26px;color:var(--muted)}
+  .mi.proud::before{top:6px}
+
+  /* --- one-row sticky masthead, nav scrolls sideways --- */
+  .mast-in{height:52px;gap:10px;flex-wrap:nowrap}
+  .mast nav{margin-left:auto;flex:1;min-width:0;justify-content:flex-end;
+    overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}
+  .mast nav::-webkit-scrollbar{display:none}
+  .mast nav a{padding:7px 9px;font-size:14px}
+
+  /* --- anything sticky at the bottom clears the chrome bar --- */
+  .starcount{gap:10px;padding:11px 0}
+  .starcount .sub{width:100%;margin-left:0!important}
+
+  /* --- public agenda: full-width cards, star as a round tap target --- */
+  .sesh{border-left-width:6px;position:relative}
+  .sesh-main{padding:14px 58px 14px 14px}
+  .sesh h3{font-size:19px}
+  .sesh-by{font-size:14px}
+  .starbtn{position:absolute;top:7px;right:7px;width:44px;height:44px;border-left:0;
+    border-radius:50%;background:var(--paper)}
+  .starbtn:hover{background:var(--paper-deep)}
+  .dayhead{margin:24px 0 10px}
+
+  /* --- CFP form: examples become readable, fields grow to full width --- */
+  .fw{margin-bottom:22px}
+  .fw > label.f{margin-bottom:0}
+  .eg{display:block;margin:7px 0 0;border:1px solid var(--ember-line);background:var(--ember-wash);
+    border-radius:var(--r-sm);padding:10px 12px;font-size:13.5px;line-height:1.5;color:#7A3A0E}
+  .eg .eglab{display:block;font-size:13px;letter-spacing:.12em;text-transform:uppercase;
+    font-weight:700;color:var(--ember);margin-bottom:3px}
+  .eg .egtxt{display:block;color:var(--ink-soft)}
+  .egbtn{margin-top:8px;min-height:40px;width:100%;border:1px solid var(--ember-line);
+    background:var(--card);color:var(--ember);border-radius:var(--r-sm);font-size:14px;
+    font-weight:620;padding:8px 12px;cursor:pointer}
+  .egbtn:active{background:var(--ember-wash)}
+  .eg.eg-plain{background:transparent;border:0;padding:0}
+  .eg.eg-plain .egbtn{margin-top:9px}
+  #f-abs{min-height:288px}
+  #f-out,#f-note{min-height:132px}
+}
+@media (max-width:430px){
+  .gal{grid-template-columns:1fr 1fr;gap:10px}
+  .gcard{padding:13px}
+  .gcard .gname{font-size:17px}
+  .gcard .gtalk{font-size:13px}
+  .sesh-when{gap:7px}
+}

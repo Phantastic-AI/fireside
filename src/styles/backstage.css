@@ -1,0 +1,206 @@
+/* Fireside — backstage.css
+   Split from prototype/index.html: organizer register. .bs-top .brand is a
+   real rule here (a color/size override), but the .brand base rule it
+   overrides lives in shared.css because the onstage masthead uses it too —
+   see shared.css's header comment. .notebox moved out of "proposal detail"
+   into shared.css for the same reason (also used by the onstage portal).
+
+   table.t / .tablewrap ("tables base") is NOT here even though every
+   concrete usage in this prototype (People, Outbox, Settings) is a
+   backstage screen — the split brief explicitly designates it shared as a
+   reusable primitive. See shared.css.
+
+   Excluded as prototype scaffolding: none in this file directly — the
+   combined onstage+backstage rules that existed only to dodge the
+   prototype's #chrome persona-switcher bar (.starcount,.bulkbar
+   padding-right/bottom offsets) are documented and excluded in
+   shared.css, where their comma-joined selectors lived. */
+
+/* ---------- masthead: backstage ---------- */
+.bs-top{background:#201C16;color:#F3EDE3;position:sticky;top:0;z-index:30}
+.bs-top-in{display:flex;align-items:center;gap:14px;height:50px}
+.bs-top .brand{color:#F6F1E8;font-size:17px}
+.evt-switch{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.09);
+  border:1px solid rgba(255,255,255,.14);color:#F3EDE3;border-radius:8px;padding:5px 10px;
+  font-size:13.5px;cursor:pointer;text-decoration:none}
+.evt-switch:hover{background:rgba(255,255,255,.16)}
+.bs-me{margin-left:auto;display:flex;align-items:center;gap:9px;font-size:13.5px;color:#CFC5B6}
+.bs-nav{background:var(--paper);border-bottom:1px solid var(--line);position:sticky;top:50px;z-index:29}
+.bs-nav-in{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
+.bs-nav-in::-webkit-scrollbar{display:none}
+.bs-nav a,.bs-nav span{white-space:nowrap;text-decoration:none;font-size:14px;padding:11px 12px;
+  color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.bs-nav a:hover{color:var(--ink)}
+.bs-nav span[aria-current]{color:var(--ink);font-weight:640;border-bottom-color:var(--ember)}
+.crumb{font-size:13.5px;color:var(--muted);padding:14px 0 0}
+.crumb a{color:var(--ember);text-decoration:none}
+.crumb a:hover{text-decoration:underline}
+
+/* ---------- attention card ---------- */
+.attn{display:flex;gap:16px;align-items:center;flex-wrap:wrap;background:var(--highlight);
+  border:1px solid #E7D98A;border-radius:var(--r);padding:16px 18px}
+.attn .n{font-family:var(--serif);font-size:30px;line-height:1;font-variant-numeric:tabular-nums}
+.attn .lab{font-weight:640;font-size:15px}
+.attn .why{font-size:13.5px;color:#5A4A0C}
+.attn .go{margin-left:auto}
+
+/* ---------- proposals list (backstage) ---------- */
+.listhead{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;justify-content:space-between}
+.counts{font-size:14.5px;color:var(--ink-soft);margin-top:6px}
+.counts b{font-weight:680}
+.counts .sep{color:var(--muted-2);margin:0 5px;opacity:.7}
+.searchbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:16px 0 4px}
+.searchbar input[type=text]{max-width:290px}
+.prow{display:grid;grid-template-columns:26px 1fr auto;gap:0 14px;align-items:start;
+  padding:14px 12px;border-bottom:1px solid var(--line-soft);cursor:default;position:relative}
+.prow:hover{background:#FCFAF6}
+.prow.sel{background:var(--ember-wash)}
+.prow.cursor{box-shadow:inset 3px 0 0 var(--ember)}
+.prow .pick{margin-top:3px;width:17px;height:17px;accent-color:var(--ember-btn);cursor:pointer}
+.prow h3{font-family:var(--serif);font-size:17.5px;font-weight:600;line-height:1.3;margin-bottom:4px;letter-spacing:-.005em}
+.prow h3 a{text-decoration:none}
+.prow h3 a:hover{text-decoration:underline;text-underline-offset:2px}
+.prow .pby{font-size:13.5px;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.prow .pstate{margin-top:7px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:13.5px;color:var(--muted)}
+.prow .pacts{display:flex;gap:7px;align-items:center;justify-self:end}
+.score{font-variant-numeric:tabular-nums;font-weight:680;font-size:14px;color:var(--ink-soft)}
+.bulkbar{position:sticky;bottom:0;background:var(--card);border-top:2px solid var(--ember);
+  padding:12px 14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:20;
+  box-shadow:0 -6px 20px rgba(34,30,23,.07)}
+.kbdhints{margin-left:auto;font-size:13px;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* ---------- proposal detail ---------- */
+.det{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:34px;align-items:start}
+.det .rail{position:sticky;top:104px;display:flex;flex-direction:column;gap:16px}
+.railbox{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+.railbox h4{font-size:12.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:9px;font-weight:680}
+.abstract{font-family:var(--serif);font-size:18px;line-height:1.62;color:var(--ink-soft);max-width:46em}
+.abstract p{margin:0 0 1em}
+
+/* ---------- agenda builder ---------- */
+.build{display:grid;grid-template-columns:224px minmax(0,1fr);gap:18px;align-items:start}
+.torail{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px;
+  position:sticky;top:104px;max-height:calc(100vh - 130px);overflow:auto}
+.torail h4{font-size:13px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between}
+.tocard{border:1px solid var(--field-line);border-radius:var(--r-sm);padding:10px;margin-bottom:9px;
+  cursor:pointer;background:var(--paper);transition:border-color .12s,background .12s,transform .1s}
+.tocard:hover{background:var(--card);border-color:var(--muted-2)}
+.tocard.on{border-color:var(--ember-btn);background:var(--ember-wash);box-shadow:inset 0 0 0 1px var(--ember-btn)}
+.tocard .tt{font-family:var(--serif);font-size:15px;font-weight:600;line-height:1.25;margin-bottom:4px}
+.tocard .tm{font-size:12.8px;color:var(--muted)}
+.gridwrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--paper)}
+table.grid{border-collapse:collapse;width:100%;min-width:720px;font-size:14px;table-layout:fixed}
+table.grid th{font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:680;
+  padding:10px 8px;border-bottom:1px solid var(--line);background:var(--paper);text-align:left}
+table.grid th:first-child,table.grid td:first-child{width:74px;text-align:right;padding-right:12px}
+table.grid td{border-bottom:1px solid var(--line-soft);border-left:1px solid var(--line-soft);
+  padding:6px;vertical-align:top;height:74px}
+table.grid td.timecell{border-left:0;color:var(--muted);font-variant-numeric:tabular-nums;
+  font-weight:640;font-size:13px;padding-top:10px;background:var(--paper)}
+.placed{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--tc);
+  border-radius:var(--r-sm);padding:7px 9px;height:100%;box-shadow:var(--shadow)}
+.placed .pt{font-family:var(--serif);font-size:14.5px;font-weight:600;line-height:1.2;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.placed .pn{font-size:12.5px;color:var(--muted);margin-top:3px}
+.empty-slot{width:100%;height:100%;border:1px dashed transparent;border-radius:var(--r-sm);
+  background:repeating-linear-gradient(135deg,var(--paper-deep) 0 6px,transparent 6px 12px);
+  cursor:default;display:block}
+.arming .empty-slot{border-color:var(--ember-line);cursor:pointer;background:var(--ember-wash)}
+.arming .empty-slot:hover{border-color:var(--ember-btn);border-style:solid;box-shadow:inset 0 0 0 1px var(--ember-btn)}
+.conflict{margin:14px 0 0;border:1px solid #E7D98A;background:var(--highlight);border-radius:var(--r);
+  padding:13px 16px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:14.5px;
+  animation:pop .22s cubic-bezier(.2,.9,.3,1.1)}
+.conflict .cwarn{font-weight:680}
+
+/* ---------- green room (phone first) ---------- */
+.gr-slot{margin:0 0 22px}
+.gr-when{display:flex;gap:10px;align-items:baseline;padding-bottom:8px;border-bottom:2px solid var(--ink);
+  margin-bottom:14px}
+.gr-when .t{font-family:var(--serif);font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1}
+.gr-when .r{font-size:13px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:var(--muted)}
+.gr-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;
+  display:flex;gap:14px;margin-bottom:12px;box-shadow:var(--shadow)}
+.gr-card .gr-body{min-width:0;flex:1}
+.gr-name{font-family:var(--serif);font-size:21px;font-weight:600;line-height:1.15;margin-bottom:3px}
+.gr-role{font-size:14px;color:var(--muted);margin-bottom:10px}
+.gr-tel{display:inline-flex;align-items:center;gap:8px;font-size:16px;font-weight:640;color:var(--ember);
+  text-decoration:none;padding:9px 13px;border:1px solid var(--ember-line);border-radius:100px;
+  background:var(--ember-wash);margin-bottom:12px;min-height:44px}
+.gr-tel:hover{background:#F6E2D2}
+.gr-talk{font-size:15.5px;font-weight:600;line-height:1.35;margin-bottom:4px}
+.gr-meta{font-size:13.5px;color:var(--muted)}
+.gr-file{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-soft);font-size:14px;
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.nohead{width:56px;height:56px;border-radius:50%;border:1px dashed var(--field-line);display:flex;
+  align-items:center;justify-content:center;color:var(--muted-2);flex:none;font-size:13px;text-align:center;line-height:1.15}
+
+/* ---------- outbox ---------- */
+.msg{border-bottom:1px solid var(--line-soft);padding:15px 0;display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:start}
+.msg .mk{font-size:12.5px;font-weight:680;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);
+  width:118px;padding-top:3px}
+.msg .msub{font-weight:640;margin-bottom:3px}
+.msg .mprev{font-size:14px;color:var(--muted);line-height:1.5}
+.standing{background:var(--paper-deep);border:1px solid var(--line);border-radius:var(--r);
+  padding:12px 16px;font-size:14.5px;color:var(--ink-soft)}
+
+/* ============================================================
+   PHONE. Verified at 390px — backstage subset. See tokens.css /
+   shared.css for the base-reset and shared-register phone rules.
+   ============================================================ */
+.upnext{display:none;align-items:center;gap:6px;margin-left:auto;font-size:11.5px;font-weight:700;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--ember);background:var(--ember-wash);
+  border:1px solid var(--ember-line);border-radius:100px;padding:3px 10px}
+
+/* the desktop chrome-clearance rule that also touched .bulkbar
+   (.starcount,.bulkbar{padding-right:330px}) is excluded — see
+   shared.css's header comment and its own exclusion note. */
+@media (max-width:900px){
+  .det{grid-template-columns:1fr;gap:22px}
+  .det .rail{position:static}
+  .build{grid-template-columns:1fr}
+  .torail{position:static;max-height:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:9px}
+  .torail h4{grid-column:1/-1}
+  .tocard{margin-bottom:0}
+}
+@media (max-width:720px){
+  /* --- backstage: top bar scrolls away, the nav stays --- */
+  .bs-top{position:static}
+  .bs-top-in{height:46px;gap:9px}
+  .evt-switch{max-width:52vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    font-size:12.5px;display:block;line-height:1.9}
+  .bs-me span{display:none}
+  .bs-nav{top:0}
+  .bs-nav a,.bs-nav span{padding:12px 11px}
+
+  /* --- organizer lists --- */
+  .searchbar{flex-direction:column;align-items:stretch}
+  .searchbar input[type=text]{max-width:none;width:100%}
+  .prow{grid-template-columns:24px 1fr;gap:0 10px;padding:14px 4px}
+  .prow > div{min-width:0}
+  .prow h3{font-size:17px}
+  .prow .pacts{grid-column:2;justify-self:start;margin-top:10px}
+  .attn{padding:14px}
+  .attn .go{margin-left:0;width:100%;justify-content:center;margin-top:4px}
+  .msg{grid-template-columns:1fr;gap:6px}
+  .msg .mk{width:auto}
+  .bulkbar{margin:0 -16px;padding:12px 16px}
+  .kbdhints{display:none}
+
+  /* --- green room: the slot time is the anchor and it stays on screen --- */
+  .gr-slot{margin-bottom:26px}
+  .gr-when{position:sticky;top:41px;z-index:6;background:var(--paper);
+    padding:10px 0 8px;margin-bottom:12px}
+  .gr-when .t{font-size:29px}
+  .gr-card{padding:15px;gap:0;flex-direction:column}
+  .gr-card > span:first-child{margin-bottom:10px}
+  .gr-name{font-size:23px}
+  .gr-role{font-size:14.5px}
+  .gr-tel{width:100%;justify-content:center;font-size:17px;min-height:48px;margin-bottom:14px}
+  .gr-talk{font-size:16.5px}
+  .gr-file{font-size:14.5px}
+  .upnext{display:inline-flex}
+}
+@media (max-width:430px){
+  .det{gap:18px}
+}

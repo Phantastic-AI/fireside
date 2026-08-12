@@ -1,0 +1,389 @@
+/* Fireside — shared.css
+   Split from prototype/index.html per the design-system extraction contract:
+   tokens are lifted verbatim into tokens.css; this file holds every rule used
+   by BOTH the onstage (public/speaker) and backstage (organizer) registers.
+
+   Judgment calls made against the prototype's actual markup (verified by
+   grepping the HTML/JS below the <style> block, not just the section
+   comments the prototype author left in the CSS), documented here so the
+   reasoning survives the split:
+
+   - .brand / .brand svg: the prototype's own comment labels this section
+     "masthead: onstage", but brand() is called from both the onstage <header
+     class="mast"> and the backstage <div class="bs-top">, with backstage
+     supplying only a color/size override (.bs-top .brand, kept in
+     backstage.css). The base rule is shared.
+   - .foot / .foot-in / .foot .fname: labeled plain "footer" (implicitly
+     onstage in the split brief), but screenAdminEvents() — the backstage
+     "Your events" picker — renders the identical <footer class="foot">.
+     Shared.
+   - .evcards / .evcard* / .dot*: used by both screenLanding() (onstage) and
+     screenAdminEvents() (backstage, "<a class='card evcard'>"). Shared.
+   - .filters / .fchip* / .daybar / .scrollx*: the prototype's day/track chip
+     system is reused verbatim by backstage screens (submissions search
+     filter, agenda builder day tabs, green room day tabs, slides day/room
+     tabs) as well as the public agenda/session pages. Shared.
+   - .notebox: used in both screenPortal() (onstage, "From the committee")
+     and screenProposal() (backstage, speaker's scheduling note). Shared.
+   - .state-out*: the empty/terminal-state card is reused across nearly
+     every onstage and backstage screen. Shared.
+   - table.t / .tablewrap / .t-name / .t-sub ("tables base"): in this
+     particular prototype every concrete usage happens to be a backstage
+     screen (People, Outbox, Settings), but the split brief explicitly calls
+     "tables base" out as shared — it's a reusable primitive, not a
+     backstage-only view. Kept shared per that explicit instruction.
+   - Two mobile rules combine an onstage-only selector with a backstage-only
+     one under one declaration block: `.starcount,.bulkbar{padding-right:330px}`
+     (desktop) and `.starcount,.bulkbar{bottom:56px}` (mobile), plus
+     `.tablewrap,.gridwrap{...}` (mobile). Per the extraction contract
+     ("anything ambiguous goes to shared.css"), these stay intact as single
+     rules here rather than being split into two register-specific copies.
+   - `body.cc-open #chrome,body.cc-open .cc-fab{display:none}` keeps its
+     #chrome reference verbatim even though #chrome (the prototype's
+     bottom-right persona switcher) is excluded from the product build —
+     the selector is simply inert in production; the rule's real job is
+     hiding .cc-fab, which is shared. See onstage.css/backstage.css for the
+     prototype-chrome exclusions and the full list of excluded rules.
+*/
+
+/* ---------- shared type ---------- */
+.serif{font-family:var(--serif)}
+h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:-.005em}
+.display{font-family:var(--serif);font-weight:400;letter-spacing:-.015em;line-height:1.12}
+.onstage .display{font-size:clamp(30px,5.2vw,46px)}
+.backstage .display{font-size:clamp(25px,3.4vw,32px);font-weight:400}
+.display b{font-weight:800}
+.kicker{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);font-weight:650}
+.lede{font-size:1.06em;color:var(--ink-soft);max-width:46em}
+.sub{color:var(--muted);font-size:.87em}
+.prose{max-width:46em}
+.num{font-variant-numeric:tabular-nums}
+.code{font-family:var(--mono);font-size:.86em;background:var(--paper-deep);
+  padding:.1em .38em;border-radius:5px;color:var(--ink-soft)}
+.hint{font-size:13.5px;color:var(--muted);margin-top:5px;max-width:44em}
+.vis-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ---------- layout ---------- */
+.wrap{width:100%;max-width:940px;margin:0 auto;padding:0 22px}
+.wrap-wide{max-width:1180px}
+main{flex:1 0 auto;padding-bottom:64px}
+.sec{margin-top:34px}
+.rule{border:0;border-top:1px solid var(--line);margin:28px 0}
+
+/* ---------- brand (masthead piece shared by onstage .mast and backstage .bs-top) ---------- */
+.brand{display:inline-flex;align-items:center;gap:9px;text-decoration:none;font-family:var(--serif);
+  font-size:19px;letter-spacing:-.01em;font-weight:600}
+.brand svg{flex:none}
+
+/* ---------- footer (rendered by both registers — see header note) ---------- */
+.foot{border-top:1px solid var(--line);margin-top:auto;padding:22px 0 34px;font-size:13.5px;color:var(--muted)}
+.foot-in{display:flex;gap:14px;flex-wrap:wrap;align-items:baseline}
+.foot .fname{font-family:var(--serif);color:var(--ink-soft)}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  border:1px solid var(--field-line);background:var(--card);color:var(--ink);
+  padding:8px 14px;border-radius:var(--r-sm);font-size:14.5px;font-weight:560;
+  cursor:pointer;text-decoration:none;line-height:1.35;transition:background .12s,border-color .12s,transform .06s}
+.btn:hover{background:var(--paper-deep);border-color:var(--muted-2)}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--ember-btn);border-color:var(--ember-btn);color:#fff}
+.btn-primary:hover{background:var(--ember-btn-hi);border-color:var(--ember-btn-hi)}
+.btn-lg{padding:12px 20px;font-size:16px;border-radius:9px}
+.btn-sm{padding:5px 10px;font-size:13.5px}
+.btn-quiet{border-color:transparent;background:transparent;color:var(--ember)}
+.btn-quiet:hover{background:var(--ember-wash);border-color:transparent}
+.btn-danger{color:var(--danger);border-color:var(--field-line)}
+.btn-danger:hover{background:var(--danger-wash);border-color:#DFBBB6}
+.btn:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,
+[tabindex]:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
+.btnrow{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+.link{color:var(--ember);text-decoration:none;font-weight:560}
+.link:hover{text-decoration:underline}
+.link-out{white-space:nowrap}
+
+/* ---------- cards ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+.card-pad{padding:20px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+
+/* ---------- chips: words first, colour second ---------- */
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;
+  padding:3px 9px;border-radius:100px;border:1px solid var(--line);background:var(--paper-deep);
+  color:var(--ink-soft);white-space:nowrap;line-height:1.5}
+.chip::before{content:"";width:6px;height:6px;border-radius:2px;background:var(--muted-2);flex:none}
+.chip.s-accepted{background:var(--go-wash);border-color:#CBE0D1;color:#145635}
+.chip.s-accepted::before{background:var(--go);border-radius:50%}
+.chip.s-maybe{background:#FBF3DA;border-color:#E8DCAF;color:#6A5410}
+.chip.s-maybe::before{background:#B98E14;border-radius:0;transform:rotate(45deg);width:6px;height:6px}
+.chip.s-declined{background:var(--paper-deep);border-color:var(--line);color:var(--muted)}
+.chip.s-declined::before{background:var(--muted-2);height:2px;border-radius:1px;width:8px}
+.chip.s-undecided{background:var(--ember-wash);border-color:var(--ember-line);color:#8B3D0E}
+.chip.s-undecided::before{background:var(--ember);border-radius:50%;box-shadow:0 0 0 2px #FAEEE3}
+.chip.s-draft{background:transparent;border-style:dashed;color:var(--muted)}
+.chip.s-draft::before{background:transparent;border:1px dashed var(--muted-2)}
+.chip.s-withdrawn{background:transparent;border-color:var(--line);color:var(--muted)}
+.chip.s-withdrawn::before{background:transparent;border:1px solid var(--muted-2);border-radius:50%}
+.chip.warn{background:var(--danger-wash);border-color:#E4C4BF;color:var(--danger)}
+.chip.warn::before{background:var(--danger)}
+.chip.plain::before{display:none}
+.chip.notold{background:var(--highlight);border-color:#E7D98A;color:#5A4A0C}
+.chip.notold::before{background:#9C8412}
+
+/* track chips + lanes */
+.tk{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:620;white-space:nowrap;
+  padding:2px 9px;border-radius:100px;background:var(--tw);color:var(--tc);border:1px solid transparent}
+.tk::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--tc);flex:none}
+
+/* ---------- avatars ---------- */
+.av{border-radius:50%;flex:none;display:block;background:var(--paper-deep);max-width:none}
+.avwrap{flex:none;display:inline-flex}
+.avstack{display:inline-flex;align-items:center}
+.avstack .av{margin-left:-8px;box-shadow:0 0 0 2px var(--card)}
+.avstack .av:first-child{margin-left:0}
+.byline{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+
+/* ---------- toast ---------- */
+#toasts{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);z-index:90;
+  display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;width:max-content;max-width:92vw}
+.toast{background:#241F18;color:#F7F2E9;padding:10px 16px;border-radius:100px;font-size:14.5px;
+  box-shadow:var(--shadow-lift);animation:tin .22s ease-out, tout .5s ease-in 3.1s forwards}
+.toast b{font-weight:700}
+@keyframes tin{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
+@keyframes tout{to{opacity:0;transform:translateY(-6px)}}
+
+/* ---------- dialog ---------- */
+.scrim{position:fixed;inset:0;background:rgba(34,30,23,.42);z-index:80;display:flex;
+  align-items:center;justify-content:center;padding:20px;animation:fade .16s ease-out}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.dlg{background:var(--card);border-radius:14px;max-width:520px;width:100%;padding:24px;
+  box-shadow:var(--shadow-lift);animation:pop .2s cubic-bezier(.2,.9,.3,1.1)}
+@keyframes pop{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+.dlg h3{font-family:var(--serif);font-size:22px;font-weight:600;margin-bottom:9px}
+.dlg p{margin:0 0 18px;color:var(--ink-soft);font-size:15px;line-height:1.55}
+
+/* ---------- forms ---------- */
+label.f{display:block;margin-bottom:22px}
+.f-lab{display:flex;align-items:baseline;gap:10px;font-size:14.5px;font-weight:620;margin-bottom:6px}
+.f-lab .opt{font-weight:400;color:var(--muted);font-size:13px}
+input[type=text],input[type=email],input[type=tel],textarea,select{
+  width:100%;font:inherit;font-size:15.5px;color:var(--ink);background:var(--card);
+  border:1px solid var(--field-line);border-radius:var(--r-sm);padding:10px 12px;
+  transition:border-color .12s,box-shadow .12s}
+textarea{line-height:1.55;resize:vertical}
+input::placeholder,textarea::placeholder{color:var(--placeholder)}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--ember);box-shadow:0 0 0 3px var(--ember-wash)}
+.ghosted{position:relative}
+.ghosthint{font-size:12.5px;color:var(--placeholder);margin-top:4px;display:none;align-items:center;gap:5px}
+.ghosted:focus-within .ghosthint{display:flex}
+kbd{font-family:var(--sans);font-size:11.5px;font-weight:650;border:1px solid var(--field-line);
+  border-bottom-width:2px;border-radius:4px;padding:1px 5px;background:var(--card);color:var(--ink-soft)}
+.radios{display:flex;flex-direction:column;gap:8px}
+.radio{display:flex;gap:11px;align-items:flex-start;border:1px solid var(--field-line);border-radius:var(--r-sm);
+  padding:11px 13px;cursor:pointer;background:var(--card);transition:border-color .12s,background .12s}
+.radio:hover{background:var(--paper-deep)}
+.radio input{margin:2px 0 0;accent-color:var(--tc,var(--ember));width:17px;height:17px;flex:none}
+.radio.on{border-color:var(--tc,var(--ember));background:var(--tw,var(--ember-wash));box-shadow:inset 0 0 0 1px var(--tc,var(--ember))}
+.radio .rname{font-weight:620;font-size:15px}
+.radio .rsub{font-size:13.5px;color:var(--muted)}
+.counter{font-size:13.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* ---------- tables (base — reusable primitive; every current usage happens
+   to be a backstage screen, but the split brief calls this out as shared) ---------- */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--card)}
+table.t{border-collapse:collapse;width:100%;min-width:780px;font-size:14.5px}
+table.t th{text-align:left;font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);
+  font-weight:650;padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--paper)}
+table.t td{padding:13px 14px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+table.t tr:last-child td{border-bottom:0}
+table.t tbody tr:hover{background:#FCFAF6}
+.t-name{font-weight:620}
+.t-sub{font-size:13px;color:var(--muted)}
+
+/* ---------- event cards (used by the onstage landing page and the
+   backstage "your events" picker) ---------- */
+.evcards{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.evcard{display:flex;flex-direction:column;gap:10px;padding:22px;text-decoration:none;
+  transition:transform .16s cubic-bezier(.2,.9,.3,1.1),box-shadow .16s}
+.evcard:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift)}
+.evcard h3{font-family:var(--serif);font-size:25px;font-weight:600;line-height:1.15;letter-spacing:-.01em}
+.evcard .when{font-size:14.5px;color:var(--muted)}
+.evcard .state{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
+.evcard .cta{margin-top:6px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--go);flex:none;
+  box-shadow:0 0 0 3px var(--go-wash)}
+.dot.closed{background:var(--muted-2);box-shadow:0 0 0 3px var(--paper-deep)}
+
+/* ---------- filters / day-track chips (reused by the public agenda and
+   session pages, and by backstage submissions search, the agenda builder
+   day tabs, green room day tabs, and slides day/room tabs) ---------- */
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0}
+.fchip{border:1px solid var(--field-line);background:var(--card);border-radius:100px;padding:6px 13px;
+  font-size:14px;cursor:pointer;text-decoration:none;color:var(--ink-soft);white-space:nowrap;
+  display:inline-flex;align-items:center;gap:7px}
+.fchip:hover{background:var(--paper-deep)}
+.fchip[aria-pressed=true]{background:var(--ink);border-color:var(--ink);color:#F7F2E9;font-weight:600}
+.fchip.tkchip[aria-pressed=true]{background:var(--tc);border-color:var(--tc);color:#fff}
+.fchip.tkchip::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--tc)}
+.fchip.tkchip[aria-pressed=true]::before{background:#fff}
+.daybar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.scrollx{overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.scrollx::-webkit-scrollbar{display:none}
+
+/* ---------- notebox (speaker note to committee — appears in the portal
+   and in the backstage proposal detail rail) ---------- */
+.notebox{border:1px solid var(--line);border-left:3px solid var(--field-line);background:var(--paper);
+  border-radius:var(--r-sm);padding:13px 15px;font-size:14.5px}
+
+/* ---------- empty / terminal states (reused across nearly every screen) ---------- */
+.state-out{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:28px;
+  max-width:34em}
+.state-out h2{font-family:var(--serif);font-size:27px;font-weight:600;line-height:1.2;margin-bottom:10px}
+.state-out p{margin:0 0 16px;color:var(--ink-soft);font-size:15.5px;line-height:1.6}
+.state-out .aside{font-style:italic;color:var(--muted);font-family:var(--serif)}
+
+/* ============================================================
+   The Fireside concierge. One chat surface, three scopes,
+   scripted. It wears the register it was opened in.
+   ============================================================ */
+#concierge{position:fixed;right:16px;bottom:76px;z-index:95;font-family:var(--sans);font-size:15px;
+  --paper:#FAF7F2;--paper-deep:#F1EADD}
+#concierge.backstage{--paper:#F6F3EE;--paper-deep:#EDE8DF}
+.cc-fab{width:54px;height:54px;border-radius:50%;border:0;background:var(--ember-btn);color:#fff;
+  box-shadow:var(--shadow-lift);cursor:pointer;display:flex;align-items:center;justify-content:center;
+  transition:transform .16s cubic-bezier(.2,.9,.3,1.3),background .14s}
+.cc-fab:hover{background:var(--ember-btn-hi);transform:scale(1.05)}
+.cc-fab:active{transform:scale(.96)}
+.cc-panel{position:absolute;right:0;bottom:66px;width:396px;max-width:calc(100vw - 32px);
+  height:min(620px,74vh);display:flex;flex-direction:column;background:var(--paper);
+  border:1px solid var(--line);border-radius:16px;overflow:hidden;
+  box-shadow:0 10px 44px rgba(34,30,23,.24);animation:pop .2s cubic-bezier(.2,.9,.3,1.1)}
+.cc-head{display:flex;align-items:center;gap:10px;padding:13px 14px;background:var(--card);
+  border-bottom:1px solid var(--line);flex:none}
+.cc-head .t{font-family:var(--serif);font-size:17px;font-weight:600;line-height:1.2}
+.cc-head .s{font-size:12.5px;color:var(--muted)}
+.cc-x{margin-left:auto;border:0;background:transparent;color:var(--muted);font-size:22px;
+  line-height:1;cursor:pointer;padding:4px 6px;border-radius:6px}
+.cc-x:hover{background:var(--paper-deep);color:var(--ink)}
+.cc-body{flex:1;overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:14px}
+.cc-you{align-self:flex-end;max-width:84%;background:var(--ember-btn);color:#fff;
+  padding:9px 14px;border-radius:16px 16px 4px 16px;font-size:14.5px;line-height:1.45}
+.cc-fs{align-self:stretch;font-size:14.5px;line-height:1.55;color:var(--ink)}
+.cc-fs p{margin:0 0 10px}
+.cc-fs p:last-child{margin-bottom:0}
+.cc-fs b{font-weight:660}
+.cc-lead{font-family:var(--serif);font-size:16px;line-height:1.5;color:var(--ink-soft)}
+.cc-chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:4px}
+.cc-chip{border:1px solid var(--field-line);background:var(--card);border-radius:100px;
+  padding:8px 13px;font-size:13.5px;cursor:pointer;text-align:left;color:var(--ink-soft);line-height:1.35}
+.cc-chip:hover{border-color:var(--ember);color:var(--ember);background:var(--ember-wash)}
+.cc-chip.wide{width:100%;border-radius:10px}
+.cc-card{display:flex;gap:0;background:var(--card);border:1px solid var(--line);
+  border-left:4px solid var(--tc,var(--ember));border-radius:10px;overflow:hidden;margin-bottom:8px}
+.cc-card .m{flex:1;padding:10px 12px;min-width:0}
+.cc-card .w{font-size:12.5px;color:var(--muted);font-weight:600;margin-bottom:2px}
+.cc-card .h{font-family:var(--serif);font-size:15.5px;font-weight:600;line-height:1.25}
+.cc-card .h a{text-decoration:none}
+.cc-card .h a:hover{text-decoration:underline;text-underline-offset:2px}
+.cc-card .b{font-size:12.8px;color:var(--muted);margin-top:3px}
+.cc-star{flex:none;width:46px;border:0;border-left:1px solid var(--line-soft);background:transparent;
+  cursor:pointer;color:var(--muted-2);display:flex;align-items:center;justify-content:center}
+.cc-star:hover{background:var(--paper-deep);color:var(--ember)}
+.cc-star[aria-pressed=true]{color:var(--ember)}
+.cc-row{display:flex;gap:9px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line-soft);
+  font-size:14px;flex-wrap:wrap}
+.cc-row:last-of-type{border-bottom:0}
+.cc-row .n{font-weight:620;flex:1;min-width:120px}
+.cc-row .t{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px;width:52px;flex:none}
+.cc-go{display:inline-flex;align-items:center;gap:6px;color:var(--ember);font-weight:620;
+  text-decoration:none;font-size:14px;margin-top:4px}
+.cc-go:hover{text-decoration:underline}
+.cc-act{border:1px solid var(--ember-line);background:var(--ember-wash);color:var(--ember);
+  border-radius:8px;padding:8px 13px;font-size:14px;font-weight:620;cursor:pointer;margin-top:6px}
+.cc-act:hover{background:#F6E2D2}
+.cc-note{background:var(--go-wash);border:1px solid #CBE0D1;border-radius:10px;padding:11px 13px;
+  font-size:13.8px;color:#145635;line-height:1.5}
+.cc-foot{flex:none;border-top:1px solid var(--line);background:var(--card);padding:10px 12px}
+.cc-ask{display:flex;gap:8px}
+.cc-ask input{flex:1;font-size:15px;padding:9px 12px}
+.cc-ask button{border:0;background:var(--ember-btn);color:#fff;border-radius:var(--r-sm);
+  padding:0 14px;font-weight:620;cursor:pointer;font-size:14px}
+.cc-hand{margin-top:9px;font-size:13px;color:var(--muted);line-height:1.5}
+.cc-hand .code{font-size:13px;white-space:nowrap}
+.cc-typing{display:inline-flex;gap:4px;align-items:center;color:var(--muted);font-size:13.5px}
+.cc-typing i{width:5px;height:5px;border-radius:50%;background:var(--muted-2);display:block;
+  animation:bl 1s infinite}
+.cc-typing i:nth-child(2){animation-delay:.16s}
+.cc-typing i:nth-child(3){animation-delay:.32s}
+@keyframes bl{0%,60%,100%{opacity:.25}30%{opacity:1}}
+
+/* ---------- the concierge's wayfinding highlight: it walks you to the
+   control it named ---------- */
+@keyframes pulseHi{
+  0%{box-shadow:0 0 0 0 rgba(177,77,20,.40)}
+  70%{box-shadow:0 0 0 16px rgba(177,77,20,0)}
+  100%{box-shadow:0 0 0 0 rgba(177,77,20,0)}
+}
+.pulse{animation:pulseHi 1.5s ease-out 3;border-color:var(--ember)!important;border-radius:var(--r-sm)}
+
+/* ============================================================
+   PHONE. Verified at 390px — shared-register subset. See
+   onstage.css / backstage.css for their own phone rules; the
+   prototype's persona-switcher bar (#chrome) is excluded
+   everywhere, including the bottom-clearance paddings that
+   existed only to dodge it — see those files' header comments.
+   ============================================================ */
+@media (max-width:720px){
+  .wrap,.wrap-wide{padding:0 16px}
+  .evcards,.grid2{grid-template-columns:1fr}
+
+  .display{font-size:clamp(27px,7.6vw,34px)}
+  .onstage .display{font-size:clamp(28px,8vw,36px)}
+
+  .brand{font-size:17px}
+
+  /* --- filters become one-line horizontal chip rails --- */
+  .filters.scrollx{flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px;margin:10px 0}
+  .filters.scrollx > *{flex:none}
+  .filters.scrollx > [data-embed]{margin-left:12px!important}
+  .fchip{padding:9px 14px;font-size:14px;min-height:40px}
+
+  /* --- forms: 16px stops iOS zooming on focus --- */
+  input[type=text],input[type=email],input[type=tel],textarea,select{font-size:16px;padding:12px 13px}
+  .ghosthint{display:none!important}
+  .radio{padding:13px;min-height:48px;align-items:center}
+  .btn-lg{width:100%}
+  .btnrow > .btn-lg{flex:1 1 100%}
+
+  /* --- organizer lists: shared table/grid-wrap edge-to-edge treatment --- */
+  .tablewrap,.gridwrap{margin-left:-16px;margin-right:-16px;border-radius:0;border-left:0;border-right:0}
+
+  /* excluded here (prototype-only, consistent with the desktop 330px
+     exclusion below): #toasts{bottom:74px} and
+     .starcount,.bulkbar{bottom:56px} — both sat under the prototype's own
+     "anything sticky at the bottom clears the chrome bar" / "prototype
+     chrome collapses to one small pill" comments. Keeping them would leave
+     an unexplained gap under the sticky bars and a slightly-too-high toast
+     with no chrome bar there to justify it; the base rules' bottom:0 /
+     bottom:84px are the correct production defaults. */
+
+  /* --- concierge sits above the persona pill, and takes the sheet when open --- */
+  #concierge{right:10px;bottom:64px}
+  .cc-fab{width:50px;height:50px}
+  body.cc-open #chrome,body.cc-open .cc-fab{display:none}
+  body.cc-open #concierge{right:8px;left:8px;bottom:8px}
+  .cc-panel{position:fixed;left:8px;right:8px;bottom:8px;width:auto;max-width:none;
+    height:min(80vh,660px);border-radius:16px}
+  .cc-body{padding:14px 12px}
+  .cc-ask input{font-size:16px}
+}
+/* excluded: @media (min-width:721px){.starcount,.bulkbar{padding-right:330px}}
+   — the prototype's own comment says this exists only to keep sticky-bar
+   text clear of the bottom-right prototype chrome bar ("PROTOTYPE / Public /
+   Speaker / Organizer"). With that bar gone in production this would leave a
+   bare 330px dead zone on wide viewports, so it is dropped rather than
+   lifted. */
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms!important;transition-duration:.01ms!important}
+  .pulse{box-shadow:0 0 0 3px var(--ember-wash),0 0 0 4px var(--ember)!important}
+}
