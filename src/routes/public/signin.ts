@@ -2,6 +2,21 @@
 // hurried, a mailed link for everyone else, Google for the one-tap crowd.
 import { esc, page, brand, NAME } from '../../lib/html';
 
+/** Notes sometimes carry a sign-in link for the demonstration people. A link
+ *  a person (or their agent) cannot click is a wall, so URLs render as
+ *  anchors — everything else stays escaped text. */
+function noteHtml(note: string): string {
+  const m = note.match(/https:\/\/[^\s]+/);
+  if (!m) return esc(note);
+  const url = m[0];
+  const i = note.indexOf(url);
+  return (
+    esc(note.slice(0, i)) +
+    `<a class="link" href="${esc(url)}" style="word-break:break-all">${esc(url)}</a>` +
+    esc(note.slice(i + url.length))
+  );
+}
+
 export function signInPage(note?: string): string {
   const body =
     '<div class="stage onstage">' +
@@ -9,7 +24,7 @@ export function signInPage(note?: string): string {
     '<main><div class="wrap" style="max-width:34em">' +
     '<div style="padding:52px 0 8px">' +
     '<h1 class="display" style="font-size:34px">Sign in</h1>' +
-    (note ? `<p class="hint" style="margin-top:10px">${esc(note)}</p>` : '') +
+    (note ? `<p class="hint" style="margin-top:10px">${noteHtml(note)}</p>` : '') +
     '</div>' +
     '<form class="card card-pad sec" method="post" action="/sign-in" style="display:block">' +
     '<label class="f" for="email"><span class="f-lab">Email</span>' +
@@ -26,6 +41,10 @@ export function signInPage(note?: string): string {
     '<a class="btn" style="width:100%;justify-content:center" href="/sign-in/google">Continue with Google</a>' +
     '</div>' +
     '<p class="sub sec">New here? <a class="link" href="/sign-up">Create an account</a> — organizers start a conference, speakers find their proposals waiting.</p>' +
+    '<div class="card card-pad" style="margin-top:8px"><p class="sub" style="margin:0">Looking around first? ' +
+    'The two conferences running here belong to <b>naomi@example.org</b>, password ' +
+    '<b>read-them-before-they-go</b> — sign in as her and the whole backstage is yours to walk. ' +
+    'Speakers and reviewers use the email-a-link door; for @example.org addresses the link prints right here.</p></div>' +
     '</div></main>' +
     `<footer class="foot"><div class="wrap foot-in"><span class="fname">${NAME}</span><span>An open-source call for speakers.</span></div></footer></div>`;
 

@@ -567,7 +567,7 @@ export function registerEditProposal(app: Hono<{ Bindings: Env }>): void {
     // One person's own words: never held in a shared cache anywhere.
     c.header('cache-control', 'private, no-store');
 
-    if (standing.kind === 'signed-out') return c.html(signedOutPage(ev));
+    if (standing.kind === 'signed-out') return c.html(signedOutPage(ev), 401);
     if (standing.kind === 'not-yours') return c.html(notYoursPage(ev), 404);
     if (standing.kind === 'call-shut') return c.html(callShutPage(ev), 403);
     if (standing.kind === 'settled') return c.html(settledPage(ev, standing.s), 403);

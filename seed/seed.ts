@@ -231,7 +231,7 @@ export function buildSeed(): SeedData {
 
   // -- AIE proposals: 40 by hand + 960 expanded --------------------------
   type Sub = { id: string; state: string; speakerId: string; title: string; format: string;
-    minutes: number; track: string; level: string; abstract: string; slugv: string; hand: boolean };
+    minutes: number; track: string; level: string; abstract: string; slugv: string; hand: boolean; coSpeakerIds?: string[] };
   const subs: Sub[] = [];
   let subSeq = 0;
   const subId = () => `sub-aie-${String(++subSeq).padStart(4, '0')}`;
@@ -239,7 +239,7 @@ export function buildSeed(): SeedData {
   for (const h of HAND_PROPOSALS) {
     subs.push({
       id: subId(), state: h.state, speakerId: h.speakerId, title: h.title, format: h.format,
-      minutes: h.minutes, track: h.track, level: h.level, abstract: h.abstract, slugv: h.slug, hand: true,
+      minutes: h.minutes, track: h.track, level: h.level, abstract: h.abstract, slugv: h.slug, hand: true, coSpeakerIds: h.coSpeakerIds,
     });
   }
 
@@ -318,10 +318,16 @@ export function buildSeed(): SeedData {
     .sort((a, b) => b.minutes - a.minutes); // long formats claim their scarce slots first
   const placements = new Map<string, { room: string; t: number }>();
   const speakerBusy = new Map<string, number[]>();
+  // Three of the shortest mill-made talks stay off the grid on purpose: the
+  // builder's "To place" rail should demonstrate itself, not sit empty.
+  const HOLD_BACK = new Set(
+    accepted.filter((s) => !s.hand && s.minutes <= 30).slice(-3).map((s) => s.id)
+  );
   {
     let cursor = 0;
     const cap = slotTimes.length * roomIds.length;
     for (const s of accepted) {
+      if (HOLD_BACK.has(s.id)) continue;
       let placedAt: { room: string; t: number } | null = null;
       for (let step = 0; step < cap && !placedAt; step++) {
         const idx = (cursor + step) % cap;
@@ -373,6 +379,11 @@ export function buildSeed(): SeedData {
     d.participation.push({
       submission_id: s.id, person_id: s.speakerId, role: 'speaker', position: 0, is_submitter: 1,
     });
+    for (const [i, pid] of (s.coSpeakerIds ?? []).entries()) {
+      d.participation.push({
+        submission_id: s.id, person_id: pid, role: 'co_speaker', position: i + 1, is_submitter: 0,
+      });
+    }
   }
 
   // -- Charlotte: 14 placed sessions + the declined long tail ------------
@@ -558,6 +569,29 @@ export function buildSeed(): SeedData {
       });
     }
   }
+  // The concierge must never fail its own suggested questions: every starter
+  // chip has a curated answer, matched exact (case-folded) before any model.
+  const CURATED: [string, string, string][] = [
+    [AIE, 'When does the call for speakers close?',
+     'The call closes on 20 August. Until then you can send a proposal, and edit or withdraw it from your portal.'],
+    [AIE, 'What should I see on the first day?',
+     'Thursday runs from 09:30 across five rooms. Open the agenda, filter to Thursday, and star what pulls at you — your list keeps itself.'],
+    [AIE, "Which talks are good if I'm new to this?",
+     'Filter the agenda by level — the talks marked for newcomers assume curiosity, not scar tissue. The speaker pages say who each person is.'],
+    [DDC, 'What should I see on the first day?',
+     'The conference has already happened — the agenda still stands, and the recordings are on each session page.'],
+    [DDC, "Which talks are good if I'm new to this?",
+     'Start with the recordings: every session page carries one. The agenda shows both days as they ran.'],
+    [DDC, 'Where is it, and what time does each day start?',
+     'Charlotte, over two days in November 2025 — it has already run. The agenda keeps the full schedule, and the recordings are up.'],
+  ];
+  CURATED.forEach(([evId, q, body], i) => {
+    d.answer.push({
+      id: `ans-c${String(i + 1).padStart(2, '0')}`, event_id: evId, question_text: q,
+      body, state: 'in_use', supersedes_id: null, source_question_id: null,
+      created_at: ANCHOR - 5 * MS.day, accepted_at: ANCHOR - 5 * MS.day,
+    });
+  });
   d.answer.push({
     id: 'ans-0001', event_id: AIE, question_text: 'Will the talks be recorded?',
     body: 'Yes — every talk is recorded, and recordings land on each session page within two weeks.',

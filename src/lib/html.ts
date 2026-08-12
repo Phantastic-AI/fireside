@@ -52,6 +52,7 @@ export function eventNav(slug: string, here: string, callOpen: boolean): string 
     link('/agenda', 'Agenda') +
     link('/speakers', 'Speakers') +
     link('/my-schedule', 'My schedule') +
+    link('/ask', 'Ask') +
     link('/portal', 'Your portal')
   );
 }

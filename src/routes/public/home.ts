@@ -57,7 +57,7 @@ const PAIRS: { x: string; y: string }[] = [
 const REST: { h: string; p: string }[] = [
   {
     h: 'Review rounds and blind mode',
-    p: 'Assignments per reviewer, names hidden when you want them hidden, and your scores private until you submit them.',
+    p: 'Assignments per reviewer, names hidden while scoring, and your scores private until you submit them.',
   },
   {
     h: 'Decisions and the outbox',
@@ -77,7 +77,7 @@ const REST: { h: string; p: string }[] = [
   },
   {
     h: 'A concierge, and the same doors for your agent',
-    p: 'Ask a question and get working links back rather than paragraphs. Everything the buttons do is also MCP, a command line, and an HTTP API — point your agent at /mcp.',
+    p: 'Ask a question and get working links back rather than paragraphs. The public doors — the program, the speakers, the call itself — are also MCP: point your agent at /mcp.',
   },
 ];
 

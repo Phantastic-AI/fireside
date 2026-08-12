@@ -500,7 +500,13 @@ export function registerAdminHome(app: Hono<{ Bindings: Env }>): void {
     try {
       const events = await adminEvents(c.env.DB, principal);
       const ev = events.find((e) => e.slug === slug);
-      if (!ev) return c.html(deniedPage(), 403);
+      if (!ev) {
+        // A conference that does not exist at all is a missing page, not a
+        // permission wall — event slugs are public on the front of the site.
+        const exists = await c.env.DB.prepare('SELECT 1 FROM event WHERE slug = ?').bind(slug).first();
+        if (!exists) return c.notFound();
+        return c.html(deniedPage(), 403);
+      }
       const { counts } = await pile(c.env.DB, principal, ev.id, 'all', { limit: 0 });
       return c.html(programPage(principal, ev, counts));
     } catch (e) {

@@ -442,7 +442,12 @@ function grid(view: Builder, pick: BuilderWaiting | null, selectedId: string | n
           if (inCell.length === 0) {
             return `<td>${openCell(view, pick, room.id, room.name, at)}</td>`;
           }
-          return `<td>${inCell.map((s) => placedCell(view, s, s.id === selectedId)).join('')}</td>`;
+          // With a pick in hand, an occupied cell says why it takes no click —
+          // otherwise the refusal is invisible and reads as a dead end.
+          const takenNote = pick
+            ? `<div class="sub" style="margin-top:4px;font-size:12.5px">Taken — pick an open slot.</div>`
+            : '';
+          return `<td>${inCell.map((s) => placedCell(view, s, s.id === selectedId)).join('')}${takenNote}</td>`;
         })
         .join('');
       return `<tr><td class="timecell">${esc(timeOfDay(at, view.timezone))}</td>${cells}</tr>`;
