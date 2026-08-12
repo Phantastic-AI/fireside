@@ -122,9 +122,8 @@ function embedsPage(
   const notPublished = published
     ? ''
     : '<div class="sec attn" style="max-width:56em"><div><div class="lab">The program is not public yet.</div>' +
-      '<div class="why">The frames below already work — they show a visitor the same note the agenda ' +
-      'page does while decisions are being made. The calendar files start answering the moment you ' +
-      'publish the program, and nothing on the other site needs changing then.</div></div></div>';
+      '<div class="why">Paste them now anyway. They fill in the moment you publish the program, ' +
+      'and nothing on the other site needs changing then.</div></div></div>';
 
   const parts: string[] = [
     block(

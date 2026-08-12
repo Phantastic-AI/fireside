@@ -162,7 +162,7 @@ const CALM: Partial<Record<Note, string>> = {
   placed: 'That talk has a room and a time. Pick another one when you are ready.',
   cleared: 'Off the grid, and picked up — click where it goes, or leave it in the list on the left.',
   cancelled:
-    'Cancelled, and still in its own place on the agenda, struck through, so nobody queues at that door.',
+    'Cancelled, and still in its own place on the agenda, struck through, so nobody turns up expecting it.',
   restored: 'Back on. It reads as a normal session again.',
   published: 'The public agenda is live.',
   unpublished:
@@ -292,7 +292,7 @@ function cancelStrip(view: Builder, session: BuilderSession): string {
     '<div class="standing" style="margin-top:14px">' +
     '<p style="margin:0"><b>Cancel this session?</b></p>' +
     `<p style="margin:4px 0 0">${esc(session.title)} — ${esc(where)}. It keeps that place on the ` +
-    'agenda and reads as cancelled, so nobody queues at a door where nothing is happening.</p>' +
+    'agenda and reads as cancelled, so nobody turns up expecting it.</p>' +
     `<form method="post" action="${esc(postTo(view.slug, 'cancel'))}" ` +
     'style="margin:10px 0 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
     hidden('talk', session.id) +

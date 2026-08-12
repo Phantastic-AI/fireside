@@ -528,8 +528,7 @@ function lettersSection(p: Proposal, slug: string, tz: string, inPlay: boolean):
     return (
       `<div class="sec" id="letters">${head}` +
       '<div class="state-out"><h2>Nothing has been written to them yet.</h2>' +
-      '<p>Every letter this proposal earns is kept here, in the words that went out, with the day ' +
-      `it left on it. ${inPlay ? 'Deciding writes the first one.' : 'A draft has not been sent, so there is nothing to write about yet.'}</p>` +
+      `<p>${inPlay ? 'The first one goes with your decision.' : 'A draft has not been sent, so there is nothing to write about yet.'}</p>` +
       `<div class="btnrow"><a class="btn" href="/admin/${esc(slug)}/outbox">Open the outbox →</a></div>` +
       '</div></div>'
     );
@@ -550,8 +549,7 @@ function revisionsSection(p: Proposal, tz: string): string {
   if (p.revisions.length === 0) return '';
   return (
     `<div class="sec" id="versions">${sectionHead(label('pane.versions', 'backstage'))}` +
-    '<p class="sub" style="margin-bottom:8px">What this proposal said before it said what it says ' +
-    'now. Only organizers see these.</p>' +
+    '<p class="sub" style="margin-bottom:8px">Only organizers see these.</p>' +
     p.revisions
       .map(
         (r) =>
@@ -784,7 +782,7 @@ function decideBox(
     // back. Nothing leaves the building until the outbox act.
     acts =
       `<form method="post" action="${action}">${version}${NOTE_FIELD}${DECIDE_BUTTONS}</form>` +
-      `<p class="hint">Deciding writes the letter. It waits in the ` +
+      `<p class="hint">The letter waits in the ` +
       `<a class="link" href="/admin/${esc(slug)}/outbox">outbox</a> until you send it.</p>`;
   } else if (!armed) {
     // D-024, first pass: name the act, do not perform it.

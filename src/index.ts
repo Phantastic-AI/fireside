@@ -116,8 +116,8 @@ async function requestMagicLink(c: { env: Env; req: { url: string } }, email: st
     });
     return 'If that address is in the system, a sign-in link is on its way.';
   }
-  // The demonstration cast has no inbox; their links print here instead.
-  return `This is one of the demonstration people, so their link prints here: ${link}`;
+  // The seeded cast has no inbox; their links print here instead.
+  return `That address has no inbox we can reach, so the link is here: ${link}`;
 }
 
 app.post('/sign-in', async (c) => {

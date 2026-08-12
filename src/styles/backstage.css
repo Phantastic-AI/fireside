@@ -169,7 +169,9 @@ table.grid td.timecell{border-left:0;color:var(--muted);font-variant-numeric:tab
   .bs-top-in{height:46px;gap:9px}
   .evt-switch{max-width:52vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     font-size:12.5px;display:block;line-height:1.9}
-  .bs-me span{display:none}
+  /* On a phone the name goes, but the initials stay — you can always see
+     who you are, at any width. */
+  .bs-me span:not(:first-child){display:none}
   .bs-nav{top:0}
   .bs-nav a,.bs-nav span{padding:12px 11px}
 

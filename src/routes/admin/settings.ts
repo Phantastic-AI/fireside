@@ -615,9 +615,7 @@ function roomsTracksSection(ev: EventSettings, said: Said | null): string {
   return (
     `<div class="sec card card-pad" style="max-width:46em" id="${ANCHOR.rooms}">` +
     '<h3 class="serif" style="font-size:21px;font-weight:600">The rooms and the tracks</h3>' +
-    '<p class="sub" style="margin:6px 0 14px">Neither comes off this list — a room with sessions ' +
-    'already placed on it is the conference’s own ' +
-    'history, so renaming is the whole of what this page does to either one.</p>' +
+    '<p class="sub" style="margin:6px 0 14px">Neither comes off this list. Add one, or rename one.</p>' +
     saidIn('rooms', said) +
     '<h4 class="serif" style="font-size:15.5px;font-weight:600">Rooms</h4>' +
     roomsTable +
@@ -781,8 +779,7 @@ function questionsSection(ev: EventSettings, said: Said | null): string {
     `<span class="t-sub" style="margin-left:auto">${esc(plural(ev.questionCount, 'question on the call', 'questions on the call'))}` +
     `<span class="sep">·</span>${esc(plural(ev.proposalCount, 'proposal', 'proposals'))} already in</span>` +
     '</div>' +
-    '<p class="hint" style="margin-bottom:14px">Editing the words never touches an answer somebody already gave — ' +
-    'answers are kept under the question they were asked, not under what it was called.</p>' +
+    '<p class="hint" style="margin-bottom:14px">Editing the words never touches an answer somebody already gave.</p>' +
     saidIn('questions', said) +
     unreadable +
     `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/settings/questions">` +
@@ -952,8 +949,7 @@ function scorecardSection(ev: EventSettings, said: Said | null): string {
     `<span class="sep">·</span>${esc(plural(ev.scorecard.length, 'line', 'lines'))}</span>` +
     '</div>' +
     '<p class="hint" style="margin-bottom:14px">What every reader is asked about a proposal. ' +
-    'Renaming a line never moves a mark already given — marks are kept under the line they were ' +
-    'given for, not under what it was called.</p>' +
+    'Renaming a line never moves a mark already given.</p>' +
     saidIn('scorecard', said) +
     standing +
     weightNote +

@@ -161,7 +161,8 @@ function topBar(principal: Principal): string {
     brand() +
     '<div class="bs-me"><span style="width:26px;height:26px;border-radius:50%;display:inline-grid;' +
     'place-items:center;background:var(--ember-wash);color:var(--ember);font-size:11px;' +
-    `font-weight:700">${esc(initialsOf(principal.name))}</span><span>${esc(principal.name)}</span></div>` +
+    `font-weight:700">${esc(initialsOf(principal.name))}</span><span>${esc(principal.name)}</span>` +
+    `<a href="/sign-out" style="color:#CFC5B6;text-decoration:underline;text-underline-offset:2px">${esc(label('auth.sign_out', 'backstage'))}</a></div>` +
     '</div></div>'
   );
 }
@@ -417,8 +418,6 @@ function programPage(principal: Principal, ev: AdminEvent, counts: PileCounts): 
     `<h1 class="display">${esc(ev.name)}</h1>` +
     `<p class="sub" style="margin-top:6px">${esc(dateRange(ev.startsOn, ev.endsOn))} · ` +
     `${esc(callStateText(ev))}${ev.tzLabel ? ` · ${esc(ev.tzLabel)}` : ''}</p>` +
-    '<p class="serif" style="font-size:19px;color:var(--ink-soft);margin-top:16px;max-width:40em">' +
-    'A decision leaves when you send it, not when you make it.</p>' +
     '</div>' +
     attnBand(ev, counts) +
     `<div class="sec"><div class="card card-pad">${countsBand(counts)}${decideByLine}</div></div>` +

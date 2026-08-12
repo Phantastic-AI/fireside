@@ -1,6 +1,8 @@
 // The page shell, both registers. Markup vocabulary is the prototype's —
 // the lifted CSS in src/styles/ is the binding skin.
 
+import { label } from './labels';
+
 export const NAME = 'Fireside';
 
 export const FLAME =
@@ -52,7 +54,7 @@ export function eventNav(slug: string, here: string, callOpen: boolean): string 
     link('/agenda', 'Agenda') +
     link('/speakers', 'Speakers') +
     link('/my-schedule', 'My schedule') +
-    link('/ask', 'Ask') +
+    link('/ask', 'Concierge') +
     link('/portal', 'Your portal')
   );
 }
@@ -94,7 +96,8 @@ export function backstageShell(o: {
     '<div class="stage backstage">' +
     `<div class="bs-top"><div class="wrap wrap-wide bs-top-in">${brand()}` +
     `<a class="evt-switch" href="/admin">${esc(o.eventName)} <span style="opacity:.6">⌄</span></a>` +
-    `<div class="bs-me"><span style="width:26px;height:26px;border-radius:50%;display:inline-grid;place-items:center;background:var(--ember-wash);color:var(--ember);font-size:11px;font-weight:700">${esc(o.whoInitials)}</span><span>${esc(o.who)}</span></div>` +
+    `<div class="bs-me"><span style="width:26px;height:26px;border-radius:50%;display:inline-grid;place-items:center;background:var(--ember-wash);color:var(--ember);font-size:11px;font-weight:700">${esc(o.whoInitials)}</span><span>${esc(o.who)}</span>` +
+    `<a href="/sign-out" style="color:#CFC5B6;text-decoration:underline;text-underline-offset:2px">${esc(label('auth.sign_out', 'backstage'))}</a></div>` +
     '</div></div>' +
     `<div class="bs-nav"><div class="wrap wrap-wide bs-nav-in">${nav}</div></div>` +
     `<main><div class="wrap wrap-wide">${o.crumb ? `<div class="crumb">${o.crumb}</div>` : ''}${o.body}</div></main>` +
@@ -115,7 +118,8 @@ export function deniedPage(message?: string): string {
       '<div class="card card-pad" style="max-width:30em">' +
       `<h1 class="serif" style="font-size:24px;font-weight:600;margin:0">${esc(message ?? 'That conference is not one of yours.')}</h1>` +
       '<p class="sub" style="margin:10px 0 0">If it should be, ask an organizer of that event to add you from their settings.</p>' +
-      '<p style="margin:16px 0 0"><a class="link" href="/admin">Back to your events →</a></p>' +
+      '<p style="margin:16px 0 0"><a class="link" href="/admin">Back to your events →</a>' +
+      `<a class="link" href="/sign-out" style="margin-left:16px">${esc(label('auth.sign_out', 'backstage'))}</a></p>` +
       '</div></main></div>',
   });
 }

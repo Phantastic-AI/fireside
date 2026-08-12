@@ -78,14 +78,14 @@ const LABELS = {
   'level.deep': 'Deep in it',
   'source.public': { backstage: 'Sent through the call' },
   'source.admin': { backstage: 'Added by an organizer' },
-  'source.seed': { backstage: 'Demo data' },
+  'source.seed': { backstage: 'Here from the start' },
 
   // §1.12 — signing in · Δ1
   'auth.sign_in': { onstage: 'Sign in' },
   'auth.link': { onstage: 'Email me a link' },
   'auth.google': { onstage: 'Continue with Google' },
   'auth.signed_in': { onstage: 'Signed in as {name}' },
-  'auth.sign_out': { onstage: 'Sign out' },
+  'auth.sign_out': { backstage: 'Sign out', onstage: 'Sign out' },
   'auth.link_expired': { onstage: 'That link has expired — they last two hours' },
   'auth.merged': { onstage: 'Your {n} starred talks came with you' },
 
@@ -106,7 +106,7 @@ const LABELS = {
 
   // §1.16 — Ask, the concierge · Δ6
   'screen.ask': 'Ask',
-  'ask.off': "Ask isn't switched on for this event",
+  'ask.off': "The concierge isn't switched on for this event",
   'ask.unknown': "I can't see that",
 
   // §1.17 — themes, search, More like this · Δ8
