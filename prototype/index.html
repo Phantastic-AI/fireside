@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Fireside — clickable prototype</title>
-<meta name="description" content="Fireside — the call for speakers that remembers who you have told. Clickable prototype, 20 screens.">
+<meta name="description" content="Fireside — an open-source call for speakers. Clickable prototype, 20 screens.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23221E17'/%3E%3Cpath d='M16 5c1.6 4.2-1.4 6-1.4 8.6 0 1.6 1.2 2.6 2.4 2.6 1.5 0 2.3-1.1 2.2-2.6 2.2 1.9 3.3 4.2 3.3 6.6 0 3.9-3 6.8-6.5 6.8S9.5 24.1 9.5 20.2C9.5 14.3 14.6 11.6 16 5z' fill='%23E08A3C'/%3E%3C/svg%3E">
 <style>
 /* ============================================================
@@ -1432,7 +1432,7 @@ function screenLanding(){
   return onstage(null,
     '<div class="wrap">' +
       '<div style="padding:56px 0 8px">' +
-        '<h1 class="display" style="max-width:15em">The call for speakers that remembers <b>who you have told.</b></h1>' +
+        '<h1 class="display" style="max-width:15em">An open-source <b>call for speakers.</b></h1>' +
         '<p class="lede" style="margin-top:20px">Two conferences are running on this right now. Open one and you are looking at the real thing — the public form, the organizer\'s list, the agenda, the green room sheet backstage.</p>' +
       '</div>' +
       '<div class="sec evcards">' + evs + '</div>' +
@@ -1961,13 +1961,6 @@ function screenAdminEvents(){
       '<h1 class="display">Your events</h1>' +
       '<p class="lede" style="margin-top:8px">Two running. ' + n(counts('aie-nyc').all + counts('ddc-clt').all) + ' proposals between them.</p>' +
       '<div class="sec evcards">' + rows + '</div>' +
-      '<div class="sec card card-pad" style="max-width:34em">' +
-        '<h3 class="serif" style="font-size:20px;font-weight:600">On the committee?</h3>' +
-        '<p class="sub" style="margin:6px 0 14px">Type the email your invitation came to and we will send you a sign-in link.</p>' +
-        '<label class="f" for="si"><span class="f-lab">Email</span><input type="email" id="si" placeholder="lena@example.org"><span class="hint">The link signs you in. No password.</span></label>' +
-        '<button class="btn btn-primary" onclick="toast(\'Link sent. Check lena@example.org.\')">Send me a link</button>' +
-        '<p class="sub" style="margin-top:12px">Speaking at the event? You do not need this page — every email we send you already carries your portal link.</p>' +
-      '</div>' +
       '<p class="sub" style="margin-top:26px"><a class="link" href="' + url('') + '">← The public site</a></p>' +
     '</div></main>' +
     '<footer class="foot"><div class="wrap foot-in"><span class="fname">' + NAME + '</span><span>All times PT</span></div></footer></div>';
@@ -2994,7 +2987,7 @@ function render(keepScroll){
   document.body.classList.remove('arming');
   var s = R.seg, html = '', wire = null, title = NAME;
 
-  if (!s.length){ html = screenLanding(); title = 'The call for speakers that remembers who you have told'; }
+  if (!s.length){ html = screenLanding(); title = 'An open-source call for speakers'; }
   else if (s[0] === 'admin'){
     if (s.length === 1){ html = screenAdminEvents(); title = 'Your events'; }
     else if (!EVENTS[s[1]]) html = screen404();
