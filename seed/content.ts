@@ -1908,6 +1908,19 @@ export const CFP_QUESTIONS: {
     showIf: null,
     position: 9,
   },
+  // Last, so it sits against the About you block the form draws next. Optional
+  // on purpose: a good proposal should never wait on somebody finding the
+  // nerve to write about themselves at 23:50.
+  {
+    id: "speaker-bio",
+    kind: "long",
+    label: "A short life",
+    hint: "A paragraph a stranger reads before you walk on. Two or three sentences is plenty, and you can rewrite it in your speaker portal whenever you like.",
+    required: false,
+    options: null,
+    showIf: null,
+    position: 10,
+  },
 ];
 
 /* ============================================================

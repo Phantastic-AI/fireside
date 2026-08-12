@@ -4,18 +4,27 @@
 // you read is the file that runs. The page inlines it — one fewer request on
 // the screen most likely to be opened on one bar of signal.
 //
-// It does four things and nothing else:
+// It does five things and nothing else:
 //   1. Tab (or the button on a phone) accepts the example in a placeholder.
 //   2. Counts: characters where there is a ceiling, answers where there isn't.
 //   3. Keeps the whole form in localStorage, keyed by the event, so a closed
 //      laptop and a dead battery cost nothing.
 //   4. Evaluates the organizer's show-if conditions as the answers change.
+//   5. Says, in words, what it kept and what it brought back.
+//
+// It fails open. The server draws every conditional question in the open with
+// its condition written underneath, and never marks one required unless the
+// controlling answer already matches; this file narrows that down to the one
+// question being asked right now. A browser that never runs a line of it still
+// gets a whole, sendable form.
 
 function cfpIsland() {
   var form = document.querySelector('[data-cfp]');
   if (!form) return;
   var KEY = 'fireside.cfp.' + form.getAttribute('data-cfp');
   var saved = form.querySelector('[data-saved]');
+  var resume = form.querySelector('[data-resume]');
+  var discard = form.querySelector('[data-discard]');
   var tallyOut = form.querySelector('[data-answered]');
   var conds = [].slice.call(form.querySelectorAll('[data-when]'));
   var counted = [].slice.call(form.querySelectorAll('[data-count]'));
@@ -38,13 +47,16 @@ function cfpIsland() {
   }
 
   // Walked in document order, so a question hanging off a hidden question
-  // stays hidden with it. A hidden control is also released from being
-  // required — the browser must never block a send over something invisible.
+  // stays hidden with it. A question out of sight is released from being
+  // required and switched off outright: the browser must never block a send
+  // over something invisible, and an invisible answer must never be posted.
   function condition() {
     conds.forEach(function (box) {
       var on = valueOf(box.getAttribute('data-when')) === box.getAttribute('data-is');
       box.hidden = !on;
-      [].slice.call(box.querySelectorAll('[data-needed]')).forEach(function (el) {
+      [].slice.call(box.querySelectorAll('input,select,textarea')).forEach(function (el) {
+        el.disabled = !on;
+        if (!el.hasAttribute('data-needed')) return;
         if (on) el.setAttribute('required', 'required');
         else el.removeAttribute('required');
       });
@@ -83,36 +95,88 @@ function cfpIsland() {
   }
 
   // ---- the draft that survives a dead battery ----------------------------
+  //
+  // Every named control, including the conditional questions that are out of
+  // sight and switched off, so a form that comes back comes back whole.
   var writing = 0;
-  function store() {
+
+  // What the server drew, taken before anything is put back over it. This is
+  // what "start with a blank form" restores, so discarding a draft is instant
+  // and costs no round trip.
+  var originals = [].slice.call(form.elements).map(function (el) {
+    return { el: el, value: el.value, checked: el.checked };
+  });
+
+  function bagOf() {
     var bag = {};
     [].slice.call(form.elements).forEach(function (el) {
-      if (!el.name || el.type === 'submit') return;
+      if (!el.name || el.type === 'submit' || el.type === 'button') return;
       if (el.type === 'checkbox') bag[el.name] = el.checked;
       else if (el.type === 'radio') { if (el.checked) bag[el.name] = el.value; }
       else bag[el.name] = el.value;
     });
-    try { localStorage.setItem(KEY, JSON.stringify(bag)); } catch (e) { return false; }
+    return bag;
+  }
+
+  function anythingIn(bag) {
+    for (var k in bag) {
+      if (bag[k] === true) return true;
+      if (typeof bag[k] === 'string' && bag[k] !== '') return true;
+    }
+    return false;
+  }
+
+  function store() {
+    try { localStorage.setItem(KEY, JSON.stringify(bagOf())); } catch (e) { return false; }
     return true;
   }
+
+  function forget() {
+    try { localStorage.removeItem(KEY); } catch (e) { /* a private window; nothing to clear */ }
+  }
+
   function keep() {
     clearTimeout(writing);
     writing = setTimeout(function () {
       if (store() && saved) saved.textContent = 'Saved on this device.';
     }, 400);
   }
+
+  // Stored words win over drawn ones: the draft is written on every keystroke,
+  // so it is never older than what the server put in the box.
   function restore() {
     var bag;
-    try { bag = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return; }
+    try { bag = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return false; }
+    if (!bag || typeof bag !== 'object') return false;
     var found = false;
     [].slice.call(form.elements).forEach(function (el) {
-      if (!el.name || !(el.name in bag)) return;
+      if (!el.name || !Object.prototype.hasOwnProperty.call(bag, el.name)) return;
       var was = bag[el.name];
-      if (el.type === 'checkbox') { if (!el.checked && was === true) { el.checked = true; found = true; } }
-      else if (el.type === 'radio') { if (!el.checked && el.value === was) { el.checked = true; found = true; } }
-      else if (!el.value && typeof was === 'string' && was) { el.value = was; found = true; }
+      if (el.type === 'checkbox') {
+        if (typeof was === 'boolean' && el.checked !== was) { el.checked = was; found = true; }
+      } else if (el.type === 'radio') {
+        if (!el.checked && el.value === was) { el.checked = true; found = true; }
+      } else if (typeof was === 'string' && was !== '' && el.value !== was) {
+        el.value = was;
+        found = true;
+      }
     });
-    if (found && saved) saved.textContent = 'Picked up where you left off on this device.';
+    return found;
+  }
+
+  function startAgain() {
+    clearTimeout(writing); // a keystroke still in flight must not write it back
+    forget();
+    originals.forEach(function (o) {
+      if (o.el.type === 'checkbox' || o.el.type === 'radio') o.el.checked = o.checked;
+      else o.el.value = o.value;
+    });
+    if (resume) resume.hidden = true;
+    if (saved) saved.textContent = '';
+    condition();
+    tally();
+    characters();
+    tint();
   }
 
   // ---- the example, accepted -------------------------------------------
@@ -150,17 +214,31 @@ function cfpIsland() {
   form.addEventListener('change', function () { condition(); tally(); tint(); keep(); });
   var later = form.querySelector('[data-save]');
   if (later) later.addEventListener('click', function () {
-    if (store() && saved) saved.textContent = 'Saved on this device. Close the page and come back to it.';
+    if (store() && saved) {
+      saved.textContent = 'Saved on this device. Close the page and come back to it — ' +
+        'your words will be here.';
+    }
   });
-  form.addEventListener('submit', function () {
-    try { localStorage.removeItem(KEY); } catch (e) { /* a private window; nothing to clear */ }
-  });
+  if (discard) discard.addEventListener('click', startAgain);
+  // A send that lands leaves for the thanks screen and the draft goes with it.
+  form.addEventListener('submit', forget);
 
-  restore();
+  var came = restore();
+  if (came && resume) resume.hidden = false;
   condition();
   tally();
   characters();
   tint();
+  // A refused send comes back to this same form with every word still in it,
+  // and with nothing behind it — the send above cleared that. Write it again
+  // straight away, so walking away from a refusal loses nothing either.
+  if (!came && form.hasAttribute('data-refused') && anythingIn(bagOf())) store();
 }
 
-export default '(' + cfpIsland.toString() + ')();';
+// The bundler's keepNames pass wraps every function it carries in
+// `__name(fn, 'name')`, and that helper lives in the bundle's module scope —
+// it does not travel inside the source text this exports. So the page defines
+// its own before running it. Without this line the whole island dies on its
+// first statement, taking the conditions, the counts and the draft with it.
+export default
+  '(function(){var __name=function(f){return f};(' + cfpIsland.toString() + ')();})();';

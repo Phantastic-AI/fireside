@@ -235,8 +235,50 @@ function trackField(tracks: TrackOption[], chosen: string): string {
   );
 }
 
+/**
+ * A show-if rule, said out loud. The call's own reading, word for word: the
+ * stored rule is `{ questionId, equals }`, its questionId is either an earlier
+ * question's id or one of the three built-in choices the form draws itself —
+ * `format`, `track`, `level` — and the stored `equals` is turned back into the
+ * word on the control, since a level is stored as its enum and a track as its
+ * slug.
+ */
+function conditionOn(
+  s: { questionId: string; equals: string },
+  questions: readonly CfpQuestion[],
+  tracks: readonly TrackOption[]
+): string {
+  const parent = questions.find((q) => q.id === s.questionId);
+  if (parent) {
+    if (parent.kind === 'checkbox') {
+      return s.equals === 'true'
+        ? `Only if you tick ${parent.label}`
+        : `Only if you leave ${parent.label} unticked`;
+    }
+    return `Only if your answer to ${parent.label} is ${s.equals}`;
+  }
+  if (s.questionId === 'format') return `Only if your answer to Format is ${s.equals}`;
+  if (s.questionId === 'level') {
+    return `Only if your answer to Who is this for is ${
+      LEVELS.find((l) => l.value === s.equals)?.word ?? s.equals
+    }`;
+  }
+  if (s.questionId === 'track') {
+    return `Only if your answer to Track is ${
+      tracks.find((t) => t.slug === s.equals)?.name ?? s.equals
+    }`;
+  }
+  return `Only if your answer to ${s.questionId} is ${s.equals}`;
+}
+
 /** R-10 — the organizer's own questions, with the answers already in them. */
-function question(q: CfpQuestion, values: FormValues, shown: boolean): string {
+function question(
+  q: CfpQuestion,
+  values: FormValues,
+  shown: boolean,
+  questions: readonly CfpQuestion[],
+  tracks: readonly TrackOption[]
+): string {
   const id = `f-q-${q.id}`;
   const name = `q:${q.id}`;
   // A conditional question is released from being required while it is out of
@@ -290,8 +332,16 @@ function question(q: CfpQuestion, values: FormValues, shown: boolean): string {
 
   if (!conditional) return inner;
   const s = q.showIf as { questionId: string; equals: string };
+  // The call's own rendering: drawn in the open, grouped under its condition
+  // in words, and never required unless the answer already matches. The island
+  // narrows it to the one question being asked; a browser that never runs it
+  // can still read the rule and answer under it. No `display` in this style —
+  // `hidden` is what the island toggles, and an inline display would out-rank
+  // the browser's own rule for it.
   return (
-    `<div data-when="${esc(s.questionId)}" data-is="${esc(s.equals)}"${shown ? '' : ' hidden'}>` +
+    `<div data-when="${esc(s.questionId)}" data-is="${esc(s.equals)}" ` +
+    'style="border-left:2px solid var(--line);padding-left:16px;margin:0 0 22px">' +
+    `<p class="hint" style="margin:0 0 10px">${esc(conditionOn(s, questions, tracks))}</p>` +
     inner +
     '</div>'
   );
@@ -569,7 +619,7 @@ function editPage(o: {
       options: LEVELS.map((l) => ({ value: l.value, word: l.word })),
       required: true,
     }) +
-    o.questions.map((q) => question(q, values, shownIds.has(q.id))).join('') +
+    o.questions.map((q) => question(q, values, shownIds.has(q.id), o.questions, o.tracks)).join('') +
     '</div>' +
     coBlock(values.co) +
     '<div class="btnrow" style="margin-top:8px">' +

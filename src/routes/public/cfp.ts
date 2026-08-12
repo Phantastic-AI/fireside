@@ -268,7 +268,52 @@ function trackField(tracks: TrackOption[], chosen: string): string {
  * R-10 — the organizer's own questions.
  * ------------------------------------------------------------------ */
 
-function question(q: CfpQuestion, values: FormValues, shown: boolean): string {
+/**
+ * A show-if rule, said out loud.
+ *
+ * The stored rule is `{ questionId, equals }` and its questionId is either an
+ * earlier question's id or one of the three built-in choices the form draws
+ * itself — `format`, `track`, `level` — which is the same vocabulary
+ * workflows/submit.ts resolves when it decides what was really asked. Each is
+ * named here the way this form names it, and the stored `equals` is turned
+ * back into the word on the control: a level is stored as its enum and a track
+ * as its slug, and neither is a thing to show a speaker.
+ */
+function conditionOn(
+  s: { questionId: string; equals: string },
+  questions: readonly CfpQuestion[],
+  tracks: readonly TrackOption[]
+): string {
+  const parent = questions.find((q) => q.id === s.questionId);
+  if (parent) {
+    if (parent.kind === 'checkbox') {
+      return s.equals === 'true'
+        ? `Only if you tick ${parent.label}`
+        : `Only if you leave ${parent.label} unticked`;
+    }
+    return `Only if your answer to ${parent.label} is ${s.equals}`;
+  }
+  if (s.questionId === 'format') return `Only if your answer to Format is ${s.equals}`;
+  if (s.questionId === 'level') {
+    return `Only if your answer to Who is this for is ${
+      LEVELS.find((l) => l.value === s.equals)?.word ?? s.equals
+    }`;
+  }
+  if (s.questionId === 'track') {
+    return `Only if your answer to Track is ${
+      tracks.find((t) => t.slug === s.equals)?.name ?? s.equals
+    }`;
+  }
+  return `Only if your answer to ${s.questionId} is ${s.equals}`;
+}
+
+function question(
+  q: CfpQuestion,
+  values: FormValues,
+  shown: boolean,
+  questions: readonly CfpQuestion[],
+  tracks: readonly TrackOption[]
+): string {
   const id = `f-q-${q.id}`;
   const name = `q:${q.id}`;
   // A conditional question is released from being required while it is out of
@@ -322,8 +367,20 @@ function question(q: CfpQuestion, values: FormValues, shown: boolean): string {
 
   if (!conditional) return inner;
   const s = q.showIf as { questionId: string; equals: string };
+  // Drawn in the open, always, and grouped under its condition in words. The
+  // island narrows it down to the one question being asked right now — before
+  // the first paint, since the script is inline at the end of the page — and a
+  // browser that never runs it gets a question it can see and read the rule
+  // for, rather than one that is simply not there. Never required unless the
+  // answer already matches, which is the rule workflows/submit.ts enforces on
+  // the way back in.
+  //
+  // No `display` in this style: `hidden` is what the island toggles, and an
+  // inline display would out-rank the browser's own rule for it.
   return (
-    `<div data-when="${esc(s.questionId)}" data-is="${esc(s.equals)}"${shown ? '' : ' hidden'}>` +
+    `<div data-when="${esc(s.questionId)}" data-is="${esc(s.equals)}" ` +
+    'style="border-left:2px solid var(--line);padding-left:16px;margin:0 0 22px">' +
+    `<p class="hint" style="margin:0 0 10px">${esc(conditionOn(s, questions, tracks))}</p>` +
     inner +
     '</div>'
   );
@@ -488,9 +545,23 @@ function cfpPage(o: {
 
   const closes = ev.cfpClosesAt !== null ? instantOf(ev.cfpClosesAt, ev.timezone) : null;
 
+  // Unhidden by the island, and only when it actually put words back. A
+  // browser that never runs it never reads a line about a draft it has not
+  // got. No `display` in the style, for the reason `question()` gives.
+  const resumeLine =
+    '<p class="hint" data-resume hidden style="margin:0 0 18px">' +
+    'Picked up where you left off. This page keeps what you type on this device. ' +
+    '<button type="button" class="btn btn-sm" data-discard>Start with a blank form</button>' +
+    '</p>';
+
   const form =
-    `<form class="cfpform" method="post" action="/${esc(ev.slug)}/cfp" data-cfp="${esc(ev.slug)}">` +
+    `<form class="cfpform" method="post" action="/${esc(ev.slug)}/cfp" data-cfp="${esc(ev.slug)}"` +
+    // Says the words in these boxes are the speaker's own, handed back by a
+    // refusal. The island writes the draft the send cleared, straight away.
+    (o.refusal ? ' data-refused' : '') +
+    '>' +
     refusal +
+    resumeLine +
     '<h2 class="display" style="font-size:28px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">' +
     'Your talk' +
     `<span class="counter" data-answered style="font-size:14px">${num(answered)} of ${num(asked.length)} answered</span>` +
@@ -538,7 +609,7 @@ function cfpPage(o: {
       options: LEVELS.map((l) => ({ value: l.value, word: l.word })),
       required: true,
     }) +
-    o.questions.map((q) => question(q, values, shownIds.has(q.id))).join('') +
+    o.questions.map((q) => question(q, values, shownIds.has(q.id), o.questions, o.tracks)).join('') +
     '</div>' +
     '<hr class="rule">' +
     '<h2 class="display" style="font-size:28px">About you</h2>' +
