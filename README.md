@@ -10,41 +10,79 @@ Our motto: *make intelligence shine and insights flow.* A conference is an
 insight-delivery machine. Fireside's job is carrying each insight intact from
 a submitted abstract to a room full of people, and then out into the world.
 
+## Try it now
+
+The live site is **https://fireside.phantastic.ai** — no password on the
+front door. Two conferences are running: **AI Engineer New York 2026**
+(mid-drama: a thousand proposals in, six hundred and ten decisions made and
+not yet sent) and **DevOps Days Charlotte 2025** (finished, recordings up).
+
+| Door | Where | Who you are |
+| --- | --- | --- |
+| The call for speakers | [/aie-nyc/cfp](https://fireside.phantastic.ai/aie-nyc/cfp) | A hopeful speaker, no account needed |
+| The agenda | [/aie-nyc/agenda](https://fireside.phantastic.ai/aie-nyc/agenda) | Anyone, on one bar of venue wifi |
+| My schedule | [/aie-nyc/my-schedule](https://fireside.phantastic.ai/aie-nyc/my-schedule) | An attendee — stars work before any sign-in |
+| The backstage | [/admin](https://fireside.phantastic.ai/admin) | **naomi@example.org** / **read-them-before-they-go** |
+| A finished year | [/ddc-clt](https://fireside.phantastic.ai/ddc-clt) | Anyone — recordings on the session pages |
+
+That credential is published on purpose: Naomi is the demonstration
+organizer, and her conference is reset to the same instant of mid-decision
+drama on demand. Sign up fresh at
+[/sign-up](https://fireside.phantastic.ai/sign-up) and you can start a
+conference of your own — the form at `/admin/new` takes a name, days, rooms
+and tracks, and hands you the keys.
+
+Speakers and reviewers in the demonstration cast sign in with magic links;
+for `@example.org` addresses the link prints on the page instead of
+emailing, so every journey is walkable without an inbox.
+
+**For your agent:** the same doors speak MCP at
+`https://fireside.phantastic.ai/mcp` — eight tools, JSON-RPC 2.0, no
+session. A proposal submitted by an agent walks through exactly the same
+guarded workflow as one typed by hand.
+
 ## What it does
 
 **For organizers**
-- A crafted call-for-speakers form with conditional fields, draft resume
-  links, and placeholders that teach by example
-- A submissions desk built for volume: filters, scoring, bulk decisions —
-  and an honest answer to "who have we decided on but not told yet?"
-- **Decide quietly, tell everyone deliberately**: decisions stage messages
-  into an outbox; nothing leaves until you say so
-- An agenda builder that surfaces conflicts at the moment of placement,
-  with an AI draft to start from
-- A **cross-conference speaker directory**: every speaker you've ever worked
+- A crafted call-for-speakers form with configurable questions, conditional
+  fields, autosave that survives a dead battery, and placeholders that teach
+  by example
+- A submissions desk built for volume: filter chips that are the counts,
+  search, keyboard movement, bulk decisions — and an honest answer to
+  "who have we decided on but not told yet?"
+- **Decide quietly, tell everyone deliberately**: decisions stage letters
+  into an outbox; nothing leaves until a person reads the number and sends.
+  The number confirmed is the number that goes.
+- Review rounds where a reviewer's scores stay theirs until they submit
+  them, then feed aggregates on the proposal page
+- An agenda builder that surfaces conflicts at the moment of placement —
+  a double-booked room or a speaker in two places refuses right there
+- A **cross-conference speaker directory**: every speaker you have worked
   with, their history, one place
-- Day-of-show surfaces: a phone-first **green room sheet** and a **slides
-  readiness board**
+- Day-of-show surfaces: a phone-first **green room sheet** behind a
+  shareable link you can revoke, and a **slides readiness board**
+- Per-conference roles — owner, approver, editor, viewer — so a review
+  committee can read without the power to send
 
 **For speakers**
-- Submit from a phone, resume a draft from a link, never lose a word
-- A portal that says plainly where things stand and what's needed next
-- Profile and headshot you control
+- Submit from a phone, edit until the call closes (the older words are
+  kept), never lose a word
+- A portal that says plainly where things stand and what is needed next —
+  and says nothing about decisions that have not been sent
+- Withdraw kindly, with the history intact
 
 **For your audience**
-- A public agenda, session pages, and a speaker gallery with faces
-- **My Schedule**: star talks with no login required; sign in (magic link or
-  Google) to keep it, share it, and mark what you saw — with a watch-later
-  list for what you missed
-- Embeddable widgets and calendar files that just work
-
-**The Program Brain** (Cloudflare Workers AI)
-- Cluster triage: "127 proposals · 11 themes · 3 near-duplicates"
-- Semantic search that understands questions, not keywords
-- "More like this" on every session
-- Draft-with-AI decision letters — staged for human review, never auto-sent
-- A concierge that answers visitors, attendees, and organizers alike —
-  each within their own scope
+- A public agenda, session pages, and a speaker gallery — server-rendered,
+  no spinner
+- **My schedule**: star talks with no login required; sign in to keep the
+  list on every device, share it, and see who else is going — every contact
+  fact opt-in, revocable in one click
+- A schedule that is honest about physics: overlapping stars and tight
+  room-to-room turns say so
+- Embeddable agenda and calendar files for the whole program, one session,
+  or your own picks
+- **Ask** — a concierge that answers with short sentences and working
+  doors, never an invented link
 
 ## Principles
 
@@ -57,8 +95,37 @@ a submitted abstract to a room full of people, and then out into the world.
 
 ## Stack
 
-Cloudflare all the way down: Workers (server-rendered Hono) · D1 · R2 ·
-Workers AI. One deploy command. No SPA, no build pipeline drama.
+Cloudflare all the way down: one Worker (server-rendered Hono, no
+framework), D1, R2, Workers AI, Email Sending. One deploy command. No SPA,
+no build pipeline drama. Every multi-row write is a guarded batch: a
+statement that aborts the whole transaction if the world moved while the
+human was reading.
+
+## Run your own
+
+```sh
+npm install
+npx wrangler d1 create fireside          # then put the id in wrangler.jsonc
+npx wrangler d1 execute fireside --remote --file schema/0001_init.sql
+npx wrangler d1 execute fireside --remote --file schema/0002_roles.sql
+npx wrangler d1 execute fireside --remote --file schema/0003_passwords.sql
+npx wrangler secret put SESSION_SECRET   # any long random string
+npx wrangler deploy
+```
+
+Sign up, start a conference, open the call. Google sign-in and outbound
+email each need their own credentials (`GOOGLE_CLIENT_ID` +
+`GOOGLE_CLIENT_SECRET`, and an [Email Sending](https://developers.cloudflare.com/email-service/)
+domain for `FROM_EMAIL`) — everything else works without them.
+
+## The road
+
+What is deliberately next rather than half-built now: proposal theming and
+near-duplicate triage over Workers AI embeddings, "more like this" on
+session pages, AI-drafted decision letters (staged for human review, never
+auto-sent), inbound email replies landing on submissions, volunteer
+staffing, and dictation into the concierge. The ledger lives with the
+project's build notes.
 
 ## Status
 
