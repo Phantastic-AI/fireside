@@ -1,0 +1,8 @@
+# Secrets and local state never ship
+.wrangler/
+.dev.vars*
+.env*
+client_secret*.json
+*.secret
+node_modules/
+dist/
