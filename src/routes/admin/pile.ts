@@ -183,10 +183,20 @@ const DECISIONS = new Set<string>(['accepted', 'waitlisted', 'rejected']);
 
 type ReviewAverage = { average: number | null; count: number };
 
+/** D1 caps bound parameters well below a whole conference, so any id-list
+ *  read walks in modest chunks. The page never notices; the CSV did. */
+const ID_CHUNK = 80;
+function chunks<T>(xs: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
+  return out;
+}
+
 async function reviewAverages(db: D1Database, ids: string[]): Promise<Map<string, ReviewAverage>> {
   const out = new Map<string, ReviewAverage>();
   if (ids.length === 0) return out;
-  const placeholders = ids.map(() => '?').join(',');
+  for (const group of chunks(ids, ID_CHUNK)) {
+  const placeholders = group.map(() => '?').join(',');
   const res = await db
     .prepare(
       `SELECT submission_id, AVG(review_avg) AS average, COUNT(*) AS n
@@ -199,10 +209,11 @@ async function reviewAverages(db: D1Database, ids: string[]): Promise<Map<string
        ) sub
        GROUP BY submission_id`
     )
-    .bind(...ids)
+    .bind(...group)
     .all<{ submission_id: string; average: number | null; n: number }>();
   for (const r of res.results ?? []) {
     out.set(r.submission_id, { average: r.average, count: r.n });
+  }
   }
   return out;
 }
@@ -216,7 +227,8 @@ type SubmitterFacts = { decisionVersion: number; email: string | null };
 async function submitterFacts(db: D1Database, ids: string[]): Promise<Map<string, SubmitterFacts>> {
   const out = new Map<string, SubmitterFacts>();
   if (ids.length === 0) return out;
-  const placeholders = ids.map(() => '?').join(',');
+  for (const group of chunks(ids, ID_CHUNK)) {
+  const placeholders = group.map(() => '?').join(',');
   const res = await db
     .prepare(
       `SELECT s.id AS submission_id, s.decision_version AS decision_version,
@@ -226,10 +238,11 @@ async function submitterFacts(db: D1Database, ids: string[]): Promise<Map<string
        FROM submission s
        WHERE s.id IN (${placeholders})`
     )
-    .bind(...ids)
+    .bind(...group)
     .all<{ submission_id: string; decision_version: number; submitter_email: string | null }>();
   for (const r of res.results ?? []) {
     out.set(r.submission_id, { decisionVersion: r.decision_version, email: r.submitter_email });
+  }
   }
   return out;
 }

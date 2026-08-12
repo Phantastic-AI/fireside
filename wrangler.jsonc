@@ -11,7 +11,7 @@
     }
   ],
   "vars": {
-    "RESEED_ENABLED": "false",
+    "RESEED_ENABLED": "true",
     "GOOGLE_CLIENT_ID": "92329243256-ieg544bl92lk19u7abi05aifut45be5s.apps.googleusercontent.com",
     "FROM_EMAIL": "mail@fireside.phantastic.ai"
   },
@@ -46,8 +46,10 @@
     }
   ],
   "triggers": {
-    // Hourly: maintenance always; reseed only when RESEED_ENABLED flips true (R-2).
-    "crons": ["0 * * * *"]
+    // Daily at 6 AM Pacific (13:00 UTC in summer): the demonstration world
+    // rebuilds itself once a night, not once an hour — a visitor's afternoon
+    // of clicking around survives until morning.
+    "crons": ["0 13 * * *"]
   },
   "observability": {
     "enabled": true
