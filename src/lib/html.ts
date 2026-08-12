@@ -59,6 +59,7 @@ export function eventNav(slug: string, here: string, callOpen: boolean): string 
 const BS_NAV: [path: string, label: string][] = [
   ['', 'Program'],
   ['/submissions', 'Proposals'],
+  ['/reviews', 'Reviews'],
   ['/agenda', 'Agenda'],
   ['/people', 'People'],
   ['/green-room', 'Green room'],
@@ -96,6 +97,21 @@ export function backstageShell(o: {
     `<span style="margin-left:auto"><a class="link" href="/${o.eventSlug}">See the public page ↗</a></span>` +
     '</div></footer></div>'
   );
+}
+
+/** The backstage refusal — one page for every ScopeError, in its own words. */
+export function deniedPage(message?: string): string {
+  return page({
+    title: NAME,
+    register: 'backstage',
+    body:
+      '<div class="stage backstage"><main style="min-height:70vh;display:grid;place-items:center">' +
+      '<div class="card card-pad" style="max-width:30em">' +
+      `<h1 class="serif" style="font-size:24px;font-weight:600;margin:0">${esc(message ?? 'That conference is not one of yours.')}</h1>` +
+      '<p class="sub" style="margin:10px 0 0">If it should be, ask an organizer of that event to add you from their settings.</p>' +
+      '<p style="margin:16px 0 0"><a class="link" href="/admin">Back to your events →</a></p>' +
+      '</div></main></div>',
+  });
 }
 
 /** The onstage chrome: masthead, main, footer. `nav` is pre-built links. */

@@ -18,11 +18,13 @@ export class ScopeError extends Error {
 }
 
 /** Reading the pile and a proposal: every backstage standing, viewers included. */
-const READ_ROLES: readonly string[] = ['owner', 'approver', 'editor', 'viewer'];
+export const READ_ROLES: readonly string[] = ['owner', 'approver', 'editor', 'viewer'];
 /** The letters are the telling act, so a viewer does not get to read the outbox. */
-const LETTER_ROLES: readonly string[] = ['owner', 'approver', 'editor'];
+export const LETTER_ROLES: readonly string[] = ['owner', 'approver', 'editor'];
+/** Changing the event itself — settings, team, the agenda's shape. */
+export const EDIT_ROLES: readonly string[] = ['owner', 'approver', 'editor'];
 
-function requireScope(principal: Principal, eventId: string, allowed: readonly string[]): void {
+export function requireScope(principal: Principal, eventId: string, allowed: readonly string[]): void {
   if (principal.role === 'organizer') return;
   const role = principal.eventRoles[eventId];
   if (role !== undefined && allowed.includes(role)) return;
