@@ -31,6 +31,7 @@
 
 import { checkedBatch, guard, newId, now, ChangesMismatchError, StaleStateError } from '../lib/db';
 import { isRealAddress } from './account';
+import { helperContactsFor } from '../queries/helpers';
 
 /* ------------------------------------------------------------------ *
  * What happened, in six words the screens know how to say
@@ -682,6 +683,11 @@ export async function askAgain(
   }
 
   sendReminderEmail(db, email, waitUntil, messageId, before.person_email, before.person_name, subject, body);
+  // Whoever helps this speaker is kept in the loop: the same reminder, to each
+  // of their helpers, so an assistant chasing the deck sees it too.
+  for (const h of await helperContactsFor(db, eventId, before.person_id)) {
+    sendReminderEmail(db, email, waitUntil, messageId, h.email, h.name, subject, body);
+  }
   return 'done';
 }
 
@@ -772,6 +778,11 @@ export async function askEveryoneWaiting(
 
   for (const m of messages) {
     sendReminderEmail(db, email, waitUntil, m.id, m.info.email, m.info.name, m.subject, m.body);
+    // Each speaker's helpers get the same letter, so an assistant is never the
+    // last to know a due date moved.
+    for (const h of await helperContactsFor(db, eventId, m.personId)) {
+      sendReminderEmail(db, email, waitUntil, m.id, h.email, h.name, m.subject, m.body);
+    }
   }
   return 'done';
 }

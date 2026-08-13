@@ -13,6 +13,9 @@ const DEMO_CREDENTIALS: [personId: string, password: string][] = [
   ['naomi-adeyemi', 'read-them-before-they-go'],
   ['dani-okafor', 'ask-before-you-assume'],
   ['per-reciprocal-attendee', 'accept-what-you-choose'],
+  // Priya's helper — so a judge can sign in as the assistant and see the
+  // scoped portal (upload the deck, mark a task; never withdraw the talk).
+  ['devika-nair', 'the-deck-is-handled'],
 ];
 
 // Reverse-FK wipe order; forward order for inserts. 'file' and 'file_comment'
@@ -22,7 +25,7 @@ const DEMO_CREDENTIALS: [personId: string, password: string][] = [
 const INSERT_ORDER: (keyof SeedData)[] = [
   'event', 'person', 'track', 'room', 'submission', 'participation', 'review',
   'event_role', 'task', 'file', 'file_comment', 'message', 'my_schedule', 'star',
-  'connection', 'friend_request', 'question', 'answer',
+  'connection', 'friend_request', 'speaker_helper', 'question', 'answer',
   // CRM tables last, so the reverse-order wipe deletes these children before
   // their person/event parents. Seeded empty; present here only to be cleared.
   'roster_entry', 'crm_note', 'crm_tag', 'crm_segment', 'crm_card', 'crm_card_event',

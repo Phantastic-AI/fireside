@@ -78,6 +78,7 @@ export type SeedData = {
   star: Row[];
   connection: Row[];
   friend_request: Row[];
+  speaker_helper: Row[];
   question: Row[];
   answer: Row[];
   // CRM (area 07) tables. Seeded empty — the directory and overview read live
@@ -125,7 +126,8 @@ export function buildSeed(): SeedData {
   const d: SeedData = {
     event: [], person: [], track: [], room: [], submission: [], participation: [],
     review: [], event_role: [], task: [], file: [], file_comment: [], message: [],
-    my_schedule: [], star: [], connection: [], friend_request: [], question: [], answer: [],
+    my_schedule: [], star: [], connection: [], friend_request: [], speaker_helper: [],
+    question: [], answer: [],
     roster_entry: [], crm_note: [], crm_tag: [], crm_segment: [], crm_card: [], crm_card_event: [],
   };
 
@@ -679,6 +681,18 @@ export function buildSeed(): SeedData {
   d.friend_request.push({
     id: 'frq-0001', event_id: DDC, requester_id: dani, recipient_id: noor,
     requested_at: utc(2025, 11, 6, 15, 20), accepted_at: utc(2025, 11, 6, 16), revoked_at: null,
+  });
+
+  // -- a speaker's helper: Priya's assistant handles her AIE logistics -----
+  d.person.push({
+    id: 'devika-nair', email: 'devika.nair@example.org', name: 'Devika Nair',
+    sort_name: 'Nair, Devika', bio: null, job_title: null, organisation: null,
+    links: null, pronouns: null, phone: null, internal_role: null,
+    share_contact: '{}', created_at: ANCHOR - 12 * MS.day,
+  });
+  d.speaker_helper.push({
+    id: 'shp-0001', event_id: AIE, speaker_person_id: 'priya-raghunathan',
+    helper_person_id: 'devika-nair', added_at: ANCHOR - 10 * MS.day, removed_at: null,
   });
 
   // -- questions & answers ----------------------------------------------

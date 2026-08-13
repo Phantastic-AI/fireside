@@ -52,6 +52,15 @@ import {
 } from '../../workflows/files';
 import { commentsForTasks, type FileComment } from '../../queries/comments';
 import { postCommentAsSpeaker, COMMENT_MAX } from '../../workflows/comments';
+// Δ helper — someone who helps a speaker with their logistics without being
+// on the program. helpersOfSpeaker/helpingAt/taskActorId are reads
+// (queries/helpers.ts); addHelper/removeHelper are the speaker's own two
+// writes (workflows/helpers.ts). Task completion and deck upload still go
+// through completeTask/saveDeck exactly as they do for a speaker acting on
+// their own behalf — taskActorId only resolves *whose* row that call is
+// allowed to touch.
+import { helpersOfSpeaker, helpingAt, taskActorId, type Helper, type Helping } from '../../queries/helpers';
+import { addHelper, removeHelper, type HelperOutcome } from '../../workflows/helpers';
 
 /* ------------------------------------------------------------------ *
  * Words
@@ -239,6 +248,14 @@ const NOTES: Record<string, string> = {
   'in-hand': 'The committee has this talk in hand. While they read, the words stay as you sent them.',
   refused: 'The committee has moved this talk on, so it can no longer be withdrawn here.',
   trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
+  // Δ helper — the words live in lib/labels.ts (helper.*, alongside the rest
+  // of the feature's copy); these entries only wire them into the one
+  // code→sentence door this page already has for everything else.
+  'helper-added': label('helper.added', 'onstage'),
+  'helper-removed': label('helper.removed', 'onstage'),
+  'helper-no-name': label('helper.no_name', 'onstage'),
+  'helper-no-email': label('helper.no_email', 'onstage'),
+  'helper-self': label('helper.self', 'onstage'),
 };
 
 function noteLine(code: string | undefined): string {
@@ -349,12 +366,20 @@ function withLine(names: readonly string[]): string {
   return `<p class="sub" style="margin-top:4px">With ${esc(saidList(names))}.</p>`;
 }
 
-function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]): Lane {
+/**
+ * `canManage` is false in helper-scoped mode (routes/public/portal.ts's
+ * helperOf branch): a helper may see everything below but never withdraw a
+ * talk, edit its words, or start another one — those stay the speaker's own,
+ * so the controls simply do not render rather than rendering and refusing.
+ */
+function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[], canManage: boolean): Lane {
   const ev = view.event;
   const tz = ev.timezone;
   const title = `<h3>${esc(s.title)}</h3>` + withLine(others);
   const note = s.decision?.note ? committeeNote(s.decision.note) : '';
   const seeProgram = `<a class="btn" href="/${esc(ev.slug)}/agenda">See the program →</a>`;
+  const withdraw = canManage ? withdrawBlock(ev.slug, s) : '';
+  const edit = canManage && editable(view, s) ? editLink(ev.slug, s) : '';
 
   switch (s.state) {
     case 'accepted': {
@@ -372,7 +397,7 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
         bot:
           (s.placement && s.publicSlug
             ? `<a class="btn" href="/${esc(ev.slug)}/s/${esc(s.publicSlug)}">See it on the agenda →</a>`
-            : '') + (withdrawable(s) ? withdrawBlock(ev.slug, s) : ''),
+            : '') + (withdrawable(s) ? withdraw : ''),
       };
     }
     case 'waitlisted':
@@ -385,7 +410,7 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
           '<p class="sub" style="margin-top:6px">If a room opens up, this is the list they come ' +
           'back to.</p>' +
           note,
-        bot: withdrawBlock(ev.slug, s),
+        bot: withdraw,
       };
     case 'rejected':
       return {
@@ -420,7 +445,7 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
           '<p class="sub" style="margin-top:6px">You pulled this talk back, and the committee no ' +
           'longer has it.</p>',
         bot:
-          ev.lifecycle === 'open' && ev.submissionsLeft > 0
+          canManage && ev.lifecycle === 'open' && ev.submissionsLeft > 0
             ? `<a class="btn" href="/${esc(ev.slug)}/cfp">Send another proposal</a>`
             : '',
       };
@@ -433,7 +458,7 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
           title +
           '<p class="sub" style="margin-top:6px">You started this talk and have not sent it. ' +
           'Nobody on the committee can see it yet.</p>',
-        bot: editable(view, s) ? editLink(ev.slug, s) : '',
+        bot: edit,
       };
     default: {
       const sent = s.submittedAt
@@ -447,14 +472,19 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
         colour: 'var(--ember)',
         head: `${label('submission.submitted', 'onstage')}.`,
         body: title + `<p class="sub" style="margin-top:6px">${sent}${by}</p>`,
-        bot: (editable(view, s) ? editLink(ev.slug, s) : '') + withdrawBlock(ev.slug, s),
+        bot: edit + withdraw,
       };
     }
   }
 }
 
-function proposalCard(view: PortalView, s: PortalSubmission, others: readonly string[]): string {
-  const lane = laneOf(view, s, others);
+function proposalCard(
+  view: PortalView,
+  s: PortalSubmission,
+  others: readonly string[],
+  canManage: boolean
+): string {
+  const lane = laneOf(view, s, others, canManage);
   return (
     `<div class="pcard ${lane.cls}"><div class="top">` +
     `<p style="margin:0;color:${lane.colour};font-weight:640">${esc(lane.head)}</p>` +
@@ -548,7 +578,17 @@ function versionList(versions: FileVersion[], tz: string): string {
  *  well as the day, so two comments left the same afternoon still read in
  *  order; nothing here is emailed (SessionBoard itself sends none for a
  *  comment either). */
-function commentThread(slug: string, taskId: string, comments: FileComment[], tz: string): string {
+/** `canReply` is false in helper-scoped mode: a comment posts as its author
+ *  (workflows/comments.ts's postCommentAsSpeaker writes personId straight
+ *  into author_person_id), and a helper has no row of their own to post
+ *  as — the thread stays readable, the reply box just does not render. */
+function commentThread(
+  slug: string,
+  taskId: string,
+  comments: FileComment[],
+  tz: string,
+  canReply: boolean
+): string {
   const rows = comments
     .map(
       (c) =>
@@ -558,15 +598,18 @@ function commentThread(slug: string, taskId: string, comments: FileComment[], tz
         `<p style="margin:2px 0 0">${esc(c.body)}</p></div>`
     )
     .join('');
+  const reply = canReply
+    ? `<form method="post" action="/${esc(slug)}/portal/comment" style="margin-top:8px">` +
+      `<input type="hidden" name="task" value="${esc(taskId)}">` +
+      `<textarea name="body" rows="2" maxlength="${COMMENT_MAX}" ` +
+      'placeholder="Say something about this file" aria-label="Add a comment"></textarea>' +
+      '<button class="btn btn-sm" type="submit" style="margin-top:6px">Add a comment</button></form>'
+    : '';
   return (
     '<div style="margin-top:12px">' +
     '<b style="font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">Comments</b>' +
     rows +
-    `<form method="post" action="/${esc(slug)}/portal/comment" style="margin-top:8px">` +
-    `<input type="hidden" name="task" value="${esc(taskId)}">` +
-    `<textarea name="body" rows="2" maxlength="${COMMENT_MAX}" ` +
-    'placeholder="Say something about this file" aria-label="Add a comment"></textarea>' +
-    '<button class="btn btn-sm" type="submit" style="margin-top:6px">Add a comment</button></form>' +
+    reply +
     '</div>'
   );
 }
@@ -578,7 +621,8 @@ function taskRow(
   forTitle: string | null,
   deck: StoredFile | null,
   versions: FileVersion[],
-  comments: FileComment[]
+  comments: FileComment[],
+  canManage: boolean = true
 ): string {
   const key = t.status === 'open' && t.overdue ? 'overdue' : t.status;
   const stateWord = label(`task.${key}` as LabelKey, 'onstage');
@@ -632,7 +676,9 @@ function taskRow(
     done +
     dropped +
     action +
-    (wantsAFile ? commentThread(slug, t.id, comments, tz) : '') +
+    (wantsAFile && (canManage || comments.length > 0)
+      ? commentThread(slug, t.id, comments, tz, canManage)
+      : '') +
     '</div></details>'
   );
 }
@@ -803,6 +849,69 @@ function profileCard(view: PortalView, onTheProgram: boolean): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * Δ helper — someone who helps with the logistics, not on the program
+ * ------------------------------------------------------------------ */
+
+/** One helper, and the one act a speaker takes on them: letting them go. */
+function helperRow(slug: string, h: Helper): string {
+  return (
+    '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;' +
+    'padding:8px 0;border-top:1px solid var(--line-soft)">' +
+    `<div><b style="font-size:14px">${esc(h.name)}</b>` +
+    (h.email ? ` <span class="sub">${esc(h.email)}</span>` : '') +
+    '</div>' +
+    `<form method="post" action="/${esc(slug)}/portal/helpers/remove" style="margin:0">` +
+    `<input type="hidden" name="helper" value="${esc(h.id)}">` +
+    `<button class="btn btn-sm" type="submit">${esc(label('helper.remove', 'onstage'))}</button>` +
+    '</form></div>'
+  );
+}
+
+/**
+ * SPK's own gap on the other side: nowhere to say who helps you. A name and
+ * an email are all this asks for — the same two facts a co-presenter is
+ * added by (workflows/submit.ts's planCoPresenters) — because the address is
+ * the whole of how they get in: workflows/helpers.ts finds or makes their
+ * person row, and from there they sign in exactly the way every speaker
+ * already does.
+ */
+function helperSection(slug: string, helpers: Helper[]): string {
+  const list = helpers.length
+    ? helpers.map((h) => helperRow(slug, h)).join('')
+    : `<p class="sub" style="margin-top:2px">${esc(label('helper.empty', 'onstage'))}</p>`;
+  const form =
+    `<form method="post" action="/${esc(slug)}/portal/helpers/add" style="margin-top:14px">` +
+    line({
+      id: 'f-hname',
+      name: 'name',
+      labelText: label('helper.name_label', 'onstage'),
+      value: null,
+      limit: 120,
+      required: true,
+    }) +
+    line({
+      id: 'f-hemail',
+      name: 'email',
+      labelText: label('helper.email_label', 'onstage'),
+      value: null,
+      limit: 200,
+      required: true,
+    }) +
+    '<div class="btnrow" style="margin-top:6px">' +
+    `<button class="btn btn-primary btn-sm" type="submit">${esc(label('helper.add_button', 'onstage'))}</button>` +
+    '</div></form>';
+
+  return (
+    '<div class="card card-pad sec" style="max-width:46em">' +
+    `<h2 class="display" style="font-size:22px;margin-bottom:4px">${esc(label('helper.section', 'onstage'))}</h2>` +
+    `<p class="sub" style="margin-bottom:10px">${esc(label('helper.blurb', 'onstage'))}</p>` +
+    list +
+    form +
+    '</div>'
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * The page
  * ------------------------------------------------------------------ */
 
@@ -813,44 +922,68 @@ function portalPage(
   versions: Map<string, FileVersion[]>,
   comments: Map<string, FileComment[]>,
   /** Everyone else on each talk, by submission — names only, in program order. */
-  others: Map<string, string[]>
+  others: Map<string, string[]>,
+  /** This speaker's own helpers — read (and rendered) only in their own
+   *  portal; empty and unused in helper-scoped mode. */
+  helpers: Helper[],
+  /** Set only when the signed-in person is not this portal's own speaker but
+   *  someone helping them — routes/public/portal.ts's fallback when
+   *  queries/portal.ts's own view comes back null. Every control that would
+   *  touch the talk's words or standing, or the speaker's own identity,
+   *  reads this and does not render. */
+  helperOf: Helping | null = null
 ): string {
   const ev = view.event;
   const tz = ev.timezone;
   const slug = esc(ev.slug);
+  const canManage = helperOf === null;
+  const speakerName = esc(view.profile.name);
+  const title = helperOf ? `Helping ${view.profile.name} · ${ev.name}` : `Your portal · ${ev.name}`;
 
   // Who you are, where you are, and the way out — one line, because a signed-in
   // page with no name on it and no way to leave is a page you get lost on.
+  // In helper-scoped mode "you" is deliberately ambiguous here — the face and
+  // the name are the speaker's, because this is a reading of their standing,
+  // not the helper's own.
+  const heading = helperOf ? fill(label('helper.banner', 'onstage'), { name: speakerName }) : 'Your portal';
+  const scopeNote = helperOf
+    ? `<p class="sub" style="margin-top:4px">${fill(label('helper.scope_note', 'onstage'), { name: speakerName })}</p>`
+    : '';
   const head =
     '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
     face(view.profile, 56) +
-    '<div><h1 class="display" style="font-size:32px">Your portal</h1>' +
-    `<p class="sub">${esc(view.profile.name)} · ${esc(ev.name)} · ` +
+    `<div><h1 class="display" style="font-size:32px">${heading}</h1>` +
+    `<p class="sub">${speakerName} · ${esc(ev.name)} · ` +
     `<a class="link" href="/sign-out">${esc(label('auth.sign_out', 'onstage'))}</a></p>` +
+    scopeNote +
     '</div></div>' +
     noteLine(note);
 
   // Nothing sent yet: one card that names the next thing, not three empty ones.
   if (view.submissions.length === 0 && view.tasks.length === 0 && view.messages.length === 0) {
-    const door =
-      ev.lifecycle === 'open'
+    const door = !canManage
+      ? `<a class="btn btn-primary btn-lg" href="/${slug}/agenda">See the program →</a>`
+      : ev.lifecycle === 'open'
         ? `<a class="btn btn-primary btn-lg" href="/${slug}/cfp">Send a proposal →</a>`
         : `<a class="btn btn-primary btn-lg" href="/${slug}/agenda">See the program →</a>`;
-    const why =
-      ev.lifecycle === 'open'
+    const heading2 = !canManage
+      ? `Nothing here yet for ${speakerName}.`
+      : `You have not sent a proposal to ${esc(ev.name)} yet.`;
+    const why = !canManage
+      ? 'When there is something to do, it turns up here with a date on it.'
+      : ev.lifecycle === 'open'
         ? 'The call is open. Send one and this page fills up: where it stands, what the ' +
           'committee said, and anything they need from you.'
         : 'The call has closed. When it opens again, everything you send lands here — where ' +
           'it stands, what the committee said, and anything they need from you.';
     return page({
-      title: `Your portal · ${ev.name}`,
+      title,
       register: 'onstage',
       body: onstageShell(
         eventNav(ev.slug, '/portal', ev.lifecycle === 'open'),
         '<div class="wrap" style="padding-top:44px">' +
           head +
-          '<div class="sec state-out" style="max-width:40em">' +
-          `<h2>You have not sent a proposal to ${esc(ev.name)} yet.</h2>` +
+          `<div class="sec state-out" style="max-width:40em"><h2>${heading2}</h2>` +
           `<p>${why}</p><div class="btnrow">${door}</div></div></div>`,
         ev.slug
       ),
@@ -858,7 +991,7 @@ function portalPage(
   }
 
   const cards = view.submissions
-    .map((s) => proposalCard(view, s, others.get(s.id) ?? []))
+    .map((s) => proposalCard(view, s, others.get(s.id) ?? [], canManage))
     .join('');
 
   // Everything owed, in one list — the answer to "what do I owe" in one glance.
@@ -888,7 +1021,8 @@ function portalPage(
             manyTalks && t.submissionId ? (titles.get(t.submissionId) ?? null) : null,
             decks.get(t.id) ?? null,
             versions.get(t.id) ?? [],
-            comments.get(t.id) ?? []
+            comments.get(t.id) ?? [],
+            canManage
           )
         )
         .join('')
@@ -906,7 +1040,7 @@ function portalPage(
       `<div class="btnrow">${todoDoor}</div></div>`;
 
   const another =
-    ev.lifecycle === 'open' && ev.submissionsLeft > 0
+    canManage && ev.lifecycle === 'open' && ev.submissionsLeft > 0
       ? '<p class="hint" style="margin-top:14px">The call is still open — you have room for ' +
         `${esc(String(ev.submissionsLeft))} more. ` +
         `<a class="link" href="/${slug}/cfp">Send another proposal →</a></p>`
@@ -932,11 +1066,11 @@ function portalPage(
     '<p class="sub" style="margin-bottom:8px">Everything the committee has sent you, newest first.</p>' +
     messages +
     '</div>' +
-    profileCard(view, onTheProgram) +
+    (canManage ? profileCard(view, onTheProgram) + helperSection(ev.slug, helpers) : '') +
     '</div>';
 
   return page({
-    title: `Your portal · ${ev.name}`,
+    title,
     register: 'onstage',
     body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body, ev.slug),
   });
@@ -957,6 +1091,16 @@ const noteFor = (outcome: WriteOutcome, done: string): string =>
 const fileNote = (outcome: FileOutcome, done: string): string =>
   outcome === 'done' ? done : outcome;
 
+/** 'moved' and 'trouble' are the same two generic sentences every other
+ *  outcome type on this page already shares; the three validation words
+ *  (no-name, no-email, self) get their own 'helper-' entries because they
+ *  are this feature's own — see NOTES above. */
+const helperNote = (outcome: HelperOutcome, done: string): string => {
+  if (outcome === 'done') return done;
+  if (outcome === 'moved' || outcome === 'trouble') return outcome;
+  return `helper-${outcome}`;
+};
+
 export function registerPortal(app: Hono<{ Bindings: Env }>): void {
   app.get('/:event/portal', async (c) => {
     const slug = c.req.param('event');
@@ -972,17 +1116,47 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     // status line as well: nobody is signed in, so nothing was shown.
     if (!principal) return c.html(signedOutPage(ev), 401);
 
-    const view = await portalView(c.env.DB, ev.id, principal.personId);
+    let view = await portalView(c.env.DB, ev.id, principal.personId);
     if (!view) return c.html(signedOutPage(ev), 401);
+
+    // Δ helper — portalView returns non-null for any signed-in person at any
+    // real event (it only checks the event and person rows exist, not that
+    // the person actually stands on a talk here — 02 inv. reads "told", not
+    // "present"), so an empty submissions list, not a null view, is this
+    // page's real signal that the principal is nobody's own participant.
+    // Someone in exactly that position may still be helping one who is: the
+    // same magic-link door, a different reason to be standing at it.
+    // helpingAt is the one query this branch adds; the view itself is
+    // queries/portal.ts's own portalView, read again for the speaker being
+    // helped rather than for the principal — the helper-scoped render is the
+    // one page every table already answers, not a second one built to answer
+    // a narrower question.
+    let helperOf: Helping | null = null;
+    if (view.submissions.length === 0) {
+      const helping = await helpingAt(c.env.DB, ev.id, principal.personId);
+      const first = helping[0];
+      if (first) {
+        const helperView = await portalView(c.env.DB, ev.id, first.speakerPersonId);
+        if (helperView) {
+          helperOf = first;
+          view = helperView;
+        }
+      }
+    }
+
+    // Whose name goes on a comment's byline and whose co-presenters get
+    // filtered out below — the speaker being read, not always the principal.
+    const viewerPersonId = helperOf ? helperOf.speakerPersonId : principal.personId;
 
     const asked = [...view.submissions.flatMap((s) => s.tasks), ...view.tasks]
       .filter((t) => t.kind === 'file_request')
       .map((t) => t.id);
-    const [decks, versions, comments, people] = await Promise.all([
+    const [decks, versions, comments, people, helpers] = await Promise.all([
       decksForTasks(c.env.DB, asked),
       deckVersionsForTasks(c.env.DB, asked),
       commentsForTasks(c.env.DB, asked),
       peopleOnTalks(c.env.DB, view.submissions.map((s) => s.id)),
+      helperOf ? Promise.resolve([]) : helpersOfSpeaker(c.env.DB, ev.id, viewerPersonId),
     ]);
     // Everyone on each talk but the person reading it: the co-presenters they
     // added, and — when they are the co-presenter — whoever sent it.
@@ -990,7 +1164,7 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     for (const [submissionId, on] of people) {
       others.set(
         submissionId,
-        on.filter((p) => p.personId !== principal.personId).map((p) => p.name)
+        on.filter((p) => p.personId !== viewerPersonId).map((p) => p.name)
       );
     }
 
@@ -999,7 +1173,7 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     // A saved edit arrives under its own flag; its sentence still lives in
     // NOTES with the others, so there is one closed set and not two.
     const note = c.req.query('edited') === '1' ? 'edited' : c.req.query('note');
-    return c.html(portalPage(view, note, decks, versions, comments, others));
+    return c.html(portalPage(view, note, decks, versions, comments, others, helpers, helperOf));
   });
 
   // -- CNT-05: a comment on a deliverable ---------------------------------
@@ -1031,7 +1205,13 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     const form = await c.req.parseBody();
     const taskId = String(form['task'] ?? '');
     if (!taskId) return c.redirect(back(slug, 'moved'), 303);
-    const outcome = await completeTask(c.env.DB, principal.personId, taskId);
+    // Δ helper — completeTask still only ever touches its own owner's row
+    // (workflows/portal-actions.ts's MY_OPEN_TASK); taskActorId is what may
+    // resolve that owner to the speaker being helped rather than the
+    // principal themselves. Neither id is trusted from the form.
+    const actorId = await taskActorId(c.env.DB, taskId, principal.personId);
+    if (!actorId) return c.redirect(back(slug, 'moved'), 303);
+    const outcome = await completeTask(c.env.DB, actorId, taskId);
     return c.redirect(back(slug, noteFor(outcome, 'task-done')), 303);
   });
 
@@ -1110,7 +1290,49 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     const deck = filePart(form['deck']);
     if (!taskId) return c.redirect(back(slug, 'moved'), 303);
     if (!deck) return c.redirect(back(slug, 'nothing'), 303);
-    const outcome = await saveDeck(c.env.DB, c.env.FILES, principal.personId, taskId, deck);
+    // Δ helper — same substitution as /portal/done: saveDeck only ever writes
+    // against the task it is given and the person id it is given, together
+    // (workflows/files.ts's own WHERE id = ? AND person_id = ?); taskActorId
+    // is what may resolve that person id to the speaker being helped.
+    const actorId = await taskActorId(c.env.DB, taskId, principal.personId);
+    if (!actorId) return c.redirect(back(slug, 'moved'), 303);
+    const outcome = await saveDeck(c.env.DB, c.env.FILES, actorId, taskId, deck);
     return c.redirect(back(slug, fileNote(outcome, 'deck')), 303);
+  });
+
+  // -- Δ helper: the speaker's own two writes about who helps them ------
+  app.post('/:event/portal/helpers/add', async (c) => {
+    const slug = c.req.param('event');
+    const ev = await eventBySlug(c.env.DB, slug);
+    if (!ev) return c.notFound();
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+    const form = await c.req.parseBody();
+    const outcome = await addHelper(c.env.DB, ev.id, principal.personId, {
+      name: String(form['name'] ?? ''),
+      email: String(form['email'] ?? ''),
+    });
+    return c.redirect(back(slug, helperNote(outcome, 'helper-added')), 303);
+  });
+
+  app.post('/:event/portal/helpers/remove', async (c) => {
+    const slug = c.req.param('event');
+    const ev = await eventBySlug(c.env.DB, slug);
+    if (!ev) return c.notFound();
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+    const form = await c.req.parseBody();
+    const helperRowId = String(form['helper'] ?? '');
+    if (!helperRowId) return c.redirect(back(slug, 'moved'), 303);
+    const outcome = await removeHelper(c.env.DB, ev.id, principal.personId, helperRowId);
+    return c.redirect(back(slug, helperNote(outcome, 'helper-removed')), 303);
   });
 }

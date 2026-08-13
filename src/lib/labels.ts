@@ -185,6 +185,34 @@ const LABELS = {
   'question.kind.checkbox': { backstage: 'Checkboxes' },
   'question.show_if': { backstage: 'Only when {question} is {answer}' },
 
+  // Δ helper — a speaker's own logistics helper, someone who takes care of
+  // the deck, confirms travel, and sends in what the committee asks for,
+  // without being on the program themselves (schema/0011). Not in 02 §6 (a
+  // later parcel) — onstage only, same register split as friend.* above.
+  'helper.section': { onstage: 'People who help you' },
+  'helper.blurb': {
+    onstage:
+      'Someone who takes care of the logistics for you — the deck, confirming travel, sending in ' +
+      'what the committee asks for. They sign in the same way you do, and see only what you owe ' +
+      'here.',
+  },
+  'helper.empty': { onstage: 'Nobody yet.' },
+  'helper.name_label': { onstage: 'Their name' },
+  'helper.email_label': { onstage: 'Their email' },
+  'helper.add_button': { onstage: 'Add' },
+  'helper.remove': { onstage: 'Remove' },
+  'helper.added': { onstage: 'Added. They can sign in the same way you do, at the address you gave.' },
+  'helper.removed': { onstage: 'Removed. They no longer have anything to do here.' },
+  'helper.no_name': { onstage: 'A name is needed.' },
+  'helper.no_email': { onstage: 'An email address is needed.' },
+  'helper.self': { onstage: 'That is your own address, so it cannot be added as a helper.' },
+  'helper.banner': { onstage: 'Helping {name}' },
+  'helper.scope_note': {
+    onstage:
+      "You can see what is due here, and send in what {name} needs to send. The talk itself stays " +
+      "{name}'s alone to change.",
+  },
+
   // §1.23 — reviewing, the committee's own words · Δ13
   'review.queue': { backstage: 'Yours to score · {n}' },
   'review.progress': { backstage: 'Reviewed {n} of {m}' },
