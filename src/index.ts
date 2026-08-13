@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { homePage } from './routes/public/home';
 import { listEvents } from './queries/public';
+import { FAVICON } from './lib/html';
 import { signInPage, signUpPage } from './routes/public/signin';
 import { registerCfp } from './routes/public/cfp';
 import { registerPortal } from './routes/public/portal';
@@ -59,6 +60,14 @@ export type Env = {
 const app = new Hono<{ Bindings: Env }>();
 
 app.get('/healthz', (c) => c.json({ ok: true }));
+
+// The favicon, served as a real file at both the modern path and the one
+// browsers and link-unfurlers request by default. Same SVG for each — an SVG
+// answered for .ico is accepted everywhere that matters, and it means one
+// crisp mark at every tab size with no binary asset to carry.
+const faviconHeaders = { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400' };
+app.get('/favicon.svg', (c) => c.body(FAVICON, 200, faviconHeaders));
+app.get('/favicon.ico', (c) => c.body(FAVICON, 200, faviconHeaders));
 
 // The manual reseed door, behind a real secret (RESEED_KEY) — the demo world
 // can be rebuilt on purpose, never by a stranger reading a public repo.

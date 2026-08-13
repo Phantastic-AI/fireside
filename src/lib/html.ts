@@ -9,8 +9,19 @@ import conciergeIsland from '../islands/concierge.js';
 
 export const NAME = 'Fireside';
 
+// The brand flame, and the favicon. The xmlns is load-bearing: a browser
+// rejects an SVG data-URI icon without it, which is why the tab looked blank.
 export const FLAME =
-  '<svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3c1.6 4.2-1.4 6-1.4 8.6 0 1.6 1.2 2.6 2.4 2.6 1.5 0 2.3-1.1 2.2-2.6 2.2 1.9 3.3 4.2 3.3 6.6 0 3.9-3 6.8-6.5 6.8S9.5 22.1 9.5 18.2C9.5 12.3 14.6 9.6 16 3z" fill="#B14D14"/></svg>';
+  '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3c1.6 4.2-1.4 6-1.4 8.6 0 1.6 1.2 2.6 2.4 2.6 1.5 0 2.3-1.1 2.2-2.6 2.2 1.9 3.3 4.2 3.3 6.6 0 3.9-3 6.8-6.5 6.8S9.5 22.1 9.5 18.2C9.5 12.3 14.6 9.6 16 3z" fill="#B14D14"/></svg>';
+
+/** The favicon as a standalone SVG document — a warm paper square behind the
+ *  ember flame, so it reads as an icon in a light tab, a dark tab, and a link
+ *  unfurl alike. Served at /favicon.svg and /favicon.ico. */
+export const FAVICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">' +
+  '<rect width="32" height="32" rx="7" fill="#FBF7F0"/>' +
+  '<path d="M16 4c1.7 4.4-1.5 6.3-1.5 9 0 1.7 1.3 2.7 2.5 2.7 1.6 0 2.4-1.2 2.3-2.7 2.3 2 ' +
+  '3.5 4.4 3.5 6.9 0 4.1-3.2 7.1-6.8 7.1S9 24 9 19.9C9 13.7 14.4 10.8 16 4z" fill="#B14D14"/></svg>';
 
 /** HTML-escape. Every interpolated string goes through this unless marked raw. */
 export function esc(s: string | number | null | undefined): string {
@@ -41,7 +52,9 @@ export function page(o: PageOpts): string {
     `<title>${esc(o.title)}</title>` +
     (o.description ? `<meta name="description" content="${esc(o.description)}">` : '') +
     `<link rel="stylesheet" href="${bundle}">` +
-    `<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(FLAME)}">` +
+    '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' +
+    '<link rel="icon" href="/favicon.ico" sizes="any">' +
+    '<link rel="apple-touch-icon" href="/favicon.svg">' +
     '</head><body>' +
     o.body +
     '</body></html>'
