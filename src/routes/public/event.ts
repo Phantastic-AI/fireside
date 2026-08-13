@@ -25,7 +25,7 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
-import { esc, onstageShell, eventNav, page } from '../../lib/html';
+import { esc, onstageShell, eventNav, page, conferenceMasthead } from '../../lib/html';
 import { eventBySlug, speakersGallery, type EventHome, type GallerySpeaker } from '../../queries/public';
 
 /* ------------------------------------------------------------------ *
@@ -220,6 +220,7 @@ function speakerStripHtml(ev: EventHome, speakers: GallerySpeaker[]): string {
 function eventHomePage(ev: EventHome, speakers: GallerySpeaker[]): string {
   const nav = eventNav(ev.slug, '', ev.lifecycle === 'open');
   const main =
+    conferenceMasthead(ev) +
     '<div class="wrap">' +
     '<div style="padding:46px 0 0">' +
     `<div class="kicker">${esc(dateRange(ev.startsOn, ev.endsOn))}</div>` +

@@ -15,7 +15,7 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
-import { esc, page, eventNav, onstageShell } from '../../lib/html';
+import { esc, page, eventNav, onstageShell, conferenceMasthead } from '../../lib/html';
 import { label, type LabelKey } from '../../lib/labels';
 import { eventBySlug, type EventHome } from '../../queries/public';
 import {
@@ -981,7 +981,8 @@ function portalPage(
       register: 'onstage',
       body: onstageShell(
         eventNav(ev.slug, '/portal', ev.lifecycle === 'open'),
-        '<div class="wrap" style="padding-top:44px">' +
+        conferenceMasthead(ev) +
+          '<div class="wrap" style="padding-top:44px">' +
           head +
           `<div class="sec state-out" style="max-width:40em"><h2>${heading2}</h2>` +
           `<p>${why}</p><div class="btnrow">${door}</div></div></div>`,
@@ -1058,6 +1059,7 @@ function portalPage(
   const owes = tasks.some((t) => t.status === 'open');
 
   const body =
+    conferenceMasthead(ev) +
     '<div class="wrap" style="padding-top:44px">' +
     head +
     (owes ? todoSection + talksSection : talksSection + todoSection) +

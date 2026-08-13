@@ -120,6 +120,7 @@ export type PortalEvent = {
   timezone: string;
   tzLabel: string | null;
   venueName: string | null;
+  accent: string | null;
   agendaPublished: boolean;
   lifecycle: Lifecycle;
   cfpClosesAt: number | null;
@@ -152,6 +153,7 @@ type EventRow = {
   timezone: string;
   tz_label: string | null;
   venue_name: string | null;
+  accent: string | null;
   agenda_published: number;
   cfp_closes_at: number | null;
   cfp_success_message: string | null;
@@ -293,7 +295,7 @@ export async function portalView(
   >([
     db
       .prepare(
-        `SELECT id, slug, name, starts_on, ends_on, timezone, tz_label, venue_name,
+        `SELECT id, slug, name, starts_on, ends_on, timezone, tz_label, venue_name, accent,
                 agenda_published, cfp_closes_at, cfp_success_message, decide_by, max_submissions
          FROM event WHERE id = ?`
       )
@@ -425,6 +427,7 @@ export async function portalView(
       timezone: ev.timezone,
       tzLabel: ev.tz_label,
       venueName: ev.venue_name,
+      accent: ev.accent,
       agendaPublished: ev.agenda_published === 1,
       lifecycle: lifecycleOf(ev.ends_on, ev.cfp_closes_at, ev.timezone, nowMs),
       cfpClosesAt: ev.cfp_closes_at,

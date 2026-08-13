@@ -34,7 +34,7 @@
 //    it needs a query this parcel's task did not name.
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
-import { esc, page, onstageShell, eventNav } from '../../lib/html';
+import { esc, page, onstageShell, eventNav, conferenceMasthead } from '../../lib/html';
 import { label, FORMAT_KEY, type LabelKey } from '../../lib/labels';
 import {
   agenda,
@@ -922,6 +922,11 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
     } else {
       inner = agendaBody(event, ag, f, slug, roles, stars, link);
     }
+
+    // An embedded program is scoped by whatever page hosts it (R-6) — the
+    // conference-identity band belongs to the event's own site, not to a
+    // frame somebody else owns, so it renders only outside embed mode.
+    if (!embed) inner = conferenceMasthead(event) + inner;
 
     // Widget polish: the phone-width star's absolute-positioned tap target
     // (onstage.css's .starbtn, 44px at top:7/right:7 against .sesh-main's

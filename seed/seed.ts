@@ -139,7 +139,7 @@ export function buildSeed(): SeedData {
     tagline: 'Two days at Pier 57 for the people running AI systems in production.',
     starts_on: '2026-09-03', ends_on: '2026-09-04',
     timezone: 'America/New_York', tz_label: 'All times ET',
-    venue_name: 'Pier 57', venue_address: 'Pier 57, New York',
+    venue_name: 'Pier 57', venue_address: 'Pier 57, New York', accent: '#3b5bdb',
     cfp_opens_at: utc(2026, 7, 21, 12), cfp_closes_at: ET(2026, 8, 20, 23, 59),
     // Two waves (D-033): an early call that ran in June and closed, and the
     // main call open now. cfp_opens_at/cfp_closes_at mirror the main window, so
@@ -178,7 +178,7 @@ export function buildSeed(): SeedData {
     tagline: 'Two days, two rooms, no keynote. Talks about the boring parts are the most welcome ones.',
     starts_on: '2025-11-06', ends_on: '2025-11-07',
     timezone: 'America/New_York', tz_label: 'All times ET',
-    venue_name: 'The Foundry', venue_address: 'The Foundry, Charlotte',
+    venue_name: 'The Foundry', venue_address: 'The Foundry, Charlotte', accent: '#0f9d8f',
     cfp_opens_at: utc(2025, 6, 1, 12), cfp_closes_at: ET5(2025, 8, 1, 23, 59),
     submission_windows: '[]', // a single call, the way it always was
     // Lighter than New York's, and honest about what a volunteer conference

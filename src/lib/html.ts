@@ -61,6 +61,55 @@ export function page(o: PageOpts): string {
   );
 }
 
+const HEX_ACCENT = /^#[0-9a-fA-F]{3,8}$/;
+
+/** A day-range from two `YYYY-MM-DD` strings: "3 Feb 2026" for one day,
+ *  "3–5 Feb 2026" within a month, "30 Nov – 2 Dec 2025" across months, with
+ *  an en dash between the days. Local to the masthead; no date library. */
+function accentDateRange(startsOn: string, endsOn: string): string {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const parts = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return { y: y ?? 1970, m: m ?? 1, d: d ?? 1 };
+  };
+  const s = parts(startsOn);
+  const e = parts(endsOn);
+  if (startsOn === endsOn) return `${s.d} ${MONTHS[s.m - 1]} ${s.y}`;
+  if (s.y === e.y && s.m === e.m) return `${s.d}–${e.d} ${MONTHS[s.m - 1]} ${s.y}`;
+  if (s.y === e.y) return `${s.d} ${MONTHS[s.m - 1]} – ${e.d} ${MONTHS[e.m - 1]} ${s.y}`;
+  return `${s.d} ${MONTHS[s.m - 1]} ${s.y} – ${e.d} ${MONTHS[e.m - 1]} ${e.y}`;
+}
+
+/**
+ * The band that stops a speaker uploading a deck to the wrong conference: an
+ * accent-tinted strip carrying the conference's own name and its venue, dates
+ * and clock, the same on every screen that belongs to one event — so two
+ * tabs open side by side never look interchangeable.
+ */
+export function conferenceMasthead(ev: {
+  name: string;
+  accent: string | null;
+  venueName: string | null;
+  startsOn: string;
+  endsOn: string;
+  tzLabel: string | null;
+}): string {
+  const accent = ev.accent && HEX_ACCENT.test(ev.accent) ? ev.accent : 'var(--ember)';
+  const meta = [ev.venueName, accentDateRange(ev.startsOn, ev.endsOn), ev.tzLabel]
+    .filter((v): v is string => !!v)
+    .map((v) => esc(v))
+    .join(' · ');
+  return (
+    `<div style="border-left:4px solid ${accent};` +
+    `background:linear-gradient(90deg, color-mix(in srgb, ${accent} 12%, transparent), transparent)">` +
+    '<div class="wrap" style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;padding:10px 22px">' +
+    `<span style="font-size:15px;font-weight:700;color:var(--ink)">` +
+    `<span style="color:${accent}">●</span> ${esc(ev.name)}</span>` +
+    (meta ? `<span class="sub" style="font-size:13px">${meta}</span>` : '') +
+    '</div></div>'
+  );
+}
+
 /**
  * The concierge, in the corner. Every screen that belongs to one conference
  * carries it, in the register that screen is written in; a screen that belongs
