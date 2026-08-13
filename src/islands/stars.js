@@ -130,7 +130,10 @@
   if (!root) return;
 
   // D-029: the page never pretends time and distance away — overlaps and
-  // no-gap room changes get a quiet line. Same arithmetic as the server's.
+  // tight room changes get a quiet line. Same arithmetic as the server's,
+  // same 15-minute cutoff (schedule.ts's WALK_MINUTES) — this venue's
+  // shortest cross-room gap.
+  var WALK_MINUTES = 15;
   function physicsNotes(rows) {
     var notes = {};
     function addNote(id, note) {
@@ -152,7 +155,7 @@
           continue;
         }
         var gap = Math.round((b.at - aEnd) / 60000);
-        if (gap < 10 && a.room && b.room && a.room !== b.room) {
+        if (gap <= WALK_MINUTES && a.room && b.room && a.room !== b.room) {
           addNote(b.id, gap === 0
             ? 'Tight turn \u2014 ' + a.room + ' to ' + b.room + ', no gap.'
             : 'Tight turn \u2014 ' + a.room + ' to ' + b.room + ', ' + gap + ' min.');
@@ -194,12 +197,14 @@
     var set = stars();
     var total = 0;
     var out = '';
+    var starredHere = [];
     data.days.forEach(function (d) {
       var inDay = d.sessions.filter(function (s) {
         return set.indexOf(s.id) >= 0;
       });
       if (!inDay.length) return;
       total += inDay.length;
+      inDay.forEach(function (s) { starredHere.push(s.id); });
       var notes = physicsNotes(inDay);
       out += '<div class="dayhead">' + esc(d.label) + '</div><div class="slot">' + inDay.map(function (s) {
         return row(s, notes[s.id]);
@@ -214,8 +219,15 @@
       return;
     }
 
+    // The .ics route (registerIcs, src/routes/public/ics.ts) already answers
+    // ?ids=a,b,c for a visitor with no account — the same contract my-picks.ics
+    // uses. Signed out, these ids live only in this browser, so this is the
+    // only place that link can be built.
+    var icsHref = '/' + esc(data.slug) + '/my-schedule.ics?ids=' + starredHere.map(encodeURIComponent).join(',');
+
     root.innerHTML =
-      '<p class="sub" style="margin:2px 0 18px">' + plural(total, 'session starred', 'sessions starred') + '</p>' + out;
+      '<p class="sub" style="margin:2px 0 18px">' + plural(total, 'session starred', 'sessions starred') +
+      ' · <a class="link" href="' + icsHref + '">Add my schedule to calendar →</a></p>' + out;
 
     root.querySelectorAll('[data-star]').forEach(function (b) {
       b.addEventListener('click', function () {

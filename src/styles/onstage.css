@@ -181,6 +181,16 @@
   .starcount{gap:10px;padding:11px 0}
   .starcount .sub{width:100%;margin-left:0!important}
 
+  /* --- filter chip rows (day/track/format/room, and the room switcher's
+     own): shared.css's .filters.scrollx already makes the row scroll at
+     this width, but a row that clips mid-word ("Galle-") with no further
+     cue reads as broken, not as "more to the right" (fresh-eyes review).
+     A quiet edge fade is the whole fix — no JS, no shared.css change, this
+     register's own visual layer on markup shared.css already owns. */
+  .filters.scrollx{position:relative}
+  .filters.scrollx::after{content:"";position:absolute;top:0;right:0;bottom:0;width:30px;
+    background:linear-gradient(to right,transparent,var(--paper) 70%);pointer-events:none}
+
   /* --- public agenda: full-width cards, star as a round tap target --- */
   .sesh{border-left-width:6px;position:relative}
   .sesh-main{padding:14px 58px 14px 14px}

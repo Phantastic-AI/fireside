@@ -164,7 +164,14 @@ const STAR_ON =
 
 /** D-029 — the page never pretends time and distance away. Two facts only:
  *  starred sessions that overlap, and a room change with no room to breathe.
- *  Warnings never block a star; they are the honest mirror of the plan. */
+ *  Warnings never block a star; they are the honest mirror of the plan.
+ *
+ *  WALK_MINUTES is 15: the shortest cross-room gap this venue's own schedule
+ *  ever leaves (Pier 57 — see seed/content.ts) is exactly 15 minutes, and
+ *  that is a real walk, not a breather. A narrower cutoff would make this
+ *  warning theoretically correct and practically invisible. */
+const WALK_MINUTES = 15;
+
 function physicsNotes(rows: EmbeddedSession[]): Map<string, string[]> {
   const notes = new Map<string, string[]>();
   const add = (id: string, note: string) => {
@@ -184,7 +191,7 @@ function physicsNotes(rows: EmbeddedSession[]): Map<string, string[]> {
         continue;
       }
       const gap = Math.round((b.at - aEnd) / 60_000);
-      if (gap < 10 && a.room && b.room && a.room !== b.room) {
+      if (gap <= WALK_MINUTES && a.room && b.room && a.room !== b.room) {
         add(b.id, gap === 0 ? `Tight turn — ${a.room} to ${b.room}, no gap.` : `Tight turn — ${a.room} to ${b.room}, ${gap} min.`);
       }
       break; // only the next session matters once nothing overlaps
@@ -247,8 +254,13 @@ function serverList(slug: string, embed: EmbeddedAgenda, starred: string[]): str
       `<a class="btn btn-primary" href="/${esc(slug)}/agenda">Browse the agenda →</a></div>`
     );
   }
+  // The .ics route (registerIcs, src/routes/public/ics.ts) already reads this
+  // account's own starred list with no ids= needed — it was reachable only by
+  // guessing the address. One quiet link fixes that, next to the count it is
+  // exporting a copy of.
   return (
-    `<p class="sub" style="margin:2px 0 18px">${esc(plural(total, 'session starred', 'sessions starred'))}</p>` +
+    `<p class="sub" style="margin:2px 0 18px">${esc(plural(total, 'session starred', 'sessions starred'))} · ` +
+    `<a class="link" href="/${esc(slug)}/my-schedule.ics">Add my schedule to calendar →</a></p>` +
     out
   );
 }
@@ -306,15 +318,25 @@ function shareForm(slug: string, view: SocialView, buttonWord: string): string {
   );
 }
 
-function shareCard(slug: string, view: SocialView): string {
+/** The tense a past event earns. Everything below reads "going to"/"is going"
+ *  before a conference and "went to"/"was there" once it has already run —
+ *  the same rule programLine() (routes/public/agenda.ts) already applies to
+ *  the masthead, extended to the sharing copy this screen owns. */
+function shareCard(slug: string, view: SocialView, past: boolean): string {
   const visibility = label('social.visibility', 'onstage');
   if (!view.mine.shareEnabled) {
+    const headline = past
+      ? 'Share what you were there for, and see who else was there.'
+      : 'Share what you are going to, and see who else is going.';
+    const sub = past
+      ? 'Nobody sees your list until you say so. When you do, the people who went to the same ' +
+        'talks show up here with their names — and you show up on theirs.'
+      : 'Nobody sees your list until you say so. When you do, the people going to the same talks ' +
+        'show up here with their names — and you show up on theirs.';
     return (
       '<div class="card card-pad sec" style="max-width:46em">' +
-      '<h2 class="serif" style="font-size:22px;font-weight:600;margin:0">Share what you are going to, ' +
-      'and see who else is going.</h2>' +
-      '<p class="sub" style="margin:8px 0 0">Nobody sees your list until you say so. When you do, the ' +
-      'people going to the same talks show up here with their names — and you show up on theirs.</p>' +
+      `<h2 class="serif" style="font-size:22px;font-weight:600;margin:0">${esc(headline)}</h2>` +
+      `<p class="sub" style="margin:8px 0 0">${esc(sub)}</p>` +
       `<details style="margin-top:12px"><summary class="link" style="cursor:pointer">${esc(visibility)}</summary>` +
       shareForm(slug, view, 'Put me on the list') +
       '</details></div>'
@@ -327,10 +349,11 @@ function shareCard(slug: string, view: SocialView): string {
     view.mine.contact.email && view.mine.email ? 'your email address' : '',
   ].filter((x) => x !== '');
   const last = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0];
+  const seen = past ? 'People who went to the same talks can see' : 'People going to the same talks can see';
   return (
     '<div class="card card-pad sec" style="max-width:46em">' +
     '<h2 class="serif" style="font-size:22px;font-weight:600;margin:0">You are on the list.</h2>' +
-    `<p class="sub" style="margin:8px 0 0">People going to the same talks can see ${esc(last ?? 'your name')}, ` +
+    `<p class="sub" style="margin:8px 0 0">${esc(seen)} ${esc(last ?? 'your name')}, ` +
     'and the sessions you starred.</p>' +
     `<details style="margin-top:12px"><summary class="link" style="cursor:pointer">${esc(visibility)}</summary>` +
     shareForm(slug, view, 'Save what people can see') +
@@ -346,7 +369,7 @@ function shareCard(slug: string, view: SocialView): string {
  * People to find
  * ------------------------------------------------------------------ */
 
-function personCard(slug: string, p: PersonToFind): string {
+function personCard(slug: string, p: PersonToFind, past: boolean): string {
   const facts: string[] = [];
   const work = [p.jobTitle, p.organisation].filter((x) => x).join(' at ');
   if (work) facts.push(esc(work));
@@ -388,21 +411,24 @@ function personCard(slug: string, p: PersonToFind): string {
     '<div class="card card-pad" style="margin-bottom:12px">' +
     `<div class="byline">${initialsMark(p.name, p.initials)}<span class="serif" style="font-size:19px;font-weight:600">${esc(p.name)}</span></div>` +
     (facts.length ? `<p class="sub" style="margin:8px 0 0">${facts.join(' · ')}</p>` : '') +
-    `<p style="margin:10px 0 0;font-size:14.5px">Both going to ${together}</p>` +
+    `<p style="margin:10px 0 0;font-size:14.5px">${past ? 'Both went to' : 'Both going to'} ${together}</p>` +
     form +
     '</div>'
   );
 }
 
-function peopleSection(slug: string, view: SocialView): string {
+function peopleSection(slug: string, view: SocialView, past: boolean): string {
   const head =
     `<h2 class="display" style="font-size:26px;margin-bottom:6px">${esc(label('social.list', 'onstage'))}</h2>`;
   if (!view.people.length) {
+    const emptySub = past
+      ? 'When someone who went to the same talk puts themselves on the list, they turn up here.'
+      : 'When someone going to the same talk puts themselves on the list, they turn up here.';
     return (
       '<div class="sec" style="max-width:46em">' +
       head +
       '<div class="state-out"><h2>Nobody else is sharing yet.</h2>' +
-      '<p>When someone going to the same talk puts themselves on the list, they turn up here.</p>' +
+      `<p>${esc(emptySub)}</p>` +
       `<a class="btn btn-primary" href="/${esc(slug)}/agenda">Star a few more talks →</a></div></div>`
     );
   }
@@ -412,7 +438,7 @@ function peopleSection(slug: string, view: SocialView): string {
     `<p class="sub" style="margin-bottom:14px">${esc(
       plural(view.people.length, 'person', 'people')
     )} starred something you starred, and chose to be found.</p>` +
-    view.people.map((p) => personCard(slug, p)).join('') +
+    view.people.map((p) => personCard(slug, p, past)).join('') +
     '</div>'
   );
 }
@@ -530,8 +556,10 @@ export function registerSchedule(app: Hono<{ Bindings: Env }>): void {
         // An empty list has one next thing, and it is not sharing: the card
         // waits until there is something to share (or until it is already on,
         // so that turning it off is never out of reach).
-        (view.mine.starred.length > 0 || view.mine.shareEnabled ? shareCard(ev.slug, view) : '') +
-        (view.mine.shareEnabled ? peopleSection(ev.slug, view) : '') +
+        (view.mine.starred.length > 0 || view.mine.shareEnabled
+          ? shareCard(ev.slug, view, ev.lifecycle === 'happened')
+          : '') +
+        (view.mine.shareEnabled ? peopleSection(ev.slug, view, ev.lifecycle === 'happened') : '') +
         connectionsSection(ev.slug, view) +
         `<form id="adopt-stars" method="post" action="/${esc(ev.slug)}/my-schedule/adopt" hidden>` +
         '<input type="hidden" name="sessions" value=""></form>' +

@@ -705,6 +705,12 @@ export async function answerQuestion(
       return null;
     }),
   ]);
+  // A day of this conference's own program, named the way a person says it,
+  // asked for its first talk, its last, or its span — an object-graph fact,
+  // not a question the model needs to be asked at all. See dayFactsAnswer.
+  const dayFacts = dayFactsAnswer(ev, ag, question, Date.now());
+  if (dayFacts) return dayFacts;
+
   const published = ag?.published === true;
   const vocab = vocabulary(ag);
   const facts = buildFacts(ev, ag, speakers, vocab, standing);
@@ -820,6 +826,13 @@ function spelledCount(n: number, one: string, many = `${one}s`): string {
 }
 
 const isAre = (n: number): string => (n === 1 ? 'is' : 'are');
+
+/** The honest footnote for a talk count that leaves cancelled ones out — so
+ *  "56 talks" here and "57 sessions" on the agenda read as the same program
+ *  counted two true ways, not two programs that disagree. */
+function cancelledAside(n: number): string {
+  return n > 0 ? ` (${spelled(n)} cancelled)` : '';
+}
 
 /** A label mid-sentence: "With the committee" is a card, "with the committee"
  *  is a clause. Only the first letter moves, so a name inside it survives. */
@@ -1023,15 +1036,16 @@ function placedSessions(ag: Agenda | null): Placed[] {
  * that are really on it, and how many days they fall across. One read, so two
  * chips pressed a second apart cannot quote two different programs.
  */
-type Program = { live: Placed[]; days: number };
+type Program = { live: Placed[]; total: number; days: number };
 
 async function programOf(db: D1Database, ev: EventHome): Promise<Program & { ag: Agenda | null }> {
   const ag = await agenda(db, ev.id);
+  const placed = placedSessions(ag);
   // Cancelled talks stay on the agenda, struck through, but nothing is
   // "happening now" in a room that was emptied.
-  const live = placedSessions(ag).filter((p) => !p.cancelled);
+  const live = placed.filter((p) => !p.cancelled);
   const days = ag?.published && ag.days.length > 0 ? ag.days.length : eventDayCount(ev);
-  return { ag, live, days };
+  return { ag, live, total: placed.length, days };
 }
 
 /** How a talk is named in a sentence: its title, and the room to walk to. */
@@ -1060,13 +1074,124 @@ function dayDoor(ev: EventHome, day: string, today: string): Door {
 }
 
 /* ------------------------------------------------------------------ *
+ * day facts — "what's the last talk on Friday", "what time does Thursday
+ * start", "when do the mornings begin". A free-typed question about one of
+ * the conference's own days, answered off the placed program with no model
+ * in the path: the same object-graph read now-next already takes, cut to a
+ * day and read for its edges instead of against the clock.
+ *
+ * Deliberately narrow: it only fires when a day this conference actually
+ * runs is named in the question, spelled the way a person says it — a
+ * weekday, "today" or "tomorrow" — AND the question is asking for an edge
+ * (first/last) or a span (hours/start/end). Anything looser is left to the
+ * model, which still has the whole program to read.
+ * ------------------------------------------------------------------ */
+
+const WEEKDAY_FMT = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long' });
+
+/** '2026-09-03' → 'thursday'. */
+function weekdayOf(iso: string): string {
+  return WEEKDAY_FMT.format(dayFromKey(iso)).toLowerCase();
+}
+
+/** A day this conference runs, named the way the question names it. Only a
+ *  day on the published agenda counts — a weekday this event does not run
+ *  on names nothing, and neither does a bare "today" before the program
+ *  opens or after it closes. */
+function dayNamed(ev: EventHome, ag: Agenda, question: string, nowMs: number): string | null {
+  const q = ` ${question.toLowerCase()} `;
+  const today = eventDayKey(nowMs, ev.timezone);
+  if (/\btoday\b/.test(q)) return ag.days.some((d) => d.day === today) ? today : null;
+  if (/\btomorrow\b/.test(q)) {
+    const idx = ag.days.findIndex((d) => d.day === today);
+    return idx >= 0 ? (ag.days[idx + 1]?.day ?? null) : null;
+  }
+  for (const d of ag.days) {
+    if (new RegExp(`\\b${weekdayOf(d.day)}\\b`).test(q)) return d.day;
+  }
+  return null;
+}
+
+const WANTS_FIRST = /\b(first|opening|earliest)\b/i;
+const WANTS_LAST = /\b(last|final|closing|latest)\b/i;
+const WANTS_HOURS = /\bhours?\b|\bstart(s|ing)?\b|\bends?(ing)?\b|\bopens?\b|\bcloses?\b|\bwhat time\b|\bhow (early|late)\b/i;
+
+/**
+ * The one deterministic slice a day-shaped question earns: its first talk,
+ * its last, or the span between them — read straight off the placed
+ * program, the same rows now-next already reads. No model, no spend.
+ */
+function dayFactsAnswer(
+  ev: EventHome,
+  ag: Agenda | null,
+  question: string,
+  nowMs: number
+): AskResult | null {
+  if (!ag?.published || !ag.days.length) return null;
+  const day = dayNamed(ev, ag, question, nowMs);
+  if (!day) return null;
+  const wantsFirst = WANTS_FIRST.test(question);
+  const wantsLast = WANTS_LAST.test(question);
+  const wantsHours = WANTS_HOURS.test(question);
+  if (!wantsFirst && !wantsLast && !wantsHours) return null;
+
+  const onDay = placedSessions(ag)
+    .filter((p) => p.day === day && !p.cancelled)
+    .sort((a, b) => a.startsAt - b.startsAt);
+  const today = eventDayKey(nowMs, ev.timezone);
+  if (!onDay.length) {
+    return instantly([`Nothing is placed on ${dayWords(day)} yet.`], [dayDoor(ev, day, today)]);
+  }
+  const first = onDay[0]!;
+  const last = onDay[onDay.length - 1]!;
+  const timezone = ag.timezone;
+
+  // Parallel tracks mean "the first talk" and "the last talk" are sometimes
+  // several talks at once — the same case now-next names by count rather
+  // than picking one arbitrarily (04 taste law 8).
+  const withMore = (p: Placed): string => {
+    const ties = onDay.filter((x) => x.startsAt === p.startsAt).length;
+    return ties > 1 ? `, with ${spelledCount(ties - 1, 'more talk')} at the same time` : '';
+  };
+
+  if (wantsFirst && !wantsLast) {
+    return instantly(
+      [
+        `The first talk on ${dayWords(day)} is ${named(first)}${withMore(first)}, starting at ${clock(first.startsAt, timezone)}.`,
+      ],
+      [sessionDoor(ev, first), dayDoor(ev, day, today)]
+    );
+  }
+  if (wantsLast && !wantsFirst) {
+    return instantly(
+      [
+        `The last talk on ${dayWords(day)} is ${named(last)}${withMore(last)}, starting at ${clock(last.startsAt, timezone)} and running until ${clock(last.endsAt, timezone)}.`,
+      ],
+      [sessionDoor(ev, last), dayDoor(ev, day, today)]
+    );
+  }
+  // Hours, or first and last both asked about — the span answers either way.
+  // The close is the latest endsAt across the whole day, not just the one
+  // named "last" session's own — the final slot can hold a 45-minute talk
+  // next to a 90-minute workshop, and the day is not over until both are.
+  const dayEnd = onDay.reduce((max, p) => Math.max(max, p.endsAt), first.endsAt);
+  return instantly(
+    [
+      `${dayWords(day)} runs ${clock(first.startsAt, timezone)} to ${clock(dayEnd, timezone)}${zoneWords(ev.tzLabel)}.`,
+      `First up: ${named(first)}. Last: ${named(last)}.`,
+    ],
+    [dayDoor(ev, day, today)]
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * now-next — what is on, and what is next, against the conference's own
  * clock. Before it starts, the first morning; after it ends, where the
  * recordings are.
  * ------------------------------------------------------------------ */
 
 async function nowNext(db: D1Database, ev: EventHome, nowMs: number): Promise<AskResult> {
-  const { ag, live, days } = await programOf(db, ev);
+  const { ag, live, total, days } = await programOf(db, ev);
   const published = ag?.published === true;
   const timezone = ag?.timezone ?? ev.timezone;
   const today = eventDayKey(nowMs, ev.timezone);
@@ -1098,7 +1223,7 @@ async function nowNext(db: D1Database, ev: EventHome, nowMs: number): Promise<As
     return instantly(
       [
         `${ev.name} finished on ${dayWords(ev.endsOn)}.`,
-        `The program is still up: ${count(live.length, 'talk')}, each with a page of its own.`,
+        `The program is still up: ${count(live.length, 'talk')}${cancelledAside(total - live.length)}, each with a page of its own.`,
         recorded > 0
           ? `Recordings are up for ${recorded} of them, on the talk's own page.`
           : "Any recording appears on the talk's own page.",
@@ -1113,7 +1238,7 @@ async function nowNext(db: D1Database, ev: EventHome, nowMs: number): Promise<As
     return instantly(
       [
         first
-          ? `The program begins ${dayWords(first.day)} at ${clock(first.startsAt, timezone)} — ${count(live.length, 'talk')} across ${spelledCount(days, 'day')}.`
+          ? `The program begins ${dayWords(first.day)} at ${clock(first.startsAt, timezone)} — ${count(live.length, 'talk')}${cancelledAside(total - live.length)} across ${spelledCount(days, 'day')}.`
           : `${ev.name} runs ${dateRange(ev)}.`,
         place ? `It is at ${place}.` : null,
         'Star the talks you want and they line up in your schedule, in the order you will walk to them.',
@@ -1223,15 +1348,18 @@ async function gettingStarted(db: D1Database, ev: EventHome): Promise<AskResult>
   if (ev.agendaPublished) {
     // The same read now-next takes, so the two chips cannot put two different
     // numbers of talks on the same screen a second apart.
-    const { live, days } = await programOf(db, ev);
+    const { live, total, days } = await programOf(db, ev);
     const talks = live.length > 0 ? live.length : ev.counts.accepted;
+    // Only sound when talks is actually the live count — the ev.counts.accepted
+    // fallback already includes any cancelled ones, so it needs no aside.
+    const aside = live.length > 0 ? cancelledAside(total - live.length) : '';
 
     // A conference that is over is not a thing to plan; it is a thing to read.
     if (ev.lifecycle === 'happened') {
       const recorded = live.filter((p) => p.recorded).length;
       return instantly(
         [
-          `${ev.name} has already happened, and the program is still up: ${count(talks, 'talk')}, each with a page of its own.`,
+          `${ev.name} has already happened, and the program is still up: ${count(talks, 'talk')}${aside}, each with a page of its own.`,
           recorded > 0
             ? `Recordings are up for ${recorded} of them, on the talk's own page.`
             : "Any recording appears on the talk's own page.",
@@ -1245,7 +1373,7 @@ async function gettingStarted(db: D1Database, ev: EventHome): Promise<AskResult>
 
     return instantly(
       [
-        `Start on the agenda: ${count(talks, 'talk')} across ${spelledCount(days, 'day')}, each with a page of its own.`,
+        `Start on the agenda: ${count(talks, 'talk')}${aside} across ${spelledCount(days, 'day')}, each with a page of its own.`,
         'Star the ones you want and they line up in your schedule, in the order you will walk to them.',
         ev.counts.speakers > 0
           ? 'The speakers page is the same program by person, if that is an easier way in.'
