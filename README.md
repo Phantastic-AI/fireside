@@ -36,6 +36,12 @@ Speakers and reviewers in the demonstration cast sign in with magic links;
 for `@example.org` addresses the link prints on the page instead of
 emailing, so every journey is walkable without an inbox.
 
+**To walk the attendee tribe** — find someone by name, send a request, and
+follow a friend's schedule — sign in as two attendees at once:
+**dani.okafor@example.org** / **ask-before-you-assume** and
+**noor.attendee@example.org** / **accept-what-you-choose**. Star a session,
+open *My schedule → find someone you met*, and connect.
+
 **For your agent:** the same doors speak MCP at
 `https://fireside.phantastic.ai/mcp` — eight public tools, JSON-RPC 2.0,
 no session. A proposal submitted by an agent walks through exactly the same
