@@ -30,6 +30,7 @@
 // workflows/portal-actions.ts.
 
 import { checkedBatch, guard, newId, now, ChangesMismatchError, StaleStateError } from '../lib/db';
+import { isRealAddress } from './account';
 
 /* ------------------------------------------------------------------ *
  * What happened, in six words the screens know how to say
@@ -529,17 +530,131 @@ const STILL_WAITING = `
    WHERE id = ? AND event_id = ? AND kind = 'file_request'
      AND cancelled_at IS NULL AND completed_at IS NULL`;
 
+/* ------------------------------------------------------------------ *
+ * CNT-08: a reminder is a message, not a silent date move. Every "ask
+ * again" writes a `message` row (kind 'reminder' — portal.ts already has a
+ * label for it) inside the same guarded batch as the due-date update, so
+ * the two facts can never land apart, and rides the identical after-commit
+ * email step review.ts's nudgeReviewer and tasks.ts's releaseNotes use: real
+ * addresses get real mail, the synthetic seed never leaves the building, and
+ * a send that fails costs nothing because the portal is the copy of record.
+ * ------------------------------------------------------------------ */
+
+type EmailBinding = {
+  send(msg: {
+    to: string;
+    from: { email: string; name: string };
+    subject: string;
+    text: string;
+  }): Promise<unknown>;
+};
+
+const REMINDER_MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/** "8 May" off a calendar-day string. Local to this file, like every other
+ *  day-word in this build (greenroom.ts's dayShort, portal.ts's dShort). */
+function dayWord(iso: string): string {
+  const m = Number(iso.slice(5, 7));
+  const d = Number(iso.slice(8, 10));
+  return `${d} ${REMINDER_MONTHS[m - 1] ?? ''}`.trim();
+}
+
+function reminderSubject(titles: string[]): string {
+  return titles.length === 1
+    ? `Reminder: ${titles[0]}`
+    : `Reminder: ${titles.length} deliverables still open`;
+}
+
+/** Names the outstanding deliverable(s) and the date they now owe it by — the
+ *  exact two facts CNT-08's manual check reads for. */
+function reminderBody(titles: string[], eventName: string, dueOn: string): string {
+  const said = dayWord(dueOn);
+  if (titles.length === 1) {
+    return (
+      `${titles[0]} is still open on your list for ${eventName}, now due ${said}.\n\n` +
+      'Open your portal when you have a moment.'
+    );
+  }
+  const list = titles.map((t) => `- ${t}`).join('\n');
+  return (
+    `These are still open on your list for ${eventName}, now due ${said}:\n\n${list}\n\n` +
+    'Open your portal when you have a moment.'
+  );
+}
+
+/** Fire-and-forget, after the row that makes it true is already committed —
+ *  exactly tasks.ts's releaseNotes and review.ts's nudgeReviewer. A failed
+ *  send costs nothing: the reminder is in the portal either way. */
+function sendReminderEmail(
+  db: D1Database,
+  email: { binding: EmailBinding; from: string } | null,
+  waitUntil: (p: Promise<unknown>) => void,
+  messageId: string,
+  to: string | null,
+  name: string,
+  subject: string,
+  body: string
+): void {
+  if (!email || !to || !isRealAddress(to)) return;
+  waitUntil(
+    (async () => {
+      try {
+        await email.binding.send({
+          to,
+          from: { email: email.from, name: 'Fireside' },
+          subject,
+          text: `Hello ${name},\n\n${body}\n\n— sent from Fireside.`,
+        });
+        await db.prepare('UPDATE message SET emailed_at = ? WHERE id = ?').bind(now(), messageId).run();
+      } catch {
+        // the reminder is in their portal either way
+      }
+    })()
+  );
+}
+
 /**
- * Ask one speaker again: the same request, a new date on it. One click, and
- * undoable by asking again — nothing else about the task moves, so a second
- * press a week later is the whole of the repair.
+ * Ask one speaker again: the same request, a new date on it, and a reminder
+ * naming the deliverable and the new date — staged and delivered in the same
+ * write the due date moves in. One click, and undoable by asking again —
+ * nothing else about the task moves, so a second press a week later is the
+ * whole of the repair.
  */
 export async function askAgain(
   db: D1Database,
   eventId: string,
   taskId: string,
-  dueOn: string
+  dueOn: string,
+  email: { binding: EmailBinding; from: string } | null,
+  waitUntil: (p: Promise<unknown>) => void
 ): Promise<FileOutcome> {
+  const before = await db
+    .prepare(
+      `SELECT t.title, pe.id AS person_id, pe.name AS person_name, pe.email AS person_email,
+              ev.name AS event_name
+         FROM task t
+         JOIN person pe ON pe.id = t.person_id
+         JOIN event ev ON ev.id = t.event_id
+        WHERE t.id = ? AND t.event_id = ? AND t.kind = 'file_request'
+          AND t.cancelled_at IS NULL AND t.completed_at IS NULL`
+    )
+    .bind(taskId, eventId)
+    .first<{
+      title: string;
+      person_id: string;
+      person_name: string;
+      person_email: string | null;
+      event_name: string;
+    }>();
+  if (!before) return 'moved';
+
+  const messageId = newId('msg');
+  const t = now();
+  const subject = reminderSubject([before.title]);
+  const body = reminderBody([before.title], before.event_name, dueOn);
+
   try {
     await checkedBatch(
       db,
@@ -552,28 +667,74 @@ export async function askAgain(
                 AND cancelled_at IS NULL AND completed_at IS NULL`
           )
           .bind(dueOn, taskId, eventId),
+        db
+          .prepare(
+            `INSERT INTO message (id, event_id, person_id, kind, subject, body, created_at, delivered_at)
+             VALUES (?1, ?2, ?3, 'reminder', ?4, ?5, ?6, ?6)`
+          )
+          .bind(messageId, eventId, before.person_id, subject, body, t),
       ],
-      [0, 1],
+      [0, 1, 1],
       STALE
     );
-    return 'done';
   } catch (e) {
     return outcomeOf(e, 'askAgain');
   }
+
+  sendReminderEmail(db, email, waitUntil, messageId, before.person_email, before.person_name, subject, body);
+  return 'done';
 }
 
 /**
- * Ask everyone still owing, in one statement. `expected` is the number the
- * confirm printed: the guard fires when the world has moved since the page was
- * drawn, so a screen that said "twelve" can never quietly do fourteen.
+ * Ask everyone still owing, in one statement, with one reminder per speaker —
+ * naming everything of theirs that moved, not one letter per deliverable.
+ * `expected` is the number the confirm printed: the guard fires when the
+ * world has moved since the page was drawn, so a screen that said "twelve"
+ * can never quietly do fourteen, and the reminders sent are exactly the
+ * reminders for the rows that guard let through.
  */
 export async function askEveryoneWaiting(
   db: D1Database,
   eventId: string,
   dueOn: string,
-  expected: number
+  expected: number,
+  email: { binding: EmailBinding; from: string } | null,
+  waitUntil: (p: Promise<unknown>) => void
 ): Promise<FileOutcome> {
   if (expected < 1) return 'moved';
+
+  const waiting = await db
+    .prepare(
+      `SELECT t.title, pe.id AS person_id, pe.name AS person_name, pe.email AS person_email
+         FROM task t
+         JOIN person pe ON pe.id = t.person_id
+        WHERE t.event_id = ? AND t.kind = 'file_request'
+          AND t.cancelled_at IS NULL AND t.completed_at IS NULL`
+    )
+    .bind(eventId)
+    .all<{ title: string; person_id: string; person_name: string; person_email: string | null }>();
+  const rows = waiting.results ?? [];
+
+  // One reminder per person, however many deliverables of theirs just moved —
+  // nobody reads three letters that all say the same new date.
+  const byPerson = new Map<string, { name: string; email: string | null; titles: string[] }>();
+  for (const r of rows) {
+    const entry = byPerson.get(r.person_id) ?? { name: r.person_name, email: r.person_email, titles: [] };
+    entry.titles.push(r.title);
+    byPerson.set(r.person_id, entry);
+  }
+
+  const event = await db.prepare('SELECT name FROM event WHERE id = ?').bind(eventId).first<{ name: string }>();
+  const eventName = event?.name ?? '';
+  const t = now();
+  const messages = [...byPerson.entries()].map(([personId, info]) => ({
+    id: newId('msg'),
+    personId,
+    info,
+    subject: reminderSubject(info.titles),
+    body: reminderBody(info.titles, eventName, dueOn),
+  }));
+
   try {
     await checkedBatch(
       db,
@@ -593,14 +754,184 @@ export async function askEveryoneWaiting(
                 AND cancelled_at IS NULL AND completed_at IS NULL`
           )
           .bind(dueOn, eventId),
+        ...messages.map((m) =>
+          db
+            .prepare(
+              `INSERT INTO message (id, event_id, person_id, kind, subject, body, created_at, delivered_at)
+               VALUES (?1, ?2, ?3, 'reminder', ?4, ?5, ?6, ?6)`
+            )
+            .bind(m.id, eventId, m.personId, m.subject, m.body, t)
+        ),
       ],
-      [0, expected],
+      [0, expected, ...messages.map(() => 1 as const)],
       STALE
     );
-    return 'done';
   } catch (e) {
     return outcomeOf(e, 'askEveryoneWaiting');
   }
+
+  for (const m of messages) {
+    sendReminderEmail(db, email, waitUntil, m.id, m.info.email, m.info.name, m.subject, m.body);
+  }
+  return 'done';
+}
+
+/* ------------------------------------------------------------------ *
+ * CNT: a per-deliverable share link (schema/0009), mirroring R-4's own
+ * green-room shape (event.green_room_nonce) one deliverable at a time — an
+ * AV or web crew member with the link opens the current file and its
+ * version history with no Fireside sign-in, and rotating or clearing the
+ * nonce is the entire revocation model, exactly as it is for the green room.
+ * Keyed on the task rather than a file id, so a re-upload does not break the
+ * link the organizer already handed out (see schema/0009's own note).
+ * ------------------------------------------------------------------ */
+
+export type ShareOutcome = 'made' | 'rotated' | 'revoked' | 'moved' | 'trouble';
+
+/** The link's raw material — read only after the caller has proven EDIT_ROLES
+ *  on the task's own event, the same narrow own-file exception greenroom.ts's
+ *  greenRoomNonceFor takes for the same reason: one column, one screen. */
+export async function fileShareNonceFor(db: D1Database, taskId: string): Promise<string | null> {
+  const row = await db
+    .prepare('SELECT share_nonce FROM task WHERE id = ?')
+    .bind(taskId)
+    .first<{ share_nonce: string | null }>();
+  return row?.share_nonce ?? null;
+}
+
+/**
+ * Make or rotate the link. `seen` is the nonce the screen was looking at —
+ * if it had already changed, nothing is rotated and the outcome says so,
+ * because rotating twice in a row would strand whoever just got the new one
+ * (newGreenRoomLink's own reasoning, applied one deliverable at a time).
+ */
+export async function rotateFileShareLink(
+  db: D1Database,
+  taskId: string,
+  seen: string | null
+): Promise<ShareOutcome> {
+  const held = seen && seen.trim() !== '' ? seen.trim() : null;
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(db, 'SELECT 1 FROM task WHERE id = ?1 AND share_nonce IS NOT ?2', taskId, held),
+        db.prepare('UPDATE task SET share_nonce = ?2 WHERE id = ?1').bind(taskId, newId('fsh')),
+      ],
+      [0, 1],
+      STALE
+    );
+  } catch (e) {
+    const outcome = outcomeOf(e, 'rotateFileShareLink');
+    return outcome === 'moved' ? 'moved' : 'trouble';
+  }
+  return held === null ? 'made' : 'rotated';
+}
+
+/** Clear the link. The same "seen" guard as rotating — a revoke that fires on
+ *  a link nobody is looking at any more is not the one the organizer meant. */
+export async function revokeFileShareLink(
+  db: D1Database,
+  taskId: string,
+  seen: string
+): Promise<ShareOutcome> {
+  if (!seen.trim()) return 'moved';
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(db, 'SELECT 1 FROM task WHERE id = ?1 AND share_nonce IS NOT ?2', taskId, seen.trim()),
+        db.prepare('UPDATE task SET share_nonce = NULL WHERE id = ?1').bind(taskId),
+      ],
+      [0, 1],
+      STALE
+    );
+  } catch (e) {
+    const outcome = outcomeOf(e, 'revokeFileShareLink');
+    return outcome === 'moved' ? 'moved' : 'trouble';
+  }
+  return 'revoked';
+}
+
+export type DeliverableContext = {
+  taskId: string;
+  title: string;
+  dueOn: string | null;
+  eventId: string;
+  eventName: string;
+  eventTimezone: string;
+  personName: string;
+  submissionTitle: string | null;
+  current: StoredFile | null;
+  versions: FileVersion[];
+};
+
+/**
+ * Everything a file-detail screen needs about the deliverable behind one
+ * task: who it is for, what it is, the current file and every version of
+ * it. The one read routes/files.ts's own /files/:id/detail and its public
+ * /files/share/:nonce mirror share — the second resolves a nonce to a task
+ * id and hands off to this, so the two screens can never disagree about
+ * what a deliverable looks like.
+ */
+export async function deliverableContext(db: D1Database, taskId: string): Promise<DeliverableContext | null> {
+  const row = await db
+    .prepare(
+      `SELECT t.id AS task_id, t.title, t.due_on, t.event_id, pe.name AS person_name,
+              s.title AS submission_title, ev.name AS event_name, ev.timezone AS event_timezone
+         FROM task t
+         JOIN person pe ON pe.id = t.person_id
+         JOIN event ev ON ev.id = t.event_id
+         LEFT JOIN submission s ON s.id = t.submission_id
+        WHERE t.id = ?`
+    )
+    .bind(taskId)
+    .first<{
+      task_id: string;
+      title: string;
+      due_on: string | null;
+      event_id: string;
+      person_name: string;
+      submission_title: string | null;
+      event_name: string;
+      event_timezone: string;
+    }>();
+  if (!row) return null;
+
+  const versions = await deckVersions(db, row.task_id);
+  const current = versions.find((v) => v.replacedAt === null) ?? null;
+
+  return {
+    taskId: row.task_id,
+    title: row.title,
+    dueOn: row.due_on,
+    eventId: row.event_id,
+    eventName: row.event_name,
+    eventTimezone: row.event_timezone,
+    personName: row.person_name,
+    submissionTitle: row.submission_title,
+    current,
+    versions,
+  };
+}
+
+/**
+ * The public read behind /files/share/:nonce — no Principal, same shape as
+ * greenroom-token.ts's eventByGreenRoomNonce: an unknown or empty nonce
+ * returns null and the route answers its own 404, never distinguishing
+ * "wrong token" from "no such deliverable" for the caller.
+ */
+export async function deliverableByShareNonce(
+  db: D1Database,
+  nonce: string
+): Promise<DeliverableContext | null> {
+  const trimmed = nonce.trim();
+  if (!trimmed) return null;
+  const row = await db.prepare('SELECT id FROM task WHERE share_nonce = ?').bind(trimmed).first<{
+    id: string;
+  }>();
+  if (!row) return null;
+  return deliverableContext(db, row.id);
 }
 
 /* ------------------------------------------------------------------ *

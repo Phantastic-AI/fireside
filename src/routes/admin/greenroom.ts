@@ -206,8 +206,8 @@ const aWeekOut = (timezone: string): string =>
  * ------------------------------------------------------------------ */
 
 const SLIDE_NOTES: Record<string, string> = {
-  asked: 'Asked again. The new date is on their list now.',
-  'asked-all': 'Asked. Everyone still waiting has the new date on their list.',
+  asked: 'Asked again. They have a reminder with the new date now.',
+  'asked-all': 'Asked. Everyone still waiting has a reminder with the new date now.',
   moved: 'The numbers moved while you were looking. What you see now is where they stand.',
   trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
 };
@@ -487,13 +487,14 @@ function matchesStatus(r: DeliverableRow, status: StatusFilter, todayKey: string
 
 /** One row, one act. The filters ride along in the form so that pressing it
  *  puts the organizer back on the same view of the board they were reading.
- *  CNT: honest about what the click does before it happens, not only after —
- *  the button used to say "Ask again" with nothing beside it, which reads
- *  like a resend. It moves a date and emails nobody; both facts sit right
- *  above the button now. */
+ *  CNT-08: honest about what the click does before it happens, not only after
+ *  — the button used to say "Ask again" with nothing beside it, and moved the
+ *  date without telling the speaker at all. It moves the date and reminds
+ *  them now; both facts sit right above the button. */
 function askAgainForm(slug: string, r: DeliverableRow, dueOn: string, filters: Filters): string {
   return (
-    `<span class="t-sub">Would move the due date to ${esc(dayShort(dueOn))}. No email goes out.</span><br>` +
+    `<span class="t-sub">Moves the due date to ${esc(dayShort(dueOn))} and reminds ${esc(r.personName)} — ` +
+    'it lands in their portal at once, and a real address gets an email too.</span><br>' +
     `<form method="post" action="/admin/${encodeURIComponent(slug)}/slides/ask-again" style="margin-top:4px">` +
     `<input type="hidden" name="task" value="${esc(r.taskId)}">` +
     (filters.status !== 'all' ? `<input type="hidden" name="status" value="${esc(filters.status)}">` : '') +
@@ -528,7 +529,7 @@ function deliverableDetail(r: DeliverableRow, todayKey: string, slug: string, fi
   if (r.file !== null) {
     const versions = r.versionCount > 1 ? ` · ${esc(plural(r.versionCount, 'version', 'versions'))}` : '';
     return (
-      `<a class="link" href="/files/${esc(r.file.id)}">Open the file</a>` +
+      `<a class="link" href="/files/${esc(r.file.id)}/detail">Open the file</a>` +
       `<br><span class="t-sub">${esc(r.file.filename)} · ${esc(weight(r.file.sizeBytes))}${versions}</span>`
     );
   }
@@ -563,11 +564,12 @@ function deliverableRow(r: DeliverableRow, slug: string, todayKey: string, filte
  * number the confirm prints travels with the form, and workflows/files.ts
  * guards on it — a board that said twelve can never quietly do fourteen.
  *
- * CNT: both passes now say plainly that this changes due dates and emails
- * nobody. The old confirm buried "nothing goes out from here" at the tail of
- * a sentence about the date; the two facts get their own sentences now, and
- * the first pass says as much as the second one does, rather than holding it
- * back until after the organizer has already committed to clicking through.
+ * CNT-08: both passes now say plainly that this changes due dates and
+ * reminds every speaker who still owes something — a note in their portal at
+ * once, and an email too for a real address. The old confirm claimed the
+ * opposite ("no email goes out"); the reminder is real now, so the copy says
+ * so up front, not only after the organizer has already committed to
+ * clicking through.
  */
 function askEveryoneBlock(
   slug: string,
@@ -589,7 +591,8 @@ function askEveryoneBlock(
       `<div class="n">${esc(num(waiting))}</div>` +
       '<div><div class="lab">Still to come, across the conference.</div>' +
       `<div class="why">Each of these was asked for and has not arrived. Asking again moves its ` +
-      'due date out; it emails nobody.</div></div>' +
+      'due date out and reminds every speaker who still owes something — it lands in their portal ' +
+      'at once, and real addresses get an email too.</div></div>' +
       `<a class="btn go" href="${esc(withQuery(basePath, { ...here, ask: 'all' }))}">` +
       'Ask everyone at once →</a></div>'
     );
@@ -600,8 +603,8 @@ function askEveryoneBlock(
     `<div class="n">${esc(num(waiting))}</div>` +
     `<div><div class="lab">Move the due date on all ${esc(num(waiting))}</div>` +
     `<div class="why">Every request still outstanding gets ${esc(dayShort(dueOn))} as its new due ` +
-    `date, and each speaker sees it the next time they open their portal. <b>No email goes out — ` +
-    'nobody is told.</b></div></div>' +
+    `date, and each speaker who still owes something gets a reminder naming what is still due: it ` +
+    'lands in their portal at once, and real addresses get an email too.</div></div>' +
     `<div class="btnrow go"><form method="post" action="/admin/${encodeURIComponent(slug)}/slides/ask-all" style="margin:0">` +
     `<input type="hidden" name="count" value="${esc(String(waiting))}">` +
     (filters.status !== 'all' ? `<input type="hidden" name="status" value="${esc(filters.status)}">` : '') +
@@ -685,7 +688,7 @@ function deliverablesPage(
       rows.map((r) => deliverableRow(r, slug, todayKey, filters, dueOn)).join('') +
       '</tbody></table></div>' +
       '<p class="hint" style="margin-top:12px">Asking again moves the due date on the request and ' +
-      'emails nobody. The speaker sees the new date the next time they open their portal.</p>';
+      'reminds the speaker: it lands in their portal at once, and a real address gets an email too.</p>';
   }
 
   return page({
@@ -813,7 +816,14 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
       const taskId = String(form['task'] ?? '');
       if (!taskId) return c.redirect(boardPath(slug, form, 'moved'), 303);
 
-      const outcome = await askAgain(c.env.DB, ev.id, taskId, aWeekOut(ev.timezone));
+      const outcome = await askAgain(
+        c.env.DB,
+        ev.id,
+        taskId,
+        aWeekOut(ev.timezone),
+        c.env.EMAIL && c.env.FROM_EMAIL ? { binding: c.env.EMAIL, from: c.env.FROM_EMAIL } : null,
+        (p) => c.executionCtx.waitUntil(p)
+      );
       return c.redirect(boardPath(slug, form, said(outcome, 'asked')), 303);
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
@@ -839,7 +849,14 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
         return c.redirect(boardPath(slug, form, 'moved'), 303);
       }
 
-      const outcome = await askEveryoneWaiting(c.env.DB, ev.id, aWeekOut(ev.timezone), counted);
+      const outcome = await askEveryoneWaiting(
+        c.env.DB,
+        ev.id,
+        aWeekOut(ev.timezone),
+        counted,
+        c.env.EMAIL && c.env.FROM_EMAIL ? { binding: c.env.EMAIL, from: c.env.FROM_EMAIL } : null,
+        (p) => c.executionCtx.waitUntil(p)
+      );
       return c.redirect(boardPath(slug, form, said(outcome, 'asked-all')), 303);
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);

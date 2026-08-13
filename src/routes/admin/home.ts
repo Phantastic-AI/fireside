@@ -214,7 +214,10 @@ function adminEventsPage(principal: Principal, events: AdminEvent[]): string {
     topBar(principal) +
     '<main><div class="wrap" style="padding-top:44px">' +
     '<div style="display:flex;align-items:baseline;gap:16px;flex-wrap:wrap"><h1 class="display">Your events</h1>' +
-    '<a class="link" href="/admin/new" style="margin-left:auto">Start a conference →</a></div>' +
+    // The speaker database spans every conference, so it lives here on the
+    // events picker rather than inside one event's nav.
+    '<a class="link" href="/admin/crm" style="margin-left:auto">Speaker database →</a>' +
+    '<a class="link" href="/admin/new">Start a conference →</a></div>' +
     `<p class="lede" style="margin-top:8px">${esc(lede)}</p>` +
     `<div class="sec evcards">${events.map(eventCard).join('')}</div>` +
     '</div></main>' +
@@ -391,6 +394,7 @@ function programPage(principal: Principal, ev: AdminEvent, counts: PileCounts): 
     ) +
     doorCard('Reviews', "Your committee's scores, round by round.", [
       { href: `/admin/${slug}/reviews`, label: 'Open reviews' },
+      { href: `/admin/${slug}/reviews/results`, label: 'See results' },
     ]) +
     doorCard(
       'Agenda',

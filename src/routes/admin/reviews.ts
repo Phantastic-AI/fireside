@@ -1022,14 +1022,34 @@ function isoDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+/**
+ * An open/close date, said in the same UTC day it was entered as and stored
+ * as — saveRoundConfig (workflows/review.ts) parses the plain YYYY-MM-DD the
+ * form collects through `Date.parse(\`${day}T00:00:00Z\`)`, a UTC anchor with
+ * no timezone of its own, because a round opens and closes on a calendar day
+ * an organizer typed, not at a moment. Reading it back through the event's
+ * own timezone (onDay, above) re-applies a timezone the value never carried
+ * and shifts it a day early for any organizer west of Greenwich — 2026-08-01
+ * read back as "31 July". Same wall-date discipline agenda.ts's
+ * dateFromKey/dateLabel hold for the CFP's own open/close dates: format a
+ * plain day in UTC, the anchor it was stored against, never the viewer's zone.
+ */
+function onRoundDay(ms: number): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'UTC',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(ms));
+}
+
 /** A round's dates, said as a range, an open end, or their absence — the
  *  same three shapes the history block and the masthead both need. */
-function roundDates(ev: ReviewEvent, opensAt: number | null, closesAt: number | null): string {
+function roundDates(opensAt: number | null, closesAt: number | null): string {
   if (opensAt !== null && closesAt !== null) {
-    return `${onDay(opensAt, ev.timezone)} – ${onDay(closesAt, ev.timezone)}`;
+    return `${onRoundDay(opensAt)} – ${onRoundDay(closesAt)}`;
   }
-  if (opensAt !== null) return `Opens ${onDay(opensAt, ev.timezone)}`;
-  if (closesAt !== null) return `Closes ${onDay(closesAt, ev.timezone)}`;
+  if (opensAt !== null) return `Opens ${onRoundDay(opensAt)}`;
+  if (closesAt !== null) return `Closes ${onRoundDay(closesAt)}`;
   return 'No dates set';
 }
 
@@ -1080,7 +1100,7 @@ function roundHistoryLine(ev: ReviewEvent, r: RoundHistoryEntry): string {
     `<div style="font-weight:640">${esc(name)}` +
     (r.name ? `<span class="sub"> · ${esc(say('review.round', { n: num(r.round) }))}</span>` : '') +
     '</div>' +
-    `<div class="sub" style="margin-top:2px">${esc(roundDates(ev, r.opensAt, r.closesAt))} · ` +
+    `<div class="sub" style="margin-top:2px">${esc(roundDates(r.opensAt, r.closesAt))} · ` +
     `${esc(r.blind ? 'Names hidden while scoring' : 'Names visible while scoring')}</div>` +
     `<div class="sub" style="margin-top:2px">${esc(`${record}${stepped}`)}</div>` +
     '</div>'
@@ -1179,7 +1199,7 @@ function roundPanel(
     (ev.roundConfig.name
       ? `<p class="sub" style="margin:2px 0 0">${esc(say('review.round', { n: num(standing.round) }))}</p>`
       : '') +
-    `<p class="sub" style="margin:6px 0 0">${esc(roundDates(ev, ev.roundConfig.opensAt, ev.roundConfig.closesAt))} · ` +
+    `<p class="sub" style="margin:6px 0 0">${esc(roundDates(ev.roundConfig.opensAt, ev.roundConfig.closesAt))} · ` +
     `${esc(ev.roundConfig.blind ? 'Names hidden while scoring' : 'Names visible while scoring')}</p>` +
     `<p class="sub" style="margin:6px 0 0">${esc(`${record}${stepped}`)} ` +
     'Every list on this page is this round&#39;s. Nothing written in an earlier one moves.</p>' +

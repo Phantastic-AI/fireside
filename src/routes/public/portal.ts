@@ -138,6 +138,10 @@ const dLong = (ms: number, tz: string): string => long(partsOf(ms, tz));
 const dShort = (ms: number, tz: string): string => short(partsOf(ms, tz));
 const dDayLong = (ms: number, tz: string): string => dayLong(partsOf(ms, tz));
 const dTime = (ms: number, tz: string): string => clock(partsOf(ms, tz));
+/** CNT: "4 Aug, 21:40" — a version or a comment is not always the day's only
+ *  one, so unlike every other stamp on this page, these two always carry the
+ *  clock: a date alone gives nobody a way to order two saves on one day. */
+const dShortTime = (ms: number, tz: string): string => `${dShort(ms, tz)}, ${dTime(ms, tz)}`;
 const isoLong = (iso: string): string => long(partsOfIso(iso));
 const isoDayLong = (iso: string): string => dayLong(partsOfIso(iso));
 
@@ -529,26 +533,28 @@ function versionList(versions: FileVersion[], tz: string): string {
   const earlierText = earlier
     .map(
       (v, i) =>
-        `<a class="link" href="/files/${esc(v.id)}">v${n - 1 - i}</a> · ${esc(dShort(v.uploadedAt, tz))}`
+        `<a class="link" href="/files/${esc(v.id)}">v${n - 1 - i}</a> · ${esc(dShortTime(v.uploadedAt, tz))}`
     )
     .join(', ');
   return (
     `<p class="t-sub" style="margin-top:2px">${esc(current.filename)}, ` +
     `<a class="link" href="/files/${esc(current.id)}">v${n}</a> · current · uploaded ` +
-    `${esc(dShort(current.uploadedAt, tz))}<br>earlier: ${earlierText}</p>`
+    `${esc(dShortTime(current.uploadedAt, tz))}<br>earlier: ${earlierText}</p>`
   );
 }
 
 /** CNT-05 — the thread underneath one deliverable, and the form that adds to
- *  it. Every comment carries its author's name and a date; nothing here is
- *  emailed (SessionBoard itself sends none for a comment either). */
+ *  it. Every comment carries its author's name and a timestamp — the time as
+ *  well as the day, so two comments left the same afternoon still read in
+ *  order; nothing here is emailed (SessionBoard itself sends none for a
+ *  comment either). */
 function commentThread(slug: string, taskId: string, comments: FileComment[], tz: string): string {
   const rows = comments
     .map(
       (c) =>
         '<div style="padding:6px 0;border-top:1px solid var(--line-soft)">' +
         `<div><b style="font-size:14px">${esc(c.authorName)}</b> ` +
-        `<span class="sub">${esc(dShort(c.createdAt, tz))}</span></div>` +
+        `<span class="sub">${esc(dShortTime(c.createdAt, tz))}</span></div>` +
         `<p style="margin:2px 0 0">${esc(c.body)}</p></div>`
     )
     .join('');

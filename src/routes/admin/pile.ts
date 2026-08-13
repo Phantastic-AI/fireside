@@ -492,7 +492,10 @@ function pilePage(o: {
     '</div>';
 
   const csvLink =
-    `<p class="sub" style="margin:8px 0 0"><a class="link" href="${csvHref}">Download these as CSV</a></p>`;
+    '<p class="sub" style="margin:8px 0 0">' +
+    `<a class="link" href="${csvHref}">Download these as CSV</a>` +
+    ` &nbsp;·&nbsp; <a class="link" href="/admin/${esc(ev.slug)}/reviews/results">See review results →</a>` +
+    '</p>';
 
   const head =
     '<div style="padding:26px 0 0"><h1 class="display">Proposals</h1>' +

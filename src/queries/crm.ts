@@ -10,11 +10,12 @@
 // workflows/crm.ts for every mutation, in the same discipline
 // queries/people.ts and workflows/tasks.ts already keep between them.
 //
-// Reachable at organization level only: an event editor reads their own
-// event's people through queries/people.ts, exactly as before. Seeing
-// speakers who have never touched THEIR conference is a wider fact than any
-// one event's role was ever meant to carry, so requireOrg below asks for the
-// install-wide standing, not an event role.
+// Reachable at organization level only: an event editor or approver reads
+// their own event's people through queries/people.ts, exactly as before.
+// Seeing speakers who have never touched THEIR conference is a wider fact
+// than any one event's role was ever meant to carry, so requireOrg below
+// asks for the install-wide standing OR ownership of at least one event —
+// an event's owner is its organizer in every sense that matters here.
 import { ScopeError } from './admin';
 import type { SubmissionState } from './admin';
 import type { Principal } from '../workflows/account';
@@ -23,10 +24,16 @@ import type { Principal } from '../workflows/account';
  * Scope
  * ------------------------------------------------------------------ */
 
+/** Install-wide organizers hold this by default; anyone who owns at least
+ *  one event holds it too — an event's owner is its organizer in every
+ *  sense that matters here, even before an install-wide standing is ever
+ *  granted them. Approver, editor and viewer stop at their own event's
+ *  People page (queries/people.ts) same as always; only 'owner' widens
+ *  into the cross-event database. */
 export function requireOrg(principal: Principal): void {
-  if (principal.role !== 'organizer') {
-    throw new ScopeError('The speaker database is the organizers’ to read.');
-  }
+  if (principal.role === 'organizer') return;
+  if (Object.values(principal.eventRoles).includes('owner')) return;
+  throw new ScopeError('The speaker database is the organizers’ to read.');
 }
 
 /* ------------------------------------------------------------------ *

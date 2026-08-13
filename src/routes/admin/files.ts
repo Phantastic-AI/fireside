@@ -9,11 +9,16 @@
 // disagree.
 //
 // The export is a real ZIP, built in the Worker with fflate (pure JS, no
-// native zlib) — not a queued placeholder. Selecting → reviewing the
-// grouping and the set → generating is the same two-step shape as the
-// outbox's own two-pass sends (D-024), except nothing here is guarded on a
-// count: a download costs nobody anything to redo, so there is no "someone
-// else got there first" to protect against.
+// native zlib) — not a queued placeholder, and not a silent one either
+// (CNT-14). Selecting → reviewing the grouping and the set → generating is
+// the same shape as the outbox's own two-pass sends (D-024), except nothing
+// here is guarded on a count: a download costs nobody anything to redo, so
+// there is no "someone else got there first" to protect against. Generating
+// adds a real third pass of its own: the archive is written to R2 before the
+// organizer ever sees a "ready" screen, so that screen is never a promise —
+// the bytes it links to already exist, and stay there for exactly one
+// download before they are cleared.
+
 
 import type { Hono } from 'hono';
 import { zipSync, type Zippable } from 'fflate';
@@ -23,6 +28,7 @@ import { adminEvents, requireScope, READ_ROLES, ScopeError, type AdminEvent } fr
 import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { deliverableRows, fileById, type DeliverableRow } from '../../workflows/files';
+import { newId } from '../../lib/db';
 
 /* ------------------------------------------------------------------ *
  * Small words and numbers — duplicated locally per this build's own
@@ -91,7 +97,7 @@ function libraryRow(r: DeliverableRow, tz: string): string {
   return (
     '<tr>' +
     `<td><input type="checkbox" name="file" value="${esc(f.id)}" aria-label="Choose ${esc(f.filename)}"></td>` +
-    `<td><a class="link" href="/files/${esc(f.id)}">${esc(f.filename)}</a><br>` +
+    `<td><a class="link" href="/files/${esc(f.id)}/detail">${esc(f.filename)}</a><br>` +
     `<span class="t-sub">${esc(r.title)} · ${esc(weight(f.sizeBytes))}</span></td>` +
     `<td>${who}</td>` +
     '<td style="white-space:nowrap">' +
@@ -207,6 +213,53 @@ function exportPage(principal: Principal, ev: AdminEvent, chosen: DeliverableRow
 }
 
 /* ------------------------------------------------------------------ *
+ * CNT-14, the missing third pass: generating used to stream the ZIP straight
+ * back from the "Generate download" click, which a browser turns into a
+ * silent download and leaves the export page looking untouched — no visible
+ * queued/generating/ready state at all. The archive is now actually built,
+ * put in R2 under a key scoped to this event, and the organizer is handed a
+ * real "ready" screen with a link that starts the download on its own click
+ * — a state that is true (the bytes already exist) rather than a spinner
+ * standing in for one that would not.
+ * ------------------------------------------------------------------ */
+
+const EXPORT_PREFIX = (eventId: string): string => `exports/${eventId}/`;
+
+function exportReadyPage(
+  principal: Principal,
+  ev: AdminEvent,
+  count: number,
+  sizeBytes: number,
+  downloadHref: string
+): string {
+  const slug = ev.slug;
+  const body =
+    '<div style="padding:26px 0 0"><h1 class="display">Download files</h1>' +
+    '<p class="counts"><b>Ready</b></p></div>' +
+    '<div class="sec attn" style="background:var(--go-wash);border-color:#CBE0D1;margin-top:14px">' +
+    `<div><div class="lab">${esc(plural(count, 'file', 'files'))} zipped, ${esc(weight(sizeBytes))}.</div>` +
+    '<div class="why">The archive is built and waiting. Nothing more to generate — the link below ' +
+    'starts the download.</div></div></div>' +
+    '<div class="btnrow" style="margin-top:16px">' +
+    `<a class="btn btn-primary" href="${esc(downloadHref)}">Download the ZIP →</a>` +
+    `<a class="btn" href="/admin/${encodeURIComponent(slug)}/files">Back to Files</a></div>`;
+
+  return page({
+    title: `Download files · ${ev.name}`,
+    register: 'backstage',
+    body: backstageShell({
+      eventSlug: slug,
+      eventName: ev.name,
+      here: '/files',
+      who: `${principal.name} · ${cap(ev.standing)}`,
+      whoInitials: initialsOf(principal.name),
+      tzLabel: ev.tzLabel ?? ev.timezone,
+      body,
+    }),
+  });
+}
+
+/* ------------------------------------------------------------------ *
  * Building the archive
  * ------------------------------------------------------------------ */
 
@@ -297,10 +350,10 @@ export function registerFilesLibrary(app: Hono<{ Bindings: Env }>): void {
     }
   });
 
-  // Second pass: build the archive and start the download. The set is
-  // re-read against this event's own deliverables rather than trusted from
-  // the form — a file id that is not actually a current deliverable here
-  // never reaches R2.
+  // Second pass: build the archive, put it in R2, and hand back a ready
+  // screen — not the bytes themselves. The set is re-read against this
+  // event's own deliverables rather than trusted from the form — a file id
+  // that is not actually a current deliverable here never reaches R2.
   app.post('/admin/:eventSlug/files/export', async (c) => {
     const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
     if (!principal) return c.redirect('/sign-in', 303);
@@ -324,12 +377,74 @@ export function registerFilesLibrary(app: Hono<{ Bindings: Env }>): void {
       }
 
       const zip = await buildZip(c.env, chosen, group);
-      const name = `${ev.slug}-files.zip`;
-      return new Response(zip, {
+      const key = `${EXPORT_PREFIX(ev.id)}${newId('exp')}.zip`;
+      await c.env.FILES.put(key, zip, { httpMetadata: { contentType: 'application/zip' } });
+
+      return c.redirect(
+        `/admin/${encodeURIComponent(slug)}/files/export/ready?` +
+          `key=${encodeURIComponent(key)}&n=${chosen.length}&size=${zip.byteLength}`,
+        303
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  // Third pass: the archive already exists. This is the one screen that says
+  // so, and the one link that streams it.
+  app.get('/admin/:eventSlug/files/export/ready', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in');
+
+    const slug = c.req.param('eventSlug');
+    try {
+      const ev = await eventFor(c.env.DB, principal, slug);
+      if (!ev) return c.html(deniedPage(), 403);
+      requireScope(principal, ev.id, READ_ROLES);
+
+      const key = c.req.query('key') ?? '';
+      if (!key.startsWith(EXPORT_PREFIX(ev.id))) {
+        return c.html(exportPage(principal, ev, [], 'That download has expired. Choose your files again.'));
+      }
+      const n = Math.max(1, Number(c.req.query('n') ?? '1') || 1);
+      const size = Math.max(0, Number(c.req.query('size') ?? '0') || 0);
+      const downloadHref = `/admin/${encodeURIComponent(slug)}/files/export/download?key=${encodeURIComponent(key)}`;
+      return c.html(exportReadyPage(principal, ev, n, size, downloadHref));
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  // The bytes, at last — and only once, since the object is cleared right
+  // after this response starts streaming it. A stale link past that point
+  // gets the same "expired, choose again" answer the ready screen gives one.
+  app.get('/admin/:eventSlug/files/export/download', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in');
+
+    const slug = c.req.param('eventSlug');
+    try {
+      const ev = await eventFor(c.env.DB, principal, slug);
+      if (!ev) return c.html(deniedPage(), 403);
+      requireScope(principal, ev.id, READ_ROLES);
+
+      const key = c.req.query('key') ?? '';
+      if (!key.startsWith(EXPORT_PREFIX(ev.id))) {
+        return c.html(exportPage(principal, ev, [], 'That download has expired. Choose your files again.'));
+      }
+      const object = await c.env.FILES.get(key);
+      if (!object) {
+        return c.html(exportPage(principal, ev, [], 'That download has expired. Choose your files again.'));
+      }
+      c.executionCtx.waitUntil(c.env.FILES.delete(key));
+
+      return new Response(object.body, {
         headers: {
           'content-type': 'application/zip',
-          'content-disposition': `attachment; filename="${name}"`,
-          'content-length': String(zip.byteLength),
+          'content-disposition': `attachment; filename="${ev.slug}-files.zip"`,
+          'content-length': String(object.size),
         },
       });
     } catch (e) {

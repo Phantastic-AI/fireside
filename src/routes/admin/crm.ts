@@ -5,9 +5,10 @@
 //
 // Reachable at organization level, not nested under one event's own nav —
 // requireOrg (queries/crm.ts) is what makes that true rather than aspirational:
-// only the install-wide organizer standing opens this file's screens, the
-// same standing that already sees every event on /admin. An editor on one
-// conference keeps seeing that conference's own People page and nothing wider.
+// the install-wide organizer standing opens this file's screens, and so does
+// owning at least one event — an event's owner is its organizer in every
+// sense that matters here. An approver, editor or viewer on one conference
+// keeps seeing that conference's own People page and nothing wider.
 //
 // This file borrows backstageShell's visual language (the same classes
 // backstage.css already defines) without reusing the function itself: that
@@ -100,6 +101,30 @@ const manyOf = (v: unknown): string[] => {
 };
 const firstNameOf = (name: string): string => name.trim().split(/\s+/)[0] ?? name;
 
+/* ------------------------------------------------------------------ *
+ * A moment, in this file's own words — same relative/short-date family
+ * as proposal.ts's rel() and outbox.ts's agoText() (never a raw machine
+ * timestamp), scoped locally per this build's per-file convention. CRM
+ * lives on no single event's clock, so UTC is the one honest zone rather
+ * than borrowing whichever event happens to be in view.
+ * ------------------------------------------------------------------ */
+
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function whenText(ms: number, nowMs: number = Date.now()): string {
+  const diff = Math.max(0, nowMs - ms);
+  const mins = Math.round(diff / 60_000);
+  if (mins < 1) return 'moments ago';
+  if (mins < 60) return mins === 1 ? '1 minute ago' : `${mins} minutes ago`;
+  const hrs = Math.round(diff / 3_600_000);
+  if (hrs < 24) return hrs === 1 ? '1 hour ago' : `${hrs} hours ago`;
+  const days = Math.round(diff / 86_400_000);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days} days ago`;
+  const d = new Date(ms);
+  return `on ${d.getUTCDate()} ${MONTHS_SHORT[d.getUTCMonth()] ?? ''}`;
+}
+
 function statusChip(s: DerivedStatus): string {
   return `<span class="chip ${STATUS_CHIP[s]}">${esc(STATUS_WORD[s])}</span>`;
 }
@@ -160,8 +185,9 @@ function noteBox(text: string): string {
 }
 
 /* ------------------------------------------------------------------ *
- * The directory — CRM-01, CRM-02, CRM-05 (import lands here from
- * routes/admin/people.ts — same `person` table, nothing more to build)
+ * The directory — CRM-01, CRM-02, CRM-05 (the CSV form itself lives at
+ * routes/admin/people.ts — same `person` table, nothing more to build —
+ * importCard below is this screen's own link to it)
  * ------------------------------------------------------------------ */
 
 function filterForm(opts: DirectoryOpts): string {
@@ -247,6 +273,24 @@ function directoryTable(rows: ContactRow[]): string {
   );
 }
 
+/** Bringing in a list, org-wide — CRM-05. The reader (person, no event_id) is
+ *  already org-wide with nothing more to build; the CSV form itself lives on
+ *  one event's own People page (SPK-03), because a roster entry always names
+ *  an event. This is the speaker database's own link to that form: pick the
+ *  event, land on the same "Bring in a list" control, and whoever comes in
+ *  shows up back here too. */
+function importCard(events: AdminEvent[]): string {
+  if (!events.length) return '';
+  const links = events.map((e) => `<a class="link" href="/admin/${esc(e.slug)}/people">${esc(e.name)}</a>`).join(' · ');
+  return (
+    '<div class="card card-pad" style="margin-top:22px;max-width:44em">' +
+    '<h2 class="display" style="font-size:20px;margin-bottom:4px">Bring in a list</h2>' +
+    '<p class="sub" style="margin-bottom:10px">A CSV of names, emails, job titles, companies and bios, brought in ' +
+    'from an event’s own People page. Whoever comes in shows up here too.</p>' +
+    `<p style="margin:0">${links}</p></div>`
+  );
+}
+
 function addContactForm(): string {
   return (
     '<div class="card card-pad" style="margin-top:22px;max-width:44em">' +
@@ -287,7 +331,14 @@ const DIRECTORY_NOTES: Record<string, string> = {
   'no-search-name': 'Name the search before saving it.',
 };
 
-function directoryPage(principal: Principal, opts: DirectoryOpts, rows: ContactRow[], totalAll: number, note: string): string {
+function directoryPage(
+  principal: Principal,
+  opts: DirectoryOpts,
+  rows: ContactRow[],
+  totalAll: number,
+  note: string,
+  events: AdminEvent[]
+): string {
   const { who, whoInitials } = whoLine(principal);
   const shown = rows.length === totalAll ? `${num(totalAll)} contacts` : `${num(rows.length)} of ${num(totalAll)} contacts`;
   const body =
@@ -299,6 +350,7 @@ function directoryPage(principal: Principal, opts: DirectoryOpts, rows: ContactR
     (rows.length
       ? directoryTable(rows)
       : '<div class="state-out"><h2>Nobody found.</h2><p>Try a different search, or add somebody by hand below.</p></div>') +
+    importCard(events) +
     addContactForm();
   return page({
     title: `Speaker database · ${NAME}`,
@@ -538,8 +590,7 @@ function cardPage(principal: Principal, card: Awaited<ReturnType<typeof cardDeta
         .map((h) => {
           const from = h.fromStage ? PIPELINE_STAGES.find((s) => s.value === h.fromStage)?.word ?? h.fromStage : 'Enrolled';
           const to = PIPELINE_STAGES.find((s) => s.value === h.toStage)?.word ?? h.toStage;
-          const when = new Date(h.createdAt).toISOString().replace('T', ' ').slice(0, 16);
-          return `<p style="margin:0 0 6px" class="t-sub">${esc(when)} — ${esc(from)} → ${esc(to)}</p>`;
+          return `<p style="margin:0 0 6px" class="t-sub">${esc(whenText(h.createdAt))} — ${esc(from)} → ${esc(to)}</p>`;
         })
         .join('')
     : '<p class="t-sub" style="margin:0">Nothing moved yet.</p>';
@@ -678,6 +729,13 @@ function overviewPage(principal: Principal, d: Awaited<ReturnType<typeof crmDash
  * Merging a duplicate — CRM-06
  * ------------------------------------------------------------------ */
 
+/** What tells these two apart on the radio row itself — email first, company
+ *  as a fallback — since a same-name merge candidate is exactly the case
+ *  where the name alone cannot. */
+function mergeDetail(c: ContactDetail): string {
+  return [c.email, c.organisation].filter((v): v is string => Boolean(v)).join(' · ');
+}
+
 function mergePage(principal: Principal, a: ContactDetail, b: ContactDetail, note: string): string {
   const { who, whoInitials } = whoLine(principal);
   const side = (c: ContactDetail) =>
@@ -701,9 +759,9 @@ function mergePage(principal: Principal, a: ContactDetail, b: ContactDetail, not
     `<input type="hidden" name="a" value="${esc(a.personId)}">` +
     `<input type="hidden" name="b" value="${esc(b.personId)}">` +
     '<label style="display:block;margin-bottom:8px"><input type="radio" name="primary" value="a" checked> ' +
-    `Keep <b>${esc(a.name)}</b>, fold the other in</label>` +
+    `Keep <b>${esc(a.name)}</b>${mergeDetail(a) ? ` — ${esc(mergeDetail(a))}` : ''}, fold the other in</label>` +
     '<label style="display:block;margin-bottom:14px"><input type="radio" name="primary" value="b"> ' +
-    `Keep <b>${esc(b.name)}</b>, fold the other in</label>` +
+    `Keep <b>${esc(b.name)}</b>${mergeDetail(b) ? ` — ${esc(mergeDetail(b))}` : ''}, fold the other in</label>` +
     '<div class="btnrow"><button class="btn btn-primary" type="submit">Merge</button>' +
     '<a class="btn" href="/admin/crm">Not yet</a></div>' +
     '</form>';
@@ -718,12 +776,14 @@ function mergePage(principal: Principal, a: ContactDetail, b: ContactDetail, not
  * Writing to more than one contact — CRM-11
  * ------------------------------------------------------------------ */
 
-function composeForm(ids: string[], names: string[], events: AdminEvent[]): string {
-  const who = names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} and ${num(names.length - 3)} more`;
+function composeForm(principal: Principal, ids: string[], names: string[], events: AdminEvent[]): string {
+  const { who, whoInitials } = whoLine(principal);
+  const whoText = names.length <= 3 ? names.join(', ') : `${names.slice(0, 3).join(', ')} and ${num(names.length - 3)} more`;
   const eventOptions = events.map((e) => `<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('');
-  return (
+  const crumb = `<a href="/admin/crm">Speaker database</a><span> / </span>Write to the speakers you picked`;
+  const body =
     '<div style="padding:26px 0 0"><h1 class="display">Write to the speakers you picked</h1>' +
-    `<p class="counts">${esc(who || 'Nobody')}</p></div>` +
+    `<p class="counts">${esc(whoText || 'Nobody')}</p></div>` +
     '<form class="card card-pad" style="margin-top:16px;max-width:44em" method="post" action="/admin/crm/bulk-email/preview">' +
     ids.map((id) => `<input type="hidden" name="pid" value="${esc(id)}">`).join('') +
     '<label class="f"><span class="f-lab">Which event this is about</span>' +
@@ -734,11 +794,23 @@ function composeForm(ids: string[], names: string[], events: AdminEvent[]): stri
     '<textarea name="body" rows="6" required maxlength="2000" placeholder="{{first_name}}, we would love to have you at {{event}}. Would you send a proposal?"></textarea></label>' +
     '<p class="hint" style="margin-top:8px">Use {{first_name}} and {{event}} — each person gets their own words.</p>' +
     '<div class="btnrow" style="margin-top:14px"><button class="btn btn-primary" type="submit">See how it reads</button></div>' +
-    '</form>'
-  );
+    '</form>';
+  return page({
+    title: `Write to the speakers you picked · ${NAME}`,
+    register: 'backstage',
+    body: crmShell({ here: '', who, whoInitials, crumb, body }),
+  });
 }
 
-function previewPage(ids: string[], subject: string, body: string, eventId: string, rows: ReturnType<typeof previewBulkTemplate>): string {
+function previewPage(
+  principal: Principal,
+  ids: string[],
+  subject: string,
+  bodyTemplate: string,
+  eventId: string,
+  rows: ReturnType<typeof previewBulkTemplate>
+): string {
+  const { who, whoInitials } = whoLine(principal);
   const cards = rows
     .map(
       (r) =>
@@ -747,7 +819,8 @@ function previewPage(ids: string[], subject: string, body: string, eventId: stri
         `<div class="mprev" style="white-space:pre-wrap">${esc(r.resolvedBody)}</div></div></div>`
     )
     .join('');
-  return (
+  const crumb = `<a href="/admin/crm">Speaker database</a><span> / </span>How it reads, per person`;
+  const body =
     '<div style="padding:26px 0 0"><h1 class="display">How it reads, per person</h1>' +
     `<p class="counts">${esc(plural(rows.length, 'letter', 'letters'))}, each with their own name filled in.</p></div>` +
     `<div class="sec">${cards}</div>` +
@@ -755,12 +828,16 @@ function previewPage(ids: string[], subject: string, body: string, eventId: stri
     ids.map((id) => `<input type="hidden" name="pid" value="${esc(id)}">`).join('') +
     `<input type="hidden" name="eventId" value="${esc(eventId)}">` +
     `<input type="hidden" name="subject" value="${esc(subject)}">` +
-    `<input type="hidden" name="body" value="${esc(body)}">` +
+    `<input type="hidden" name="body" value="${esc(bodyTemplate)}">` +
     `<div class="btnrow"><button class="btn btn-primary" type="submit">Write ${esc(
       plural(rows.length, 'letter', 'letters')
     )}</button><a class="btn" href="/admin/crm">Not yet</a></div>` +
-    '</form>'
-  );
+    '</form>';
+  return page({
+    title: `How it reads, per person · ${NAME}`,
+    register: 'backstage',
+    body: crmShell({ here: '', who, whoInitials, crumb, body }),
+  });
 }
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? `1 ${one}` : `${num(n)} ${many}`);
@@ -789,9 +866,12 @@ export function registerCrm(app: Hono<{ Bindings: Env }>): void {
         jobTitle: c.req.query('title') ?? undefined,
         tag: c.req.query('tag') ?? undefined,
       };
-      const d = await crmDirectory(c.env.DB, principal, opts);
+      const [d, events] = await Promise.all([
+        crmDirectory(c.env.DB, principal, opts),
+        adminEvents(c.env.DB, principal),
+      ]);
       const code = c.req.query('note');
-      return c.html(directoryPage(principal, opts, d.rows, d.totalAll, code ? DIRECTORY_NOTES[code] ?? '' : ''));
+      return c.html(directoryPage(principal, opts, d.rows, d.totalAll, code ? DIRECTORY_NOTES[code] ?? '' : '', events));
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;
@@ -1002,7 +1082,7 @@ export function registerCrm(app: Hono<{ Bindings: Env }>): void {
         adminEvents(c.env.DB, principal),
       ]);
       const names = rows.results.map((r) => r.name);
-      return c.html(composeForm(ids, names, events));
+      return c.html(composeForm(principal, ids, names, events));
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;
@@ -1030,7 +1110,7 @@ export function registerCrm(app: Hono<{ Bindings: Env }>): void {
       const eventName = event?.name ?? 'the event';
       const contacts = rows.results.map((r) => ({ personId: r.id, name: r.name }));
       const preview = previewBulkTemplate(contacts, body, eventName);
-      return c.html(previewPage(ids, subject, body, eventId, preview));
+      return c.html(previewPage(principal, ids, subject, body, eventId, preview));
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;
@@ -1060,7 +1140,10 @@ export function registerCrm(app: Hono<{ Bindings: Env }>): void {
       const contacts = rows.results.map((r) => ({ personId: r.id, name: r.name }));
       const res = await crmBulkEmail(c.env.DB, principal, { id: event.id, name: event.name }, contacts, subject, body);
       if (!res.ok) return c.redirect('/admin/crm?note=trouble', 303);
-      return c.redirect(`/admin/${encodeURIComponent(event.slug)}/outbox`, 303);
+      // Land on the outbox with its own "written and waiting" confirmation —
+      // the same ?wrote= count outbox.ts already reads for a staged note, so
+      // the send has an in-app success state rather than a bare redirect.
+      return c.redirect(`/admin/${encodeURIComponent(event.slug)}/outbox?wrote=${res.staged}`, 303);
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;

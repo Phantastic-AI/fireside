@@ -49,6 +49,8 @@ import { principalFromCookie, type Principal } from '../../workflows/account';
 import { requireDecider, stageDecision, type Decision } from '../../workflows/decide';
 import { createTask, TASK_KINDS } from '../../workflows/tasks';
 import { postCommentAsOrganizer, COMMENT_MAX } from '../../workflows/comments';
+import { FORMATS, LEVELS, tracksOfEvent, type TrackOption } from '../../workflows/submit';
+import { editSubmissionWords } from '../../workflows/people-admin';
 
 /* ------------------------------------------------------------------ *
  * Words
@@ -237,6 +239,36 @@ function avatar(name: string, size: number): string {
   );
 }
 
+/** A participant's own photograph, once they have sent one through the
+ *  portal (person.headshot_file_id, served at /files/:id) — previously
+ *  invisible here, which is defect #3: the generated portrait until then,
+ *  same circle, same size. */
+function face(name: string, headshotFileId: string | null, size: number): string {
+  if (!headshotFileId) return avatar(name, size);
+  return (
+    `<img class="av" src="/files/${esc(headshotFileId)}" alt="${esc(name)}" ` +
+    `width="${size}" height="${size}" ` +
+    `style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;` +
+    'border:1px solid rgba(34,30,23,.12);flex:none">'
+  );
+}
+
+/** Headshots for this proposal's own participants, in one small batched
+ *  read — never more than a handful of ids, so no chunking is needed the
+ *  way the roster's own headshotsFor (routes/admin/people.ts) has to. */
+async function headshotsForParticipants(db: D1Database, personIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const ids = [...new Set(personIds)];
+  if (ids.length === 0) return out;
+  const ph = ids.map(() => '?').join(',');
+  const res = await db
+    .prepare(`SELECT id, headshot_file_id FROM person WHERE id IN (${ph}) AND headshot_file_id IS NOT NULL`)
+    .bind(...ids)
+    .all<{ id: string; headshot_file_id: string }>();
+  for (const r of res.results) out.set(r.id, r.headshot_file_id);
+  return out;
+}
+
 const trackChip = (t: { name: string; colour: string }): string =>
   `<span class="tk" style="--tc:${esc(t.colour)};--tw:color-mix(in srgb, ${esc(t.colour)} 16%, white)">${esc(t.name)}</span>`;
 
@@ -297,6 +329,12 @@ const OUTCOMES: Record<string, string> = {
   commented: 'Added. It is on the thread now, and the speaker can read it.',
   'no-comment': 'Nothing was written, so nothing was added.',
   'comment-moved': 'That request is not on this proposal any more.',
+  // editing the title and abstract from the committee's own side
+  edited: 'Saved. The title and abstract on this proposal now read as you wrote them.',
+  'edit-no-title': 'A title is needed — it is the line the committee reads first.',
+  'edit-too-long': 'The abstract runs longer than the program has room for. Trim it and save again.',
+  'edit-not-here': 'That proposal is not on this event.',
+  'edit-trouble': 'That did not go through, and nothing has changed. Worth trying once more.',
 };
 
 /** decide.ts speaks in sentences; this maps each back to its code so the same
@@ -359,7 +397,13 @@ function answersSection(p: Proposal, questions: readonly CfpQuestion[]): string 
   return blocks.join('');
 }
 
-function participantRow(part: ProposalParticipant, sent: boolean): string {
+function participantRow(
+  part: ProposalParticipant,
+  sent: boolean,
+  slug: string,
+  headshotFileId: string | null,
+  mayEdit: boolean
+): string {
   const role = word(ROLE_KEY[part.role]);
   const line = [role, part.jobTitle ?? '', part.organisation ?? '']
     .filter((x) => x !== '')
@@ -368,10 +412,15 @@ function participantRow(part: ProposalParticipant, sent: boolean): string {
   const address = part.email
     ? `<span class="sub">${esc(part.email)}</span>`
     : `<span class="chip warn">${esc(label('message.blocked', 'backstage'))}</span>`;
+  const editLink = mayEdit
+    ? `<a class="link" style="font-size:13px" href="/admin/${esc(slug)}/people/${esc(
+        part.personId
+      )}/edit">Edit their file →</a>`
+    : '';
   return (
     '<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;' +
     'border-bottom:1px solid var(--line-soft);flex-wrap:wrap">' +
-    avatar(part.name, 40) +
+    face(part.name, headshotFileId, 40) +
     '<div style="min-width:0;flex:1">' +
     '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
     `<span style="font-weight:640">${esc(part.name)}</span>` +
@@ -381,11 +430,12 @@ function participantRow(part: ProposalParticipant, sent: boolean): string {
     '</div>' +
     (line ? `<div class="sub">${line}</div>` : '') +
     `<div style="margin-top:3px">${address}</div>` +
+    (editLink ? `<div style="margin-top:4px">${editLink}</div>` : '') +
     '</div></div>'
   );
 }
 
-function peopleSection(p: Proposal, slug: string): string {
+function peopleSection(p: Proposal, slug: string, headshots: Map<string, string>, mayEdit: boolean): string {
   const sent = p.submittedAt !== null;
   if (p.participation.length === 0) {
     return (
@@ -399,7 +449,9 @@ function peopleSection(p: Proposal, slug: string): string {
   }
   return (
     `<div class="sec" id="people">${sectionHead('Who is speaking')}` +
-    p.participation.map((part) => participantRow(part, sent)).join('') +
+    p.participation
+      .map((part) => participantRow(part, sent, slug, headshots.get(part.personId) ?? null, mayEdit))
+      .join('') +
     '</div>'
   );
 }
@@ -655,6 +707,58 @@ function revisionsSection(p: Proposal, tz: string): string {
   );
 }
 
+/* ---------- editing the words themselves ---------- */
+
+/**
+ * Correcting a title or an abstract from the committee's own side — defect:
+ * this used to exist nowhere in the admin. A <details> block, the same
+ * progressive-disclosure shape revisionsSection already uses above: closed
+ * by default so the reading column stays the reading column, open the
+ * instant it is needed, and it works with no JS at all because it is native
+ * HTML rather than an island. The write is workflows/people-admin.ts's
+ * editSubmissionWords and nothing else.
+ */
+function editProposalBox(p: Proposal, slug: string, tracks: readonly TrackOption[]): string {
+  const formatOptions = FORMATS.map(
+    (f) => `<option value="${esc(f.word)}"${f.word === p.format ? ' selected' : ''}>${esc(f.word)}</option>`
+  ).join('');
+  // A draft made through the admin, or one seeded before R-10 asked for a
+  // level at all, can carry no level — an empty leading option so saving
+  // this form without ever touching the select leaves that alone rather
+  // than silently landing on whichever level the browser puts first.
+  const levelOptions =
+    (p.level === null ? '<option value="" selected>Not specified</option>' : '') +
+    LEVELS.map(
+      (l) => `<option value="${esc(l.value)}"${l.value === p.level ? ' selected' : ''}>${esc(l.word)}</option>`
+    ).join('');
+  const trackField = tracks.length
+    ? '<label class="f"><span class="f-lab">Track</span><select name="track">' +
+      `<option value="">No track</option>` +
+      tracks
+        .map(
+          (t) => `<option value="${esc(t.slug)}"${p.track?.slug === t.slug ? ' selected' : ''}>${esc(t.name)}</option>`
+        )
+        .join('') +
+      '</select></label>'
+    : '';
+  return (
+    '<details class="sec" id="edit-words" style="border-bottom:1px solid var(--line-soft);padding:14px 0">' +
+    '<summary style="cursor:pointer"><span style="font-weight:620">Edit title and abstract</span></summary>' +
+    `<form method="post" action="/admin/${esc(slug)}/submissions/${esc(p.id)}/edit" style="margin-top:14px">` +
+    '<label class="f"><span class="f-lab">Title</span>' +
+    `<input type="text" name="title" required maxlength="200" value="${esc(p.title)}"></label>` +
+    '<label class="f" style="margin-top:12px"><span class="f-lab">Abstract</span>' +
+    `<textarea name="abstract" rows="5" maxlength="1200">${esc(p.abstract ?? '')}</textarea></label>` +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-top:12px">' +
+    `<label class="f"><span class="f-lab">Format</span><select name="format">${formatOptions}</select></label>` +
+    `<label class="f"><span class="f-lab">Level</span><select name="level">${levelOptions}</select></label>` +
+    trackField +
+    '</div>' +
+    '<div class="btnrow" style="margin-top:14px"><button class="btn btn-primary btn-sm" type="submit">Save</button></div>' +
+    '</form></details>'
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * The rail — where this stands, and the one act that moves it
  * ------------------------------------------------------------------ */
@@ -671,7 +775,7 @@ function taskChip(t: ProposalTask, todayKey: string): { text: string; cls: strin
   return { text: label('task.open', 'backstage'), cls: 'chip s-undecided' };
 }
 
-function tasksBox(p: Proposal, tz: string, todayKey: string, askable: boolean): string {
+function tasksBox(p: Proposal, tz: string, todayKey: string, askable: boolean, slug: string): string {
   if (p.tasks.length === 0) {
     return (
       '<div class="railbox" id="tasks"><h4>To do</h4>' +
@@ -683,9 +787,10 @@ function tasksBox(p: Proposal, tz: string, todayKey: string, askable: boolean): 
   const rows = p.tasks
     .map((t) => {
       const chip = taskChip(t, todayKey);
+      const open = t.completedAt === null && t.cancelledAt === null;
       const struck = t.completedAt !== null ? ';text-decoration:line-through;color:var(--muted)' : '';
       const due =
-        t.completedAt === null && t.cancelledAt === null && t.dueOn
+        open && t.dueOn
           ? `<div class="sub" style="flex:1 1 100%">${t.dueOn < todayKey ? 'Was due ' : 'Due '}${esc(isoDayLong(t.dueOn))}</div>`
           : '';
       const done =
@@ -696,6 +801,14 @@ function tasksBox(p: Proposal, tz: string, todayKey: string, askable: boolean): 
         t.cancelledAt !== null && t.cancelReason
           ? `<div class="sub" style="flex:1 1 100%">${esc(CANCEL_REASON[t.cancelReason] ?? '')}</div>`
           : '';
+      // Fixing a due date used to mean withdrawing this ask and asking again
+      // from scratch — routes/admin/people.ts now owns the edit itself, this
+      // only links to it.
+      const edit = open
+        ? `<div style="flex:1 1 100%"><a class="link" style="font-size:13px" href="/admin/${esc(
+            slug
+          )}/people/${esc(t.personId)}/tasks/${esc(t.id)}/edit">Edit</a></div>`
+        : '';
       return (
         '<div style="display:flex;gap:9px;align-items:center;padding:7px 0;' +
         'border-bottom:1px solid var(--line-soft);flex-wrap:wrap">' +
@@ -704,6 +817,7 @@ function tasksBox(p: Proposal, tz: string, todayKey: string, askable: boolean): 
         due +
         done +
         why +
+        edit +
         '</div>'
       );
     })
@@ -948,6 +1062,8 @@ function renderProposal(o: {
   armed: boolean;
   outcome: string | undefined;
   nowMs: number;
+  headshots: Map<string, string>;
+  tracks: readonly TrackOption[];
 }): string {
   const { ev, p, nowMs } = o;
   const tz = ev.timezone;
@@ -1014,8 +1130,9 @@ function renderProposal(o: {
   const main =
     '<div>' +
     `<div class="abstract">${abstract}</div>` +
+    (o.mayAsk ? editProposalBox(p, slug, o.tracks) : '') +
     answersSection(p, o.questions) +
-    peopleSection(p, slug) +
+    peopleSection(p, slug, o.headshots, o.mayAsk) +
     deliverablesSection(p, slug, tz, todayKey) +
     lettersSection(p, slug, tz, inPlay) +
     reviewsSection(p, slug, inPlay) +
@@ -1035,7 +1152,7 @@ function renderProposal(o: {
     decideBox(p, slug, tz, nowMs, o.mayDecide, o.armed) +
     // A draft is nobody's to score yet, so the box does not sit there empty.
     (inPlay ? scoreBox(p, slug) : '') +
-    tasksBox(p, tz, todayKey, canAskHere) +
+    tasksBox(p, tz, todayKey, canAskHere, slug) +
     (canAskHere && asker ? askBox(p, slug, asker) : '') +
     '</aside>';
 
@@ -1082,11 +1199,13 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
       // one is shut to them outright, not trimmed.
       if (reviewerOnly(principal, ev.id)) return c.html(deniedPage(), 403);
 
-      const [p, questions] = await Promise.all([
+      const [p, questions, tracks] = await Promise.all([
         proposal(c.env.DB, principal, ev.id, id),
         cfpQuestions(c.env.DB, ev.id),
+        tracksOfEvent(c.env.DB, ev.id),
       ]);
       if (!p) return c.html(missingPage(ev, principal), 404);
+      const headshots = await headshotsForParticipants(c.env.DB, p.participation.map((x) => x.personId));
 
       // One committee's private reading of one person's proposal.
       c.header('cache-control', 'private, no-store');
@@ -1101,6 +1220,8 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
           armed: c.req.query('change') === '1',
           outcome: c.req.query('outcome'),
           nowMs: Date.now(),
+          headshots,
+          tracks,
         })
       );
     } catch (e) {
@@ -1167,6 +1288,57 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
       // Straight to the words that will leave: the letter is written, and the
       // organizer reads it before the outbox act, not after it.
       return c.redirect(back(OUTCOME_FOR[decision], '#letters'), 303);
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  // Correcting the title or the abstract from the committee's own side —
+  // previously this existed nowhere in the admin. The write is workflows/
+  // people-admin.ts's editSubmissionWords; this only carries its sentences.
+  app.post('/admin/:eventSlug/submissions/:id/edit', async (c) => {
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const id = c.req.param('id');
+    const home = `/admin/${encodeURIComponent(slug)}/submissions/${encodeURIComponent(id)}`;
+    const back = (code: string): string => `${home}?outcome=${encodeURIComponent(code)}#edit-words`;
+
+    try {
+      const events = await adminEvents(c.env.DB, principal);
+      const ev = events.find((e) => e.slug === slug);
+      if (!ev) return c.html(deniedPage(), 403);
+      if (reviewerOnly(principal, ev.id)) return c.html(deniedPage(), 403);
+      if (!mayAsk(principal, ev.id)) {
+        return c.html(deniedPage('Editing a proposal’s words is held by this event’s organizers.'), 403);
+      }
+
+      const form = await c.req.parseBody();
+      const result = await editSubmissionWords(c.env.DB, principal, ev.id, id, {
+        title: String(form['title'] ?? ''),
+        abstract: String(form['abstract'] ?? ''),
+        format: String(form['format'] ?? ''),
+        level: String(form['level'] ?? ''),
+        trackSlug: String(form['track'] ?? ''),
+      });
+      if (!result.ok) {
+        const code =
+          result.code === 'no-title'
+            ? 'edit-no-title'
+            : result.code === 'too-long'
+              ? 'edit-too-long'
+              : result.code === 'not-here'
+                ? 'edit-not-here'
+                : 'edit-trouble';
+        return c.redirect(back(code), 303);
+      }
+      return c.redirect(back('edited'), 303);
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;

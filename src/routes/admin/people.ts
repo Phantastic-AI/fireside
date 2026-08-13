@@ -51,7 +51,14 @@ import {
   type ParsedCsvRow,
   type PreviewRow,
 } from '../../workflows/import';
-import { filePart } from '../../workflows/files';
+import { filePart, tooLargeToRead, PHOTO_ACCEPT, PHOTO_LINE, PHOTO_MAX_BYTES } from '../../workflows/files';
+import {
+  createSpeaker,
+  updateSpeaker,
+  uploadSpeakerHeadshot,
+  editTask,
+  type PersonFields,
+} from '../../workflows/people-admin';
 
 /* ------------------------------------------------------------------ *
  * Shared small bits.
@@ -142,6 +149,19 @@ const OUTCOMES: Record<string, string> = {
   trouble: 'That did not go through, and nothing changed. Worth trying once more.',
   saved: 'Saved.',
   'not-found': 'That record could not be found. Nothing changed.',
+  // creating or editing a speaker's own file
+  created: 'Added. Their file is open below.',
+  'no-name': 'A name is needed.',
+  'no-email': 'An email address is needed, so they have somewhere to be reached.',
+  taken: 'Somebody here already has that email address.',
+  // a photograph
+  'photo-done': 'The photograph is saved. It shows wherever this person appears backstage.',
+  'photo-nothing': 'Choose a photograph first.',
+  'photo-wrong-kind': 'That is not a JPEG, PNG or WebP — try one of those.',
+  'photo-too-big': 'That photograph is bigger than this takes — keep it under 2 MB.',
+  'photo-moved': 'That record moved while you were looking. Nothing changed.',
+  // editing an existing ask
+  'task-bad-date': 'That is not a day anyone has. Give the date again and it saves.',
 };
 
 function outcomeNote(code: string | undefined): string {
@@ -169,6 +189,40 @@ function avatar(initials: string, name: string, size: number): string {
     '<text x="20" y="21" text-anchor="middle" dominant-baseline="central" font-family="var(--serif)" ' +
     `font-weight="600" font-size="14" fill="var(--ink-soft)">${esc(initials)}</text></svg>`
   );
+}
+
+/** The speaker's own photograph, wherever they have sent one in — a
+ *  headshot uploaded through the portal (person.headshot_file_id, served at
+ *  /files/:id) was previously invisible on this side. Same circle, same
+ *  size as avatar() above, so the page does not jump the moment one arrives. */
+function face(initials: string, name: string, headshotFileId: string | null, size: number): string {
+  if (!headshotFileId) return avatar(initials, name, size);
+  return (
+    `<img class="av" src="/files/${esc(headshotFileId)}" alt="${esc(name)}" ` +
+    `width="${size}" height="${size}" ` +
+    `style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;` +
+    'border:1px solid rgba(34,30,23,.12);flex:none">'
+  );
+}
+
+/** Headshots for a page's worth of rows, one batched read keyed by the same
+ *  ids the roster is about to print. Chunked the way queries/crm.ts's own
+ *  ID_CHUNK keeps a bound IN-list under D1's per-statement parameter cap. */
+async function headshotsFor(db: D1Database, personIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const ids = [...new Set(personIds)];
+  if (ids.length === 0) return out;
+  const CHUNK = 90;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const part = ids.slice(i, i + CHUNK);
+    const ph = part.map(() => '?').join(',');
+    const res = await db
+      .prepare(`SELECT id, headshot_file_id FROM person WHERE id IN (${ph}) AND headshot_file_id IS NOT NULL`)
+      .bind(...part)
+      .all<{ id: string; headshot_file_id: string }>();
+    for (const r of res.results) out.set(r.id, r.headshot_file_id);
+  }
+  return out;
 }
 
 function stateChip(state: SubmissionState): string {
@@ -232,7 +286,7 @@ function proposalChips(proposals: PersonProposal[]): string {
   return proposals.map((p) => stateChip(p.state)).join(' ');
 }
 
-function personRow(slug: string, r: PersonListRow): string {
+function personRow(slug: string, r: PersonListRow, headshots: Map<string, string>): string {
   const role = [r.jobTitle, r.organisation].filter((v): v is string => Boolean(v)).map((v) => esc(v)).join(' · ');
   const owe =
     r.openTaskCount > 0
@@ -241,7 +295,7 @@ function personRow(slug: string, r: PersonListRow): string {
   return (
     '<tr>' +
     '<td><div style="display:flex;gap:11px;align-items:center">' +
-    `<span class="avwrap">${avatar(initialsOf(r.name), r.name, 34)}</span>` +
+    `<span class="avwrap">${face(initialsOf(r.name), r.name, headshots.get(r.personId) ?? null, 34)}</span>` +
     `<span style="min-width:0"><span class="t-name">${esc(r.name)}</span>` +
     (role ? `<br><span class="t-sub">${role}</span>` : '') +
     '</span></div></td>' +
@@ -252,21 +306,24 @@ function personRow(slug: string, r: PersonListRow): string {
   );
 }
 
-function peopleTable(slug: string, rows: PersonListRow[]): string {
+function peopleTable(slug: string, rows: PersonListRow[], headshots: Map<string, string>): string {
   return (
     '<div class="tablewrap" style="margin-top:6px"><table class="t"><thead><tr>' +
     '<th>Speaker</th><th>Proposals here</th><th>Open tasks</th><th></th>' +
     '</tr></thead><tbody>' +
-    rows.map((r) => personRow(slug, r)).join('') +
+    rows.map((r) => personRow(slug, r, headshots)).join('') +
     '</tbody></table></div>'
   );
 }
 
-function emptyPeople(event: AdminEvent): string {
+function emptyPeople(event: AdminEvent, canAdd: boolean): string {
+  const addLine = canAdd
+    ? ` <a class="link" href="/admin/${esc(event.slug)}/people/new">Add one by hand →</a>`
+    : '';
   return (
     '<div style="padding:26px 0"><h1 class="display">People</h1></div>' +
     '<div class="state-out"><h2>Nobody yet.</h2>' +
-    '<p>Speakers appear here as proposals arrive, or as you bring a list in below.</p>' +
+    `<p>Speakers appear here as proposals arrive, or as you bring a list in below.${addLine}</p>` +
     `<a class="btn btn-primary" href="/${esc(event.slug)}/cfp">See the call for speakers →</a></div>`
   );
 }
@@ -396,10 +453,19 @@ function peopleBody(
   rows: PersonListRow[],
   owing: number,
   oweActive: boolean,
-  note: string
+  note: string,
+  headshots: Map<string, string>,
+  canAdd: boolean
 ): string {
+  const addBtn = canAdd
+    ? `<a class="btn btn-sm" href="/admin/${esc(event.slug)}/people/new">Add a speaker</a>`
+    : '';
   const head =
-    '<div style="padding:26px 0 0"><h1 class="display">People</h1>' +
+    '<div style="padding:26px 0 0">' +
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap">' +
+    '<h1 class="display">People</h1>' +
+    addBtn +
+    '</div>' +
     countsLine(event.slug, list.search, rows.length, owing, oweActive, event.name) +
     '</div>' +
     (note ? noteBox(note) : '') +
@@ -408,7 +474,7 @@ function peopleBody(
     return head + (oweActive ? noOweMatches(event.slug) : noSearchResults(event.slug, list.search ?? ''));
   }
   const shown = rows.slice(0, ROOM);
-  return head + peopleTable(event.slug, shown) + moreLine(rows.length, shown.length);
+  return head + peopleTable(event.slug, shown, headshots) + moreLine(rows.length, shown.length);
 }
 
 function peoplePage(
@@ -418,15 +484,241 @@ function peoplePage(
   rows: PersonListRow[],
   owing: number,
   oweActive: boolean,
-  note: string
+  note: string,
+  headshots: Map<string, string>,
+  canAdd: boolean
 ): string {
   const { who, whoInitials } = whoLine(event, principal);
   const body =
     rows.length === 0 && !list.search && !oweActive
-      ? emptyPeople(event) + importCard(event.slug)
-      : peopleBody(event, list, rows, owing, oweActive, note) + importCard(event.slug);
+      ? emptyPeople(event, canAdd) + importCard(event.slug)
+      : peopleBody(event, list, rows, owing, oweActive, note, headshots, canAdd) + importCard(event.slug);
   return page({
     title: `People · ${event.name}`,
+    register: 'backstage',
+    body: backstageShell({
+      eventSlug: event.slug,
+      eventName: event.name,
+      here: '/people',
+      who,
+      whoInitials,
+      tzLabel: event.tzLabel ?? event.timezone,
+      body,
+    }),
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * A speaker's own file, made or changed by hand — GET/POST
+ * /admin/:eventSlug/people/new and /admin/:eventSlug/people/:personId/edit.
+ * The words are their own form, the photograph its own — the same split
+ * SPK-08's portal profile card keeps, so fixing a typo in a job title never
+ * means sending a photograph over the wire again.
+ * ------------------------------------------------------------------ */
+
+function speakerFieldLine(o: {
+  id: string;
+  name: string;
+  labelText: string;
+  value: string;
+  hint?: string;
+  area?: boolean;
+  rows?: number;
+  limit?: number;
+  required?: boolean;
+  optional?: boolean;
+}): string {
+  const attrs =
+    `id="${esc(o.id)}" name="${esc(o.name)}"` +
+    (o.limit ? ` maxlength="${o.limit}"` : '') +
+    (o.required ? ' required' : '');
+  const control = o.area
+    ? `<textarea ${attrs} rows="${o.rows ?? 4}">${esc(o.value)}</textarea>`
+    : `<input type="text" ${attrs} value="${esc(o.value)}">`;
+  return (
+    `<label class="f" for="${esc(o.id)}"><span class="f-lab">${esc(o.labelText)}` +
+    (o.optional ? '<span class="opt">Optional</span>' : '') +
+    '</span>' +
+    control +
+    (o.hint ? `<span class="hint">${esc(o.hint)}</span>` : '') +
+    '</label>'
+  );
+}
+
+const EMPTY_SPEAKER: PersonFields = {
+  name: '',
+  email: '',
+  jobTitle: '',
+  organisation: '',
+  bio: '',
+  pronouns: '',
+  links: '',
+};
+
+function speakerFieldsForm(action: string, submitWord: string, v: PersonFields): string {
+  return (
+    `<form method="post" action="${esc(action)}">` +
+    speakerFieldLine({ id: 's-name', name: 'name', labelText: 'Name', value: v.name, limit: 120, required: true }) +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px">' +
+    speakerFieldLine({
+      id: 's-email',
+      name: 'email',
+      labelText: 'Email',
+      value: v.email,
+      limit: 160,
+      required: true,
+      hint: 'How they are reached, and how their portal finds them.',
+    }) +
+    speakerFieldLine({ id: 's-pronouns', name: 'pronouns', labelText: 'Pronouns', value: v.pronouns, limit: 40, optional: true }) +
+    '</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px">' +
+    speakerFieldLine({ id: 's-title', name: 'job_title', labelText: 'What they do', value: v.jobTitle, limit: 120, optional: true }) +
+    speakerFieldLine({ id: 's-org', name: 'organisation', labelText: 'Where they do it', value: v.organisation, limit: 120, optional: true }) +
+    '</div>' +
+    speakerFieldLine({
+      id: 's-links',
+      name: 'links',
+      labelText: 'Links',
+      value: v.links,
+      limit: 600,
+      optional: true,
+      hint: 'A website, a talk recording, a social profile — one per line.',
+    }) +
+    speakerFieldLine({
+      id: 's-bio',
+      name: 'bio',
+      labelText: 'Bio',
+      value: v.bio,
+      area: true,
+      rows: 5,
+      limit: 900,
+      optional: true,
+      hint: 'Printed under their name on the public agenda.',
+    }) +
+    `<div class="btnrow" style="margin-top:14px"><button class="btn btn-primary" type="submit">${esc(submitWord)}</button></div>` +
+    '</form>'
+  );
+}
+
+function newSpeakerPage(event: AdminEvent, principal: Principal, note: string | undefined): string {
+  const { who, whoInitials } = whoLine(event, principal);
+  const body =
+    '<div style="padding:26px 0 0"><h1 class="display">Add a speaker</h1>' +
+    '<p class="sub">Puts them on this event’s list straight away — a proposal is not needed first.</p></div>' +
+    outcomeNote(note) +
+    `<div class="card card-pad" style="margin-top:18px;max-width:44em">${speakerFieldsForm(
+      `/admin/${esc(event.slug)}/people/new`,
+      'Add speaker',
+      EMPTY_SPEAKER
+    )}</div>` +
+    `<p class="sub" style="margin-top:14px"><a class="link" href="/admin/${esc(event.slug)}/people">← Back to people</a></p>`;
+  return page({
+    title: `Add a speaker · ${event.name}`,
+    register: 'backstage',
+    body: backstageShell({
+      eventSlug: event.slug,
+      eventName: event.name,
+      here: '/people',
+      who,
+      whoInitials,
+      tzLabel: event.tzLabel ?? event.timezone,
+      crumb: `<a href="/admin/${esc(event.slug)}/people">People</a><span> / </span>Add a speaker`,
+      body,
+    }),
+  });
+}
+
+function editSpeakerPage(
+  event: AdminEvent,
+  principal: Principal,
+  personId: string,
+  v: PersonFields,
+  headshotFileId: string | null,
+  note: string | undefined
+): string {
+  const { who, whoInitials } = whoLine(event, principal);
+  const photo =
+    '<div class="card card-pad" style="margin-top:18px;max-width:44em">' +
+    '<h2 class="display" style="font-size:18px;margin-bottom:10px">Photograph</h2>' +
+    '<div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">' +
+    `<span class="avwrap">${face(initialsOf(v.name || '?'), v.name || 'Speaker', headshotFileId, 72)}</span>` +
+    '<div style="flex:1 1 16em;min-width:14em">' +
+    `<form method="post" enctype="multipart/form-data" action="/admin/${esc(event.slug)}/people/${esc(
+      personId
+    )}/photo">` +
+    `<input type="file" name="photo" accept="${esc(PHOTO_ACCEPT)}" required aria-label="Photograph">` +
+    `<p class="hint" style="margin-top:6px">${esc(PHOTO_LINE)} Shows wherever this person appears backstage.</p>` +
+    `<div class="btnrow" style="margin-top:8px"><button class="btn btn-sm" type="submit">${
+      headshotFileId ? 'Use this one instead' : 'Save photograph'
+    }</button></div>` +
+    '</form></div></div></div>';
+  const words =
+    `<div class="card card-pad" style="margin-top:18px;max-width:44em">${speakerFieldsForm(
+      `/admin/${esc(event.slug)}/people/${esc(personId)}/edit`,
+      'Save',
+      v
+    )}</div>`;
+  const body =
+    '<div style="padding:26px 0 0"><h1 class="display">Edit speaker</h1></div>' +
+    outcomeNote(note) +
+    words +
+    photo +
+    `<p class="sub" style="margin-top:14px"><a class="link" href="/admin/${esc(event.slug)}/people/${esc(
+      personId
+    )}">← Back to their file</a></p>`;
+  return page({
+    title: `Edit ${v.name || 'speaker'} · ${event.name}`,
+    register: 'backstage',
+    body: backstageShell({
+      eventSlug: event.slug,
+      eventName: event.name,
+      here: '/people',
+      who,
+      whoInitials,
+      tzLabel: event.tzLabel ?? event.timezone,
+      crumb: `<a href="/admin/${esc(event.slug)}/people">People</a><span> / </span>Edit`,
+      body,
+    }),
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * Editing an ask already on somebody's list — GET/POST
+ * /admin/:eventSlug/people/:personId/tasks/:taskId/edit. Previously the only
+ * control on an open ask was withdrawing it, so changing a due date meant
+ * deleting one and asking again from scratch.
+ * ------------------------------------------------------------------ */
+
+type TaskEditRow = { id: string; title: string; dueOn: string | null; instructions: string | null };
+
+function taskEditPage(
+  event: AdminEvent,
+  principal: Principal,
+  personId: string,
+  personName: string,
+  t: TaskEditRow,
+  note: string | undefined
+): string {
+  const { who, whoInitials } = whoLine(event, principal);
+  const body =
+    `<div style="padding:26px 0 0"><h1 class="display">Edit the ask</h1>` +
+    `<p class="sub">For ${esc(personName)}.</p></div>` +
+    outcomeNote(note) +
+    '<div class="card card-pad" style="margin-top:18px;max-width:40em">' +
+    `<form method="post" action="/admin/${esc(event.slug)}/people/${esc(personId)}/tasks/${esc(t.id)}/edit">` +
+    '<label class="f"><span class="f-lab">What are you asking for?</span>' +
+    `<input type="text" name="title" required maxlength="140" value="${esc(t.title)}"></label>` +
+    '<label class="f" style="margin-top:14px"><span class="f-lab">Due by</span>' +
+    `<input type="date" name="due" required value="${esc(t.dueOn ?? '')}" ${DATE_FIELD}></label>` +
+    '<label class="f" style="margin-top:14px"><span class="f-lab">Instructions <span class="opt">Optional</span></span>' +
+    `<textarea name="instructions" rows="4" maxlength="2000">${esc(t.instructions ?? '')}</textarea></label>` +
+    '<div class="btnrow" style="margin-top:16px"><button class="btn btn-primary" type="submit">Save</button></div>' +
+    '</form></div>' +
+    `<p class="sub" style="margin-top:14px"><a class="link" href="/admin/${esc(event.slug)}/people/${esc(
+      personId
+    )}#tasks">← Back</a></p>`;
+  return page({
+    title: `Edit the ask · ${event.name}`,
     register: 'backstage',
     body: backstageShell({
       eventSlug: event.slug,
@@ -505,24 +797,35 @@ function friendlyDate(iso: string): string {
  *  and the speaker's own word for what happens is "not needed anymore". */
 function withdrawForm(slug: string, personId: string, taskId: string): string {
   return (
-    `<form method="post" style="margin-top:4px" action="/admin/${esc(slug)}/people/${esc(personId)}` +
+    `<form method="post" style="margin-top:4px;display:inline" action="/admin/${esc(slug)}/people/${esc(personId)}` +
     `/tasks/${esc(taskId)}/withdraw">` +
     '<button class="btn btn-sm btn-quiet" type="submit">Withdraw the ask</button></form>'
   );
 }
 
+/** Fixing a due date used to mean withdrawing the ask and asking again from
+ *  scratch. This is the other half of an open ask's own row now: withdraw it,
+ *  or change it — never both at once, so neither can be mistaken for the
+ *  other. */
 function taskRow(t: PersonTask, today: string, slug: string, personId: string): string {
   const chip = taskChip(t, today);
   const dueWord = chip.key === 'task.overdue' ? 'was due' : 'due';
   const due = t.dueOn ? `<div class="t-sub" style="margin-top:2px">${esc(dueWord)} ${esc(friendlyDate(t.dueOn))}</div>` : '';
   const open = t.completedAt === null && t.cancelledAt === null;
+  const actions = open
+    ? '<div style="margin-top:4px;display:flex;gap:14px;align-items:center">' +
+      `<a class="link" style="font-size:13.5px" href="/admin/${esc(slug)}/people/${esc(personId)}` +
+      `/tasks/${esc(t.id)}/edit">Edit</a>` +
+      withdrawForm(slug, personId, t.id) +
+      '</div>'
+    : '';
   return (
     '<div style="padding:6px 0">' +
     '<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">' +
     `<span>${esc(t.title)}</span><span class="chip ${chip.cls}">${esc(label(chip.key, 'backstage'))}</span>` +
     '</div>' +
     due +
-    (open ? withdrawForm(slug, personId, t.id) : '') +
+    actions +
     '</div>'
   );
 }
@@ -608,18 +911,25 @@ function elsewhereCard(elsewhere: PersonElsewhere[]): string {
   return `<div class="railbox"><h4>Elsewhere</h4>${rows}</div>`;
 }
 
-function personHeader(detail: PersonDetail): string {
+function personHeader(event: AdminEvent, detail: PersonDetail, headshotFileId: string | null, mayEdit: boolean): string {
   const role = [detail.jobTitle, detail.organisation]
     .filter((v): v is string => Boolean(v))
     .map((v) => esc(v))
     .join(' · ');
+  const editLink = mayEdit
+    ? `<a class="link" style="margin-left:auto;font-size:14px" href="/admin/${esc(event.slug)}/people/${esc(
+        detail.personId
+      )}/edit">Edit their file →</a>`
+    : '';
   return (
     '<div style="padding:20px 0 0;display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">' +
-    `<span class="avwrap">${avatar(initialsOf(detail.name), detail.name, 56)}</span>` +
+    `<span class="avwrap">${face(initialsOf(detail.name), detail.name, headshotFileId, 56)}</span>` +
     '<div style="flex:1;min-width:min(100%,260px)">' +
     `<h1 class="display" style="font-size:clamp(24px,3.6vw,30px)">${esc(detail.name)}</h1>` +
     (role ? `<p class="sub" style="margin-top:4px;font-size:14.5px">${role}</p>` : '') +
-    '</div></div>' +
+    '</div>' +
+    editLink +
+    '</div>' +
     (detail.bio
       ? `<p class="serif" style="margin-top:16px;font-size:16.5px;line-height:1.6;max-width:44em">${esc(detail.bio)}</p>`
       : '')
@@ -631,20 +941,23 @@ function personBody(
   detail: PersonDetail,
   mayAsk: boolean,
   outcome: string | undefined,
-  logistics: string | null
+  logistics: string | null,
+  headshotFileId: string | null,
+  mayEdit: boolean,
+  hasStandingHere: boolean
 ): string {
   const today = eventDayKey(Date.now(), event.timezone);
   return (
-    personHeader(detail) +
+    personHeader(event, detail, headshotFileId, mayEdit) +
     outcomeNote(outcome) +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px;margin-top:22px">' +
     contactCard(detail) +
     proposalsCard(event.slug, detail.proposals) +
-    tasksCard(detail.tasks, today, event.slug, detail.personId, mayAsk) +
+    tasksCard(detail.tasks, today, event.slug, detail.personId, mayAsk && hasStandingHere) +
     elsewhereCard(detail.elsewhere) +
     logisticsCard(event.slug, detail.personId, logistics) +
     '</div>' +
-    (mayAsk ? askCard(event, detail) : '') +
+    (mayAsk && hasStandingHere ? askCard(event, detail) : '') +
     `<p class="sub" style="margin-top:18px"><a class="link" href="/admin/crm/${esc(
       detail.personId
     )}">See their whole history across every event →</a></p>`
@@ -657,7 +970,10 @@ function personPage(
   detail: PersonDetail,
   mayAsk: boolean,
   outcome: string | undefined,
-  logistics: string | null
+  logistics: string | null,
+  headshotFileId: string | null,
+  mayEdit: boolean,
+  hasStandingHere: boolean
 ): string {
   const { who, whoInitials } = whoLine(event, principal);
   const crumb = `<a href="/admin/${esc(event.slug)}/people">People</a><span> / </span>${esc(detail.name)}`;
@@ -672,7 +988,7 @@ function personPage(
       whoInitials,
       tzLabel: event.tzLabel ?? event.timezone,
       crumb,
-      body: personBody(event, detail, mayAsk, outcome, logistics),
+      body: personBody(event, detail, mayAsk, outcome, logistics, headshotFileId, mayEdit, hasStandingHere),
     }),
   });
 }
@@ -713,7 +1029,9 @@ async function resolveEvent(
 
 /** May this principal ask anything of anyone here? The rule lives in
  *  workflows/tasks.ts; this only asks it, so the card and the write can never
- *  disagree about who holds it. */
+ *  disagree about who holds it. The same EDIT_ROLES also gates every write
+ *  this file adds below (create/edit a speaker, edit an ask) — one
+ *  permission, everywhere it is asked. */
 function canAsk(principal: Principal, eventId: string): boolean {
   try {
     requireScope(principal, eventId, EDIT_ROLES);
@@ -721,6 +1039,111 @@ function canAsk(principal: Principal, eventId: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * A person on this event's roster with no proposal here yet — brought in by
+ * a CSV import, pushed from the CRM, or added by hand below — is invisible
+ * to queries/people.ts's personDetail() by design: that reader's whole point
+ * is "reached through a real proposal" (its own header comment says so).
+ * Previously that meant clicking through from the People list 404'd. This
+ * builds the same PersonDetail shape from the roster fact (schema/0008's
+ * roster_entry) instead, so a roster-only person's file always resolves.
+ * Their "proposals" here are honestly empty — there are none — but their
+ * tasks and their standing at other events read exactly as personDetail's
+ * own queries would.
+ */
+async function rosterOnlyPersonDetail(
+  db: D1Database,
+  eventId: string,
+  personId: string
+): Promise<PersonDetail | null> {
+  const person = await db
+    .prepare(
+      `SELECT pe.id, pe.name, pe.email, pe.phone, pe.job_title, pe.organisation, pe.bio
+         FROM person pe
+         JOIN roster_entry r ON r.person_id = pe.id AND r.event_id = ?
+        WHERE pe.id = ? AND pe.merged_into_id IS NULL`
+    )
+    .bind(eventId, personId)
+    .first<{
+      id: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      job_title: string | null;
+      organisation: string | null;
+      bio: string | null;
+    }>();
+  if (!person) return null;
+
+  const [taskRes, elseRes] = await db.batch<Record<string, unknown>>([
+    db
+      .prepare(
+        `SELECT id, kind, title, due_on, completed_at, cancelled_at, cancel_reason
+           FROM task WHERE person_id = ? AND event_id = ?
+          ORDER BY (completed_at IS NULL AND cancelled_at IS NULL) DESC, due_on IS NULL, due_on, title`
+      )
+      .bind(personId, eventId),
+    db
+      .prepare(
+        `SELECT s.id AS submission_id, e.id AS event_id, e.slug AS event_slug, e.name AS event_name,
+                s.title, s.state
+           FROM participation pa
+           JOIN submission s ON s.id = pa.submission_id
+           JOIN event e ON e.id = s.event_id
+          WHERE pa.person_id = ? AND s.event_id <> ? AND s.state <> 'draft'
+          ORDER BY e.starts_on DESC, s.title`
+      )
+      .bind(personId, eventId),
+  ]);
+
+  return {
+    personId: person.id,
+    name: person.name,
+    email: person.email,
+    phone: person.phone,
+    jobTitle: person.job_title,
+    organisation: person.organisation,
+    bio: person.bio,
+    proposals: [],
+    tasks: (
+      (taskRes?.results ?? []) as unknown as {
+        id: string;
+        kind: string;
+        title: string;
+        due_on: string | null;
+        completed_at: number | null;
+        cancelled_at: number | null;
+        cancel_reason: string | null;
+      }[]
+    ).map((t) => ({
+      id: t.id,
+      kind: t.kind,
+      title: t.title,
+      dueOn: t.due_on,
+      completedAt: t.completed_at,
+      cancelledAt: t.cancelled_at,
+      cancelReason: t.cancel_reason,
+    })),
+    elsewhere: (
+      (elseRes?.results ?? []) as unknown as {
+        submission_id: string;
+        event_id: string;
+        event_slug: string;
+        event_name: string;
+        title: string;
+        state: SubmissionState;
+      }[]
+    ).map((e) => ({
+      submissionId: e.submission_id,
+      eventId: e.event_id,
+      eventSlug: e.event_slug,
+      eventName: e.event_name,
+      title: e.title,
+      state: e.state,
+    })),
+  };
 }
 
 export function registerPeople(app: Hono<{ Bindings: Env }>): void {
@@ -761,7 +1184,291 @@ export function registerPeople(app: Hono<{ Bindings: Env }>): void {
           ? importedNote(Number(ic), Number(mc ?? '0'), Number(sc ?? '0'))
           : '';
 
-      return c.html(peoplePage(resolved.event, principal, list, rows, owing, oweActive, importNote));
+      const shown = rows.slice(0, ROOM);
+      const headshots = await headshotsFor(c.env.DB, shown.map((r) => r.personId));
+      const canAdd = canAsk(principal, resolved.event.id);
+
+      return c.html(peoplePage(resolved.event, principal, list, rows, owing, oweActive, importNote, headshots, canAdd));
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  /* ---------- a speaker's own file, made by hand ---------- */
+
+  app.get('/admin/:eventSlug/people/new', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in');
+
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, c.req.param('eventSlug'));
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Adding a speaker is held by this event’s organizers.'), 403);
+      }
+      return c.html(newSpeakerPage(resolved.event, principal, c.req.query('note')));
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  app.post('/admin/:eventSlug/people/new', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const home = `/admin/${encodeURIComponent(slug)}/people/new`;
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, slug);
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Adding a speaker is held by this event’s organizers.'), 403);
+      }
+
+      const form = await c.req.parseBody();
+      const result = await createSpeaker(c.env.DB, principal, resolved.event.id, {
+        name: text(form['name']),
+        email: text(form['email']),
+        jobTitle: text(form['job_title']),
+        organisation: text(form['organisation']),
+        bio: text(form['bio']),
+        pronouns: text(form['pronouns']),
+        links: text(form['links']),
+      });
+      if (!result.ok) return c.redirect(`${home}?note=${encodeURIComponent(result.code)}`, 303);
+      return c.redirect(
+        `/admin/${encodeURIComponent(slug)}/people/${encodeURIComponent(result.personId)}?note=created`,
+        303
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  app.get('/admin/:eventSlug/people/:personId/edit', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in');
+
+    const slug = c.req.param('eventSlug');
+    const personId = c.req.param('personId');
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, slug);
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Editing a speaker’s file is held by this event’s organizers.'), 403);
+      }
+
+      const row = await c.env.DB.prepare(
+        `SELECT name, email, job_title, organisation, bio, pronouns, links, headshot_file_id
+           FROM person WHERE id = ? AND merged_into_id IS NULL`
+      )
+        .bind(personId)
+        .first<{
+          name: string;
+          email: string | null;
+          job_title: string | null;
+          organisation: string | null;
+          bio: string | null;
+          pronouns: string | null;
+          links: string | null;
+          headshot_file_id: string | null;
+        }>();
+      if (!row) return c.notFound();
+      // Only somebody this event actually knows — through a real proposal or
+      // the roster — is this screen's to change; a stray id from another
+      // event's directory reads as not-found here, the same as anywhere else
+      // on this page.
+      const onEvent = await c.env.DB.prepare(
+        `SELECT 1 WHERE EXISTS (SELECT 1 FROM roster_entry WHERE event_id = ? AND person_id = ?)
+            OR EXISTS (SELECT 1 FROM participation pa JOIN submission s ON s.id = pa.submission_id
+                        WHERE pa.person_id = ? AND s.event_id = ? AND s.state <> 'draft')`
+      )
+        .bind(resolved.event.id, personId, personId, resolved.event.id)
+        .first();
+      if (!onEvent) return c.notFound();
+
+      return c.html(
+        editSpeakerPage(
+          resolved.event,
+          principal,
+          personId,
+          {
+            name: row.name,
+            email: row.email ?? '',
+            jobTitle: row.job_title ?? '',
+            organisation: row.organisation ?? '',
+            bio: row.bio ?? '',
+            pronouns: row.pronouns ?? '',
+            links: row.links ?? '',
+          },
+          row.headshot_file_id,
+          c.req.query('note')
+        )
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  app.post('/admin/:eventSlug/people/:personId/edit', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const personId = c.req.param('personId');
+    const home = `/admin/${encodeURIComponent(slug)}/people/${encodeURIComponent(personId)}`;
+    const editHome = `${home}/edit`;
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, slug);
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Editing a speaker’s file is held by this event’s organizers.'), 403);
+      }
+
+      const form = await c.req.parseBody();
+      const result = await updateSpeaker(c.env.DB, principal, resolved.event.id, personId, {
+        name: text(form['name']),
+        email: text(form['email']),
+        jobTitle: text(form['job_title']),
+        organisation: text(form['organisation']),
+        bio: text(form['bio']),
+        pronouns: text(form['pronouns']),
+        links: text(form['links']),
+      });
+      if (!result.ok) {
+        const code = result.code === 'not-found' ? 'not-found' : result.code;
+        return c.redirect(`${editHome}?note=${encodeURIComponent(code)}`, 303);
+      }
+      return c.redirect(`${home}?note=saved`, 303);
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  /* ---------- the photograph half of the same file ---------- */
+
+  app.post('/admin/:eventSlug/people/:personId/photo', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const personId = c.req.param('personId');
+    const editHome = `/admin/${encodeURIComponent(slug)}/people/${encodeURIComponent(personId)}/edit`;
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, slug);
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Editing a speaker’s file is held by this event’s organizers.'), 403);
+      }
+
+      if (tooLargeToRead(c.req.header('content-length'), PHOTO_MAX_BYTES)) {
+        return c.redirect(`${editHome}?note=${encodeURIComponent('photo-too-big')}`, 303);
+      }
+      const form = await c.req.parseBody();
+      const photo = filePart(form['photo']);
+      if (!photo) return c.redirect(`${editHome}?note=${encodeURIComponent('photo-nothing')}`, 303);
+
+      const outcome = await uploadSpeakerHeadshot(c.env.DB, c.env.FILES, principal, resolved.event.id, personId, photo);
+      const code =
+        outcome === 'done'
+          ? 'photo-done'
+          : outcome === 'too-big'
+            ? 'photo-too-big'
+            : outcome === 'wrong-kind'
+              ? 'photo-wrong-kind'
+              : outcome === 'moved'
+                ? 'photo-moved'
+                : outcome === 'not-here'
+                  ? 'not-found'
+                  : 'trouble';
+      return c.redirect(`${editHome}?note=${encodeURIComponent(code)}`, 303);
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  /* ---------- editing an ask already on somebody's list ---------- */
+
+  app.get('/admin/:eventSlug/people/:personId/tasks/:taskId/edit', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in');
+
+    const slug = c.req.param('eventSlug');
+    const personId = c.req.param('personId');
+    const taskId = c.req.param('taskId');
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, slug);
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Editing an ask is held by this event’s organizers.'), 403);
+      }
+
+      const row = await c.env.DB.prepare(
+        `SELECT t.id, t.title, t.due_on, t.instructions, pe.name AS person_name
+           FROM task t JOIN person pe ON pe.id = t.person_id
+          WHERE t.id = ? AND t.event_id = ? AND t.person_id = ?
+            AND t.completed_at IS NULL AND t.cancelled_at IS NULL`
+      )
+        .bind(taskId, resolved.event.id, personId)
+        .first<{ id: string; title: string; due_on: string | null; instructions: string | null; person_name: string }>();
+      if (!row) return c.notFound();
+
+      return c.html(
+        taskEditPage(
+          resolved.event,
+          principal,
+          personId,
+          row.person_name,
+          { id: row.id, title: row.title, dueOn: row.due_on, instructions: row.instructions },
+          c.req.query('note')
+        )
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  app.post('/admin/:eventSlug/people/:personId/tasks/:taskId/edit', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const personId = c.req.param('personId');
+    const taskId = c.req.param('taskId');
+    const editHome = `/admin/${encodeURIComponent(slug)}/people/${encodeURIComponent(personId)}/tasks/${encodeURIComponent(taskId)}/edit`;
+    const personHome = `/admin/${encodeURIComponent(slug)}/people/${encodeURIComponent(personId)}`;
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, slug);
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Editing an ask is held by this event’s organizers.'), 403);
+      }
+
+      const form = await c.req.parseBody();
+      const result = await editTask(c.env.DB, principal, resolved.event.id, taskId, {
+        title: String(form['title'] ?? ''),
+        dueOn: String(form['due'] ?? ''),
+        instructions: String(form['instructions'] ?? ''),
+      });
+      if (!result.ok) {
+        const code = result.code === 'bad-date' ? 'task-bad-date' : result.code;
+        return c.redirect(`${editHome}?note=${encodeURIComponent(code)}`, 303);
+      }
+      return c.redirect(`${personHome}?note=saved#tasks`, 303);
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;
@@ -777,11 +1484,20 @@ export function registerPeople(app: Hono<{ Bindings: Env }>): void {
       if (!resolved) return c.notFound();
       if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
 
-      const detail = await personDetail(c.env.DB, principal, resolved.event.id, c.req.param('personId'));
+      const personId = c.req.param('personId');
+      let detail = await personDetail(c.env.DB, principal, resolved.event.id, personId);
+      // Reached through a real proposal, or — the defect this closes — reached
+      // only through the roster: a CSV import, a CRM push, or a speaker added
+      // by hand below, none of which personDetail() alone ever finds.
+      const hasStandingHere = detail !== null;
+      if (!detail) {
+        detail = await rosterOnlyPersonDetail(c.env.DB, resolved.event.id, personId);
+      }
       if (!detail) return c.notFound();
-      const logisticsRow = await c.env.DB.prepare('SELECT logistics FROM person WHERE id = ?')
+
+      const extra = await c.env.DB.prepare('SELECT logistics, headshot_file_id FROM person WHERE id = ?')
         .bind(detail.personId)
-        .first<{ logistics: string | null }>();
+        .first<{ logistics: string | null; headshot_file_id: string | null }>();
       // One organizer's private reading of one person's file.
       c.header('cache-control', 'private, no-store');
       return c.html(
@@ -791,7 +1507,10 @@ export function registerPeople(app: Hono<{ Bindings: Env }>): void {
           detail,
           canAsk(principal, resolved.event.id),
           c.req.query('note'),
-          logisticsRow?.logistics ?? null
+          extra?.logistics ?? null,
+          extra?.headshot_file_id ?? null,
+          canAsk(principal, resolved.event.id),
+          hasStandingHere
         )
       );
     } catch (e) {
