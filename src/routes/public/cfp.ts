@@ -22,7 +22,7 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../../index';
-import { esc, page, eventNav, onstageShell } from '../../lib/html';
+import { esc, page, eventNav, onstageShell, conferenceMasthead } from '../../lib/html';
 import { label } from '../../lib/labels';
 import {
   eventBySlug,
@@ -504,7 +504,7 @@ function speakerStrip(ev: EventHome, speakers: GallerySpeaker[]): string {
 }
 
 function shell(ev: EventHome, callOpen: boolean, body: string, script = ''): string {
-  return onstageShell(eventNav(ev.slug, '/cfp', callOpen), body, ev.slug) + script;
+  return onstageShell(eventNav(ev.slug, '/cfp', callOpen), conferenceMasthead(ev) + body, ev.slug) + script;
 }
 
 /** The call, open: intro, the form, and the people already on the program. */

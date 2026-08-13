@@ -42,7 +42,7 @@
 
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
-import { esc, page, onstageShell, eventNav } from '../../lib/html';
+import { esc, page, onstageShell, eventNav, conferenceMasthead } from '../../lib/html';
 import { label } from '../../lib/labels';
 import { eventBySlug, sessionBySlug, type EventHome } from '../../queries/public';
 import { claimAsk, clientIp } from '../../lib/ratelimit';
@@ -326,8 +326,10 @@ function askPage(o: {
     description: `Ask about the program at ${ev.name} and get the page you were after.`,
     register: 'onstage',
     body:
-      // No bubble on this screen: it is the concierge, at full size.
-      onstageShell(eventNav(ev.slug, '/ask', ev.lifecycle === 'open'), body, null) +
+      // No bubble on this screen: it is the concierge, at full size — and it
+      // opens with the conference's own band, so you always know which
+      // program you are asking about.
+      onstageShell(eventNav(ev.slug, '/ask', ev.lifecycle === 'open'), conferenceMasthead(ev) + body, null) +
       `<script>${askIsland}</script>`,
   });
 }

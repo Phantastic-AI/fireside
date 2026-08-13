@@ -32,7 +32,7 @@
 // finding, on one bar of signal.
 import type { Hono } from 'hono';
 import type { Env } from '../../index';
-import { esc, page, onstageShell, eventNav } from '../../lib/html';
+import { esc, page, onstageShell, eventNav, conferenceMasthead } from '../../lib/html';
 import { label, FORMAT_KEY } from '../../lib/labels';
 import { eventBySlug, agenda, type Agenda, type SpeakerRef } from '../../queries/public';
 import {
@@ -582,7 +582,7 @@ export function registerSchedule(app: Hono<{ Bindings: Env }>): void {
         '</div>';
 
     const body =
-      onstageShell(eventNav(ev.slug, '/my-schedule', ev.lifecycle === 'open'), inner, ev.slug) +
+      onstageShell(eventNav(ev.slug, '/my-schedule', ev.lifecycle === 'open'), conferenceMasthead(ev) + inner, ev.slug) +
       '<script src="/a/stars.js" defer></script>';
 
     // One person's own page, and once they are signed in it names other people:
