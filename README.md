@@ -154,6 +154,28 @@ auto-sent), inbound email replies landing on submissions, volunteer
 staffing, and dictation into the concierge. The ledger lives with the
 project's build notes.
 
+## How it scores
+
+Built for the AI Engineer **Kill My SaaS** challenge, and measured against
+that challenge's own evaluation kit (sbek) — a browser agent that role-plays
+an organizer, reviewer, speaker and attendee through every area and grades
+the result. A full seven-area run against the live site:
+
+| Area | Score |
+| --- | --- |
+| Speaker CRM | 100% |
+| Call for Papers | 94.3% |
+| AI agenda & schedule | 93.8% |
+| Content & deliverables | 91.4% |
+| Public & embeddable widgets | 91.4% |
+| Speaker management | 81.3% |
+| Abstract & review depth | 69.6% |
+| **Composite** | **88.2%** |
+
+Weighted across judged rubric items. The kit does not score Fireside's own
+additions beyond the brief — the role-aware concierge and the attendee layer
+— which are held to the same bar by their own adversarial walkthroughs.
+
 ## Status
 
 Building in the open for the AI Engineer **Kill My SaaS** challenge,
