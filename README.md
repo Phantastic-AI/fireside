@@ -42,6 +42,12 @@ follow a friend's schedule — sign in as two attendees at once:
 **noor.attendee@example.org** / **accept-what-you-choose**. Star a session,
 open *My schedule → find someone you met*, and connect.
 
+**To walk a speaker's helper** — an assistant who handles the deck and
+travel without being on the program — sign in as
+**devika.nair@example.org** / **the-deck-is-handled**: she helps Priya, so
+her portal becomes Priya's, scoped to what is due (she can send the deck and
+mark a task, never withdraw the talk).
+
 **For your agent:** the same doors speak MCP at
 `https://fireside.phantastic.ai/mcp` — eight public tools, JSON-RPC 2.0,
 no session. A proposal submitted by an agent walks through exactly the same
