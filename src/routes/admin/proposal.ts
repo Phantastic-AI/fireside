@@ -44,6 +44,7 @@ import {
   type SubmissionState,
 } from '../../queries/admin';
 import { cfpQuestions, type CfpQuestion } from '../../queries/public';
+import { scorecardFor, weightedAverage, type ScorecardKey } from '../../queries/reviews';
 import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { requireDecider, stageDecision, type Decision } from '../../workflows/decide';
@@ -464,9 +465,9 @@ function peopleSection(p: Proposal, slug: string, headshots: Map<string, string>
 const criterionWord = (key: string): string =>
   key.replace(/[_-]+/g, ' ').replace(/^./, (ch) => ch.toUpperCase());
 
-function reviewRow(r: ProposalReview): string {
+function reviewRow(r: ProposalReview, labelOf: (round: number, key: string) => string): string {
   const scores = Object.entries(r.scores)
-    .map(([k, v]) => `<b>${esc(criterionWord(k))}</b> ${esc(String(v))}`)
+    .map(([k, v]) => `<b>${esc(labelOf(r.round, k))}</b> ${esc(String(v))}`)
     .join('<span style="color:var(--muted-2);margin:0 6px">·</span>');
   return (
     '<div style="padding:12px 0;border-bottom:1px solid var(--line-soft)">' +
@@ -512,9 +513,31 @@ function reviewsSection(p: Proposal, slug: string, inPlay: boolean): string {
     );
   }
 
-  const total = p.reviewAggregates.reduce((sum, a) => sum + a.average * a.count, 0);
-  const counted = p.reviewAggregates.reduce((sum, a) => sum + a.count, 0);
-  const overall = counted > 0 ? oneDecimal(total / counted) : '';
+  // The card each round actually used, cached — so a proposal reviewed across
+  // rounds reads each review against its own round's criteria, never one card
+  // flattened over all of them.
+  const cardCache = new Map<number, ScorecardKey[]>();
+  const cardFor = (round: number): ScorecardKey[] => {
+    let c = cardCache.get(round);
+    if (!c) {
+      c = scorecardFor(p.roundScorecards, round);
+      cardCache.set(round, c);
+    }
+    return c;
+  };
+  const labelOf = (round: number, key: string): string =>
+    cardFor(round).find((k) => k.key === key)?.label ?? criterionWord(key);
+
+  // Scale lines only, weighted, words never averaged — the very function the
+  // results table trusts (weightedAverage). The two surfaces read the same
+  // number now: a text or select line no longer counts as a zero and drags
+  // the committee's score down.
+  const perReview = sent
+    .map((r) => weightedAverage(cardFor(r.round), r.scores))
+    .filter((v): v is number => v !== null);
+  const overall = perReview.length
+    ? oneDecimal(perReview.reduce((a, b) => a + b, 0) / perReview.length)
+    : '';
   const summary = overall
     ? `<p class="sub" style="margin-bottom:12px">${esc(
         fill(label('review.average', 'backstage'), {
@@ -524,14 +547,30 @@ function reviewsSection(p: Proposal, slug: string, inPlay: boolean): string {
         })
       )}</p>`
     : '';
-  const byCriterion = p.reviewAggregates.length
+
+  // Per-criterion, scale lines only, each under the organizer's own word for
+  // it — a row of big numbers is no place for a note or a dropdown.
+  const perCrit = new Map<string, { label: string; sum: number; count: number }>();
+  for (const r of sent) {
+    for (const k of cardFor(r.round)) {
+      if (k.kind !== 'scale') continue;
+      const v = r.scores[k.key];
+      if (typeof v !== 'number') continue;
+      const cur = perCrit.get(k.key) ?? { label: k.label, sum: 0, count: 0 };
+      cur.sum += v;
+      cur.count += 1;
+      perCrit.set(k.key, cur);
+    }
+  }
+  const crits = [...perCrit.values()];
+  const byCriterion = crits.length
     ? '<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px">' +
-      p.reviewAggregates
+      crits
         .map(
           (a) =>
             '<div><div class="sub">' +
-            `${esc(criterionWord(a.key))}</div>` +
-            `<div class="display" style="font-size:26px;font-variant-numeric:tabular-nums">${esc(oneDecimal(a.average))}</div></div>`
+            `${esc(a.label)}</div>` +
+            `<div class="display" style="font-size:26px;font-variant-numeric:tabular-nums">${esc(oneDecimal(a.sum / a.count))}</div></div>`
         )
         .join('') +
       '</div>'
@@ -539,7 +578,7 @@ function reviewsSection(p: Proposal, slug: string, inPlay: boolean): string {
 
   return (
     `<div class="sec" id="scores">${head}${summary}${byCriterion}` +
-    sent.map(reviewRow).join('') +
+    sent.map((r) => reviewRow(r, labelOf)).join('') +
     '</div>'
   );
 }

@@ -256,7 +256,10 @@ export type Proposal = {
   resumeNonce: string | null;
   participation: ProposalParticipant[];
   reviews: ProposalReview[];
-  reviewAggregates: ReviewAggregate[];
+  /** The event's per-round scorecard defs (raw JSON), so the route can read
+   *  each review against the card its own round used — the same source the
+   *  results table trusts. */
+  roundScorecards: string;
   reviewsSubmitted: number;
   tasks: ProposalTask[];
   messages: ProposalMessage[];
@@ -615,6 +618,7 @@ type ProposalSqlRow = {
   recording_url: string | null;
   resume_nonce: string | null;
   timezone: string;
+  round_scorecards: string;
   track_id: string | null;
   track_slug: string | null;
   track_name: string | null;
@@ -630,7 +634,7 @@ export async function proposal(
 ): Promise<Proposal | null> {
   requireScope(principal, eventId, READ_ROLES);
 
-  const [subRes, partRes, reviewRes, aggRes, taskRes, msgRes, deliverableTaskRes, deliverableFileRes, deliverableCommentRes, revRes] = await db.batch<
+  const [subRes, partRes, reviewRes, taskRes, msgRes, deliverableTaskRes, deliverableFileRes, deliverableCommentRes, revRes] = await db.batch<
     Record<string, unknown>
   >([
     db
@@ -642,7 +646,7 @@ export async function proposal(
                 s.resume_nonce, s.track_id,
                 CASE WHEN ${DECIDED_NOT_TOLD_SQL} THEN 1 ELSE 0 END AS decided_not_told,
                 ${LETTER_STAGED_SQL} AS letter_staged,
-                e.timezone,
+                e.timezone, e.round_scorecards,
                 r.name AS room_name,
                 t.slug AS track_slug, t.name AS track_name, t.colour AS track_colour
          FROM submission s
@@ -672,17 +676,12 @@ export async function proposal(
          ORDER BY rv.round, pe.name`
       )
       .bind(submissionId),
-    // D-024: a reviewer's scores are staged until submitted, so only submitted
-    // reviews feed the averages. Aggregation over the JSON, in SQL.
-    db
-      .prepare(
-        `SELECT je.key AS key, AVG(CAST(je.value AS REAL)) AS average, COUNT(*) AS n
-         FROM review rv, json_each(rv.scores) je
-         WHERE rv.submission_id = ? AND rv.submitted_at IS NOT NULL
-         GROUP BY je.key
-         ORDER BY je.key`
-      )
-      .bind(submissionId),
+    // The committee's average is not aggregated in SQL: a naive AVG over the
+    // scores JSON casts a text or select line to zero and drags the number
+    // down (a chair once read 1.5 where the results table read 3.2). The read
+    // is rebuilt in the route from these submitted reviews and the round's own
+    // scorecard, through the one weightedAverage every other screen trusts —
+    // scale lines only, weighted, words never averaged.
     db
       .prepare(
         `SELECT id, person_id, kind, template_key, title, instructions, due_on, completed_at,
@@ -820,11 +819,7 @@ export async function proposal(
       isSubmitter: p.is_submitter === 1,
     })),
     reviews,
-    reviewAggregates: rowsOf<{ key: string; average: number; n: number }>(aggRes).map((a) => ({
-      key: a.key,
-      average: a.average,
-      count: a.n,
-    })),
+    roundScorecards: s.round_scorecards,
     reviewsSubmitted: reviews.filter((r) => r.submittedAt !== null).length,
     tasks: rowsOf<{
       id: string;

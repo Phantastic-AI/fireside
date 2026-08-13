@@ -164,8 +164,10 @@ export function buildSeed(): SeedData {
     round_scorecards: JSON.stringify({
       '1': [
         { key: 'fit', label: 'Fit for this room', max: 5 },
-        { key: 'evidence', label: 'Receipts — numbers, not adjectives', max: 5 },
+        { key: 'evidence', label: 'Receipts — numbers, not adjectives', max: 5, weight: 3 },
         { key: 'freshness', label: 'Would a 3rd-year attendee learn something?', max: 5 },
+        { key: 'recommendation', label: 'Your call', kind: 'select', options: ['Strong yes', 'Yes', 'Maybe', 'No'] },
+        { key: 'why', label: 'Why, in a line', kind: 'text' },
       ],
     }),
     day_start: '09:30', day_end: '17:30', block_minutes: 60,
@@ -528,7 +530,17 @@ export function buildSeed(): SeedData {
     d.review.push({
       id: `rev-${s.id}`, submission_id: s.id, reviewer_person_id: lena, round: 1,
       scores: done
-        ? JSON.stringify({ fit: Math.floor(rng() * 3) + 3, evidence: Math.floor(rng() * 3) + 3, freshness: Math.floor(rng() * 3) + 2 })
+        ? JSON.stringify({
+            fit: Math.floor(rng() * 3) + 3,
+            evidence: Math.floor(rng() * 3) + 3,
+            freshness: Math.floor(rng() * 3) + 2,
+            // A select and a text line beside the scales — so the committee's
+            // average is a real test of "words are never averaged", not three
+            // numbers that could not have gone wrong. No rng() here: the two
+            // stay off the deterministic sequence the distribution test reads.
+            recommendation: ['Strong yes', 'Yes', 'Maybe'][i % 3],
+            why: 'Concrete receipts, and it would place well in this room.',
+          })
         : '{}',
       note: done && i % 3 === 0 ? 'Would pair well with the eval-suite talk.' : null,
       submitted_at: done ? utc(2026, 8, 10, 21) : null,

@@ -204,7 +204,8 @@ async function reviewAverages(db: D1Database, ids: string[]): Promise<Map<string
        FROM (
          SELECT rv.submission_id AS submission_id,
                 (SELECT AVG(CAST(je.value AS REAL))
-                 FROM json_each(CASE WHEN json_valid(rv.scores) THEN rv.scores ELSE '{}' END) je) AS review_avg
+                 FROM json_each(CASE WHEN json_valid(rv.scores) THEN rv.scores ELSE '{}' END) je
+                 WHERE je.type IN ('integer','real')) AS review_avg
          FROM review rv
          WHERE rv.submitted_at IS NOT NULL AND rv.submission_id IN (${placeholders})
        ) sub

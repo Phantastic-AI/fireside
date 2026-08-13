@@ -879,7 +879,7 @@ function criterionCard(k: ScorecardKey, i: number, last: number, silent: boolean
       hint: `One per line. Only used by ${CRITERION_KIND_WORD.select.toLowerCase()}.`,
     }) +
     `<label class="f" style="margin-bottom:0"><span class="f-lab">How much it counts` +
-    '<span class="opt">heavy counts three times light</span></span>' +
+    '<span class="opt">a heavy line counts three times as much as a light one</span></span>' +
     `${weightSelect(`${n}:weight`, k.weight)}</label>` +
     '</div>'
   );

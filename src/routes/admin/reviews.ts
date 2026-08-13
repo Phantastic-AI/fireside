@@ -74,6 +74,7 @@ import {
   reviewResults,
   reviewTeam,
   roundHistory,
+  scorecardFor,
   roundStanding,
   stagedReviews,
   needleOf,
@@ -484,18 +485,18 @@ const handUrl = (
  * The weight is said out loud on the heavy and light lines and left silent on
  * the normal ones, because "Normal" on every line is nine words that tell a
  * reviewer nothing — and a heavy line is the one fact she needs before she
- * marks it, not after. Worded to match the editor's own caption exactly
- * ("heavy counts three times light", settings.ts) rather than a paraphrase:
- * heavy is weight 3 against light's weight 1, so "three times" is the
- * arithmetic, not a rounder word standing in for it.
+ * marks it, not after. Worded to echo the editor's own caption ("a heavy line
+ * counts three times as much as a light one", settings.ts): heavy is weight 3
+ * against light's weight 1, so "three times" is the arithmetic said plainly,
+ * not a rounder word standing in for it.
  */
 function criterion(k: ScorecardKey, mark: string | number | undefined): string {
   const name = `score_${esc(k.key)}`;
   const weight =
     k.weight === 3
-      ? '<span class="opt">counts three times light</span>'
+      ? '<span class="opt">counts three times as much as a light line</span>'
       : k.weight === 1
-        ? '<span class="opt">counts light</span>'
+        ? '<span class="opt">the lightest line</span>'
         : '';
 
   if (k.kind === 'text') {
@@ -1095,6 +1096,20 @@ function roundHistoryLine(ev: ReviewEvent, r: RoundHistoryEntry): string {
       ? 'Nothing was sent in.'
       : `${count(r.onRecord, 'review is', 'reviews are')} on the record.`;
   const stepped = r.stepped > 0 ? ` ${count(r.stepped, 'reader', 'readers')} stepped aside.` : '';
+  // The card this round actually used, read back read-only from the stored
+  // per-round defs — so opening a later round never hides what an earlier one
+  // asked its readers to weigh, and the two rounds' distinct scorecards sit
+  // one above the other (ABS-01).
+  const card = scorecardFor(ev.scorecardsRaw, r.round);
+  const cardLine = card.length
+    ? `<div class="sub" style="margin-top:2px">Scorecard: ${card
+        .map(
+          (k) =>
+            esc(k.label) +
+            (k.weight === 3 ? ' (heavy)' : k.weight === 1 ? ' (light)' : '')
+        )
+        .join(' · ')}</div>`
+    : '';
   return (
     '<div style="padding:10px 0;border-top:1px solid var(--line-soft)">' +
     `<div style="font-weight:640">${esc(name)}` +
@@ -1103,6 +1118,7 @@ function roundHistoryLine(ev: ReviewEvent, r: RoundHistoryEntry): string {
     `<div class="sub" style="margin-top:2px">${esc(roundDates(r.opensAt, r.closesAt))} · ` +
     `${esc(r.blind ? 'Names hidden while scoring' : 'Names visible while scoring')}</div>` +
     `<div class="sub" style="margin-top:2px">${esc(`${record}${stepped}`)}</div>` +
+    cardLine +
     '</div>'
   );
 }
