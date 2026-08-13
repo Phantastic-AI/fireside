@@ -332,6 +332,29 @@ function sessionCards(sessions: GreenRoomSession[], timezone: string, todayKey: 
  * S-17, door one: /admin/:eventSlug/green-room
  * ------------------------------------------------------------------ */
 
+/**
+ * The masthead's one live fact (fresh-eyes-design-review.md item 2): who
+ * runs next, read off the sessions already fetched for the day on screen —
+ * no second query. It only says anything when that day is today: `gr.sessions`
+ * is scoped to the one day being shown, so there is nothing honest to compare
+ * "now" against on any other day. Shared by both doors — the organizer's and
+ * the crew's own share link — so Marcus and Naomi read the same sentence.
+ */
+function upNextFact(gr: GreenRoom): string {
+  const nowMs = Date.now();
+  if (gr.day !== eventDayKey(nowMs, gr.timezone)) return '';
+  const next = gr.sessions
+    .filter((s) => !s.cancelled && s.startsAt + s.minutes * 60_000 > nowMs)
+    .sort((a, b) => a.startsAt - b.startsAt)[0];
+  if (!next) return '';
+  const names = byline(next.speakers.map((p) => p.name));
+  const subject = names || esc(next.title);
+  const room = esc(next.roomName ?? 'no room set');
+  const said =
+    next.startsAt <= nowMs ? `${subject} is on now, in ${room}.` : `${subject} is next in ${room}.`;
+  return `<p class="livefact">${said}</p>`;
+}
+
 function dayTabs(basePath: string, days: string[], current: string): string {
   return days
     .map(
@@ -344,7 +367,8 @@ function dayTabs(basePath: string, days: string[], current: string): string {
 function shareRow(slug: string, nonce: string | null): string {
   if (!nonce) {
     return (
-      '<div class="sec standing"><p style="margin:0">No public link yet. ' +
+      '<div class="sec standing"><p style="margin:0">No public link yet — nobody outside your ' +
+      'team can see this sheet. ' +
       `<a class="link" href="/admin/${encodeURIComponent(slug)}/settings">Create one in settings →</a></p></div>`
     );
   }
@@ -352,7 +376,9 @@ function shareRow(slug: string, nonce: string | null): string {
   return (
     '<div class="sec standing">' +
     `<p style="margin:0">The public sheet: <a class="link" href="${href}">${href}</a></p>` +
-    '<p class="hint" style="margin-top:6px">Anyone with this link sees this page. Rotate it in Settings.</p>' +
+    '<p class="hint" style="margin-top:6px">No sign-in — whoever has this link can open it and see ' +
+    "today's run of show, including speaker phone numbers. Rotate it in Settings and the old link " +
+    'stops working.</p>' +
     '</div>'
   );
 }
@@ -376,6 +402,7 @@ function adminGreenRoomPage(
         `<span class="sep">·</span>${esc(plural(speakerCount, 'speaker', 'speakers'))}`
       : '<b>Nothing scheduled</b>') +
     `<span class="sep">·</span>${esc(tzLabel)}</p>` +
+    upNextFact(gr) +
     `<div class="filters daybar" style="margin-top:12px">${dayTabs(`/admin/${encodeURIComponent(slug)}/green-room`, gr.days, gr.day)}</div>` +
     '</div>';
 
@@ -421,7 +448,9 @@ function publicGreenRoomPage(ev: { name: string }, gr: GreenRoom): string {
     (gr.sessions.length
       ? `${esc(dayLong(gr.day))}`
       : `<b>Nothing scheduled on ${esc(dayLong(gr.day))}</b>`) +
-    `<span class="sep">·</span>${esc(tzLabel)}</p></div>`;
+    `<span class="sep">·</span>${esc(tzLabel)}</p>` +
+    upNextFact(gr) +
+    '</div>';
 
   const body = gr.sessions.length
     ? `<div class="sec" style="max-width:640px">${sessionCards(gr.sessions, gr.timezone, todayKey)}</div>`

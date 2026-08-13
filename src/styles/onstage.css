@@ -60,6 +60,31 @@
 .starcount{position:sticky;bottom:0;background:var(--paper);border-top:1px solid var(--line);
   padding:13px 0;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:14.5px;z-index:20}
 
+/* ---------- the one live fact (fresh-eyes review, "make it feel live") ----------
+   A quiet masthead line, not a card — see liveState() in routes/public/agenda.ts.
+   The dot is decorative rhythm, not a status light; it only turns ember and
+   gets its one-shot rise when the fact is genuinely live (isLive). */
+.live-fact{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:14.5px;
+  color:var(--ink-soft);font-weight:560;animation:factIn .4s ease-out}
+.live-fact::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--muted-2);flex:none}
+.live-fact.is-live::before{background:var(--ember)}
+@keyframes factIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+
+/* the same fact, pinned to the exact card(s) it is talking about — semantic
+   colour only: yellow/highlight for "happening, look now", muted for "next,
+   for context" (04 taste rules) */
+.live-tag{display:inline-flex;align-items:center;font-size:13px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;padding:2px 9px;border-radius:100px;flex:none;line-height:1.5}
+.live-tag.now{background:var(--highlight);color:#5A4A0C}
+.live-tag.next{background:var(--paper-deep);color:var(--muted);border:1px solid var(--line)}
+
+/* ---------- phone room switcher (fresh-eyes review, "390px as a
+   composition") — desktop-hidden by default; see routes/public/agenda.ts's
+   roomSwitcher for the markup and the phone media block below for its
+   promotion. ---------- */
+.room-switch{display:none}
+.room-switch .kicker{margin:0 0 6px}
+
 /* ---------- speaker gallery ---------- */
 .gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:16px}
 .gcard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px;
@@ -132,6 +157,19 @@
   .starbtn:hover{background:var(--paper-deep)}
   .dayhead{margin:24px 0 10px}
 
+  /* --- public agenda: the room switcher takes over as the primary way
+     through the program (fresh-eyes review — "390px as a composition, not a
+     breakpoint"). The lower day/track/format/room chip stack stays, minus
+     its own room row, now redundant with the switcher above. --- */
+  .room-switch{display:block;margin:16px 0 4px}
+  .rooms-desktop{display:none}
+
+  /* --- once a room is chosen, its day reads as one time-ordered column
+     with a rail, not a stack of unrelated cards --- */
+  .room-mode .slot{border-left:2px solid var(--line);margin-left:4px;padding-left:16px}
+  .room-mode .sesh-when .time::before{content:"";display:inline-block;width:7px;height:7px;
+    border-radius:50%;background:var(--tc,var(--ember));margin-right:7px;vertical-align:middle}
+
   /* --- CFP form: examples become readable, fields grow to full width --- */
   .fw{margin-bottom:22px}
   .fw > label.f{margin-bottom:0}
@@ -150,9 +188,21 @@
   #f-out,#f-note{min-height:132px}
 }
 @media (max-width:430px){
-  .gal{grid-template-columns:1fr 1fr;gap:10px}
-  .gcard{padding:13px}
-  .gcard .gname{font-size:17px}
-  .gcard .gtalk{font-size:13px}
+  /* --- speaker gallery: a two-up grid of cards was cramped past reading —
+     name, talk and affiliation each fought for a ~170px column (fresh-eyes
+     review, "prioritize name, talk, affiliation; let track and company
+     become quiet metadata"). One column of rows instead: face left, name
+     and talk given the room, role demoted below in size and colour. No
+     markup change — grid-column/-row simply re-places gname/grole/gtalk
+     around the avatar regardless of their order in speakers.ts. --- */
+  .gal{grid-template-columns:1fr;gap:0;border-top:1px solid var(--line-soft)}
+  .gcard{display:grid;grid-template-columns:54px 1fr;column-gap:14px;row-gap:3px;align-items:start;
+    padding:14px 4px;border:0;border-radius:0;border-bottom:1px solid var(--line-soft);
+    background:transparent;box-shadow:none}
+  .gcard:hover{transform:none;box-shadow:none;background:var(--paper-deep)}
+  .gcard .av{grid-column:1;grid-row:1/4}
+  .gcard .gname{grid-column:2;grid-row:1;font-size:17.5px}
+  .gcard .gtalk{grid-column:2;grid-row:2;font-size:14.5px;color:var(--ink-soft);border-top:0;padding-top:0;width:auto}
+  .gcard .grole{grid-column:2;grid-row:3;font-size:12.5px;color:var(--muted);line-height:1.45}
   .sesh-when{gap:7px}
 }

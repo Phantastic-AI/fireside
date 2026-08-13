@@ -200,6 +200,34 @@ async function sentHistory(
   };
 }
 
+/**
+ * Relative time for something recently prepared — same phrasing family as
+ * the register's other relative timestamps (proposal.ts's rel()), scoped
+ * locally per this build's per-file convention (see agenda.ts, greenroom.ts).
+ */
+function agoText(ms: number, nowMs: number, tz: string): string {
+  const diff = Math.max(0, nowMs - ms);
+  const mins = Math.round(diff / 60_000);
+  if (mins < 1) return 'moments ago';
+  if (mins < 60) return mins === 1 ? '1 minute ago' : `${mins} minutes ago`;
+  const hrs = Math.round(diff / 3_600_000);
+  if (hrs < 24) return hrs === 1 ? '1 hour ago' : `${hrs} hours ago`;
+  return `on ${dShort(ms, tz)}`;
+}
+
+/**
+ * The masthead's one live fact (fresh-eyes-design-review.md item 2): how
+ * fresh the staged pile is, read off the messages already fetched for this
+ * screen — the newest createdAt across every staged group, decisions and
+ * notes alike. No second query.
+ */
+function lastPreparedFact(ob: Outbox, tz: string): string {
+  const stamps = ob.groups.flatMap((g) => g.messages.map((m) => m.createdAt));
+  if (stamps.length === 0) return '';
+  const latest = Math.max(...stamps);
+  return `<p class="livefact">Last prepared ${esc(agoText(latest, Date.now(), tz))}.</p>`;
+}
+
 /* ------------------------------------------------------------------ *
  * One letter
  * ------------------------------------------------------------------ */
@@ -633,6 +661,7 @@ function outboxPage(v: View): string {
       : '<b>Nothing to send</b>') +
     (ev.tzLabel ? `<span class="sep">·</span>${esc(ev.tzLabel)}` : '') +
     '</p></div>' +
+    (ob.staged > 0 ? lastPreparedFact(ob, ev.timezone) : '') +
     (v.note ? noteBox(v.note) : '');
 
   if (ob.staged === 0) {

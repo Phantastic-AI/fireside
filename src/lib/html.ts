@@ -82,14 +82,16 @@ function conciergeMount(
 export function eventNav(slug: string, here: string, callOpen: boolean): string {
   const link = (path: string, label: string) =>
     `<a href="/${slug}${path}"${here === path ? ' aria-current="page"' : ''}>${label}</a>`;
+  // Literal nav, personality kept for section titles and copy (Luna's review,
+  // operator agreed): a rail is scanned, not read, so it says the plain word.
   return (
-    link('', 'The event') +
-    (callOpen ? link('/cfp', 'The call') : '') +
+    link('', 'Event') +
+    (callOpen ? link('/cfp', 'Call for speakers') : '') +
     link('/agenda', 'Agenda') +
     link('/speakers', 'Speakers') +
     link('/my-schedule', 'My schedule') +
-    link('/ask', 'Concierge') +
-    link('/portal', 'Your portal')
+    link('/ask', 'Ask') +
+    link('/portal', 'Portal')
   );
 }
 

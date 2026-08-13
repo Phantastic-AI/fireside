@@ -38,6 +38,7 @@ import { label, FORMAT_KEY, type LabelKey } from '../../lib/labels';
 import {
   agenda,
   eventBySlug,
+  eventDayKey,
   sessionBySlug,
   speakersGallery,
   type Agenda,
@@ -175,6 +176,79 @@ function programLine(event: EventHome, total: number): string {
     `${sessions} to choose from — ${coming}. ` +
     'Star what pulls at you; your list keeps up as the schedule grows.'
   );
+}
+
+/**
+ * The one live fact for the masthead (fresh-eyes review — "make it feel
+ * live"). Before the event: when the program opens. During it: what is
+ * running, or what comes next. Once it has happened, nothing — programLine()
+ * above already carries the past tense, and a stale "now" on a finished
+ * event would be worse than silence. Read straight off the sessions the
+ * agenda query already returned; no second read, no stored clock.
+ *
+ * nowIds/nextIds double as the source for the inline Now/Next tag on the
+ * matching card(s) in the list below, so the masthead line and the card
+ * badge can never disagree about which session is live.
+ *
+ * Concurrent rooms mean "the next session" is sometimes several sessions at
+ * once. Rather than naming one arbitrarily, that case says how many — true
+ * either way, and it still closes on sight (04 taste law 8).
+ */
+type LiveState = { text: string | null; isLive: boolean; nowIds: Set<string>; nextIds: Set<string> };
+
+function liveState(event: EventHome, sessions: AgendaSession[], nowMs: number): LiveState {
+  const none: LiveState = { text: null, isLive: false, nowIds: new Set(), nextIds: new Set() };
+  if (event.lifecycle === 'happened') return none;
+
+  // A cancelled talk is struck through on the program, but it is not
+  // something to call "now" or "next" — the room it was in is free.
+  const live = sessions.filter((s) => !s.cancelled).sort((a, b) => a.startsAt - b.startsAt);
+  const first = live[0];
+  if (!first) return none;
+
+  if (nowMs < first.startsAt) {
+    const day = eventDayKey(first.startsAt, event.timezone);
+    return {
+      ...none,
+      text: `The program opens ${weekdayDate(day, 'long')} at ${timeOfDay(first.startsAt, event.timezone)}.`,
+    };
+  }
+
+  const running = live.filter((s) => nowMs >= s.startsAt && nowMs < s.startsAt + s.minutes * 60_000);
+  if (running.length) {
+    const nowIds = new Set(running.map((s) => s.id));
+    const text =
+      running.length === 1
+        ? `Now: ${running[0]!.title}${running[0]!.roomName ? ` in ${running[0]!.roomName}` : ''}.`
+        : `Now: ${plural(running.length, 'session running', 'sessions running')}.`;
+    return { text, isLive: true, nowIds, nextIds: new Set() };
+  }
+
+  const upcoming = live.filter((s) => s.startsAt > nowMs);
+  const nextAt = upcoming[0]?.startsAt;
+  if (nextAt === undefined) return none;
+  const batch = upcoming.filter((s) => s.startsAt === nextAt);
+  const nextIds = new Set(batch.map((s) => s.id));
+  const minutesUntil = Math.max(1, Math.ceil((nextAt - nowMs) / 60_000));
+  const soon = minutesUntil <= 45;
+  const sameDay = eventDayKey(nextAt, event.timezone) === eventDayKey(nowMs, event.timezone);
+  const when = sameDay
+    ? timeOfDay(nextAt, event.timezone)
+    : `${weekdayDate(eventDayKey(nextAt, event.timezone), 'short')} at ${timeOfDay(nextAt, event.timezone)}`;
+
+  let text: string;
+  if (batch.length === 1) {
+    const s = batch[0]!;
+    const where = s.roomName ? ` in ${s.roomName}` : '';
+    text = soon
+      ? `Next session in ${plural(minutesUntil, 'minute', 'minutes')}.`
+      : `Next: ${s.title}${where}, ${when}.`;
+  } else {
+    text = soon
+      ? `Next: ${batch.length} sessions start in ${plural(minutesUntil, 'minute', 'minutes')}.`
+      : `Next: ${batch.length} sessions start ${sameDay ? 'at ' : ''}${when}.`;
+  }
+  return { text, isLive: false, nowIds: new Set(), nextIds };
 }
 
 /** "A", "A with B", "A with B and C", "A with B, C and D" — the prototype's byline(). */
@@ -398,7 +472,8 @@ function seshCard(
   s: AgendaSession,
   roles: RoleIndex,
   stars: Stars,
-  link: Outbound
+  link: Outbound,
+  tag: 'now' | 'next' | null = null
 ): string {
   const href = s.publicSlug ? esc(link.href(`/${slug}/s/${s.publicSlug}`)) : null;
   const strike = s.cancelled ? ' style="text-decoration:line-through;text-decoration-color:var(--muted-2)"' : '';
@@ -407,11 +482,15 @@ function seshCard(
     : `<span${strike}>${esc(s.title)}</span>`;
   const names = s.speakers.map((p) => p.name);
   const role = roleLine(s.speakers, roles);
+  // Same source of truth as the masthead's one live fact (liveState) — a
+  // session is only ever tagged here because it is the exact session that
+  // fact is talking about.
+  const tagHtml = tag ? `<span class="live-tag ${tag}">${tag === 'now' ? 'Now' : 'Next'}</span>` : '';
 
   const card =
     `<article class="sesh" style="${s.track ? trackStyle(s.track.colour) : ''}">` +
     '<div class="sesh-main">' +
-    `<div class="sesh-when"><span class="time">${esc(timeRange(s.startsAt, s.minutes, timezone))}</span>` +
+    `<div class="sesh-when">${tagHtml}<span class="time">${esc(timeRange(s.startsAt, s.minutes, timezone))}</span>` +
     (s.roomName ? `<span class="room">${esc(s.roomName)}</span>` : '') +
     '</div>' +
     `<h3>${titleHtml}</h3>` +
@@ -469,6 +548,12 @@ function agendaBody(
 ): string {
   const allSessions = ag.days.flatMap((d) => d.slots.flatMap((sl) => sl.sessions));
 
+  // The one live fact (see liveState's own comment) and the per-session tag
+  // it hands to whichever card(s) it is talking about.
+  const ls = liveState(event, allSessions, Date.now());
+  const tagFor = (id: string): 'now' | 'next' | null =>
+    ls.nowIds.has(id) ? 'now' : ls.nextIds.has(id) ? 'next' : null;
+
   const trackList: { slug: string; name: string; colour: string }[] = [];
   const seenTracks = new Set<string>();
   const formatList: { slug: string; name: string }[] = [];
@@ -500,6 +585,9 @@ function agendaBody(
   const chip = (href: string, on: boolean, text: string, extra = '') =>
     `<a class="fchip${extra ? ` ${extra}` : ''}" href="${esc(href)}" aria-pressed="${on}">${text}</a>`;
 
+  const chipRow = (inner: string, extra = '') =>
+    inner ? `<div class="filters scrollx daybar${extra ? ` ${extra}` : ''}">${inner}</div>` : '';
+
   const dayChips =
     chip(hereUrl({ day: null }), !f.day, 'All days') +
     ag.days.map((d) => chip(hereUrl({ day: d.day }), f.day === d.day, esc(weekdayDate(d.day, 'short')))).join('');
@@ -528,6 +616,18 @@ function agendaBody(
       ? chip(hereUrl({ room: null }), !f.room, 'All rooms') +
         roomList.map((r) => chip(hereUrl({ room: roomSlug(r) }), f.room === roomSlug(r), esc(r))).join('')
       : '';
+
+  // Phone composition (fresh-eyes review — "390px as a composition, not a
+  // breakpoint"): on a narrow screen the room becomes the primary way
+  // through the program, not one chip row buried under day/track/format.
+  // Same links as roomChips above; this copy is promoted to the top of the
+  // page and shown only under 720px, where the lower chipRow(roomChips,
+  // 'rooms-desktop') hides so the switcher never appears twice. Picking a
+  // room needs no script — it is a link to this same page with ?room= set,
+  // which the SQL-free keep() below already narrows by.
+  const roomSwitcher = roomChips
+    ? `<div class="room-switch"><p class="kicker">Rooms</p><div class="filters scrollx daybar">${roomChips}</div></div>`
+    : '';
 
   // The search box carries whatever is already narrowed, so typing a word
   // never quietly throws away the day somebody had picked.
@@ -568,7 +668,7 @@ function agendaBody(
     shown += inDay.length;
     listHtml +=
       `<h2 class="dayhead">${esc(weekdayDate(d.day, 'short'))} · ${esc(plural(inDay.length, 'session', 'sessions'))}</h2>` +
-      `<div class="slot">${inDay.map((s) => seshCard(slug, ag.timezone, s, roles, stars, link)).join('')}</div>`;
+      `<div class="slot">${inDay.map((s) => seshCard(slug, ag.timezone, s, roles, stars, link, tagFor(s.id))).join('')}</div>`;
   }
 
   const narrowed = Boolean(f.q || f.day || f.track || f.format || f.room);
@@ -613,8 +713,6 @@ function agendaBody(
     ? `<p class="sub" style="margin-top:6px"><a class="link" href="/${esc(slug)}/agenda.ics">Add to calendar →</a></p>`
     : '';
 
-  const chipRow = (inner: string) => (inner ? `<div class="filters scrollx daybar">${inner}</div>` : '');
-
   // The one line for the other reader on this page: somebody scrolling a
   // program and thinking they have a talk in them too.
   const pitchLine =
@@ -627,13 +725,15 @@ function agendaBody(
     `<h1 class="display">${esc(event.name)}</h1>` +
     `<p class="sub" style="margin-top:8px">${esc(headLine)}</p>` +
     (allSessions.length ? `<p class="sub">${esc(mastheadLine)}</p>` : '') +
+    (ls.text ? `<p class="live-fact${ls.isLive ? ' is-live' : ''}">${esc(ls.text)}</p>` : '') +
     icsLink +
     pitchLine +
+    roomSwitcher +
     (allSessions.length ? searchForm : '') +
     chipRow(dayChips) +
     chipRow(trackChips) +
     chipRow(formatChips) +
-    chipRow(roomChips) +
+    chipRow(roomChips, 'rooms-desktop') +
     resultLine;
 
   // Embed mirrors the prototype: day tabs are dropped, because an embedded
@@ -668,8 +768,10 @@ function agendaBody(
 
   // data-stars is the island's whole handshake: the event slug it keys the
   // browser's list by. It is written only when the island is coming.
+  // room-mode marks a single room's day as one time-ordered column — the
+  // phone composition's cue for the time-rail rule in onstage.css.
   return (
-    `<div class="wrap"${stars.kind === 'local' ? ` data-stars="${esc(slug)}"` : ''} style="padding-top:${f.embed ? '8px' : '44px'}">` +
+    `<div class="wrap${f.room ? ' room-mode' : ''}"${stars.kind === 'local' ? ` data-stars="${esc(slug)}"` : ''} style="padding-top:${f.embed ? '8px' : '44px'}">` +
     (f.embed ? embedBar : head) +
     listHtml +
     starBar +

@@ -36,6 +36,24 @@
 .crumb a{color:var(--ember);text-decoration:none}
 .crumb a:hover{text-decoration:underline}
 
+/* ---------- the masthead's one live fact (fresh-eyes-design-review.md
+   item 2) — a quiet sentence, not a card; the serif marks it as its own
+   small register, distinct from the plain-sans counts line above it. ---------- */
+.livefact{font-family:var(--serif);font-size:15.5px;color:var(--ink-soft);
+  margin-top:8px;font-variant-numeric:tabular-nums}
+
+/* ---------- reviewer cards: the ≤720px composition for "who reads what"
+   (fresh-eyes-design-review.md item 1). Hidden by default — table.t stays
+   the desktop read; the phone media query below swaps which one shows. ---------- */
+.rteam-cards{display:none;gap:12px}
+.rcard-nums{display:flex;gap:20px;margin-top:10px}
+.rcard-num{display:flex;flex-direction:column;gap:1px}
+.rcard-num b{font-family:var(--serif);font-size:21px;font-weight:600;line-height:1.15;
+  font-variant-numeric:tabular-nums}
+.rcard-num span{font-size:12px;color:var(--muted)}
+.rcard-waiting{font-size:13px;color:var(--ink-soft);margin-top:8px}
+.rcard-waiting b{font-weight:640}
+
 /* ---------- attention card ---------- */
 .attn{display:flex;gap:16px;align-items:center;flex-wrap:wrap;background:var(--highlight);
   border:1px solid #E7D98A;border-radius:var(--r);padding:16px 18px}
@@ -174,6 +192,11 @@ table.grid td.timecell{border-left:0;color:var(--muted);font-variant-numeric:tab
   .bs-me span:not(:first-child){display:none}
   .bs-nav{top:0}
   .bs-nav a,.bs-nav span{padding:12px 11px}
+
+  /* --- reviews: reviewer cards replace the "who reads what" table
+     (fresh-eyes-design-review.md item 1) --- */
+  .rteam-table{display:none}
+  .rteam-cards{display:flex;flex-direction:column}
 
   /* --- organizer lists --- */
   .searchbar{flex-direction:column;align-items:stretch}

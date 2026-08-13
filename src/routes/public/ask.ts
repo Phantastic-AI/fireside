@@ -209,16 +209,20 @@ function chipRow(ev: EventHome, intents: IntentChip[], lead?: string): string {
   return chips ? `<div class="cc-chips">${chips}</div>` : '';
 }
 
+// Three strong, situational prompts, not a wall of pills (Luna's review): each
+// is a real thing a person would ask, and one the concierge answers off the
+// program. The instant chips beside them already carry the standing-scoped ones.
 function starters(ev: EventHome): string[] {
   const out: string[] = [];
   if (ev.lifecycle === 'open') out.push('When does the call for speakers close?');
   if (ev.agendaPublished) {
     out.push('What should I see on the first day?');
-    out.push("Which talks are good if I'm new to this?");
+    out.push('A practical session right after lunch?');
+    out.push("Good talks if I'm new to this?");
   } else if (ev.counts.speakers > 0) {
     out.push('Who has been announced so far?');
   }
-  out.push('Where is it, and what time does each day start?');
+  out.push('Where is it, and when does each day start?');
   return out.slice(0, 3);
 }
 

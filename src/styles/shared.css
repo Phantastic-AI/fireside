@@ -373,6 +373,12 @@ table.t tbody tr:hover{background:#FCFAF6}
   /* The corner button must not stand on a form's last row: pages that carry
      it get room under their content to scroll past it. */
   body:has(#concierge){padding-bottom:72px}
+  /* A sticky bulk-action bar (the pile's multi-select bar) pins to the very
+     bottom of the viewport, same as the concierge FAB — so on a page that
+     carries both, the bar keeps its own right-hand lane clear of the bubble's
+     footprint (50px circle + 10px inset, plus a little air) rather than
+     wrapping a button or the "outbox" link underneath it. */
+  body:has(#concierge) .bulkbar{padding-right:84px}
   body.cc-open #chrome,body.cc-open .cc-fab{display:none}
   body.cc-open #concierge{right:8px;left:8px;bottom:8px}
   .cc-panel{position:fixed;left:8px;right:8px;bottom:8px;width:auto;max-width:none;

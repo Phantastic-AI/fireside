@@ -392,13 +392,14 @@ function genericCard(ev: EventCard): string {
  * ------------------------------------------------------------------ */
 
 export function homePage(signedIn = false, events: EventCard[] = []): string {
+  // One voice: the sections of the page, and the way in. "Walk one" is not a
+  // nav destination — it is the hero's invitation and the live section's own
+  // heading (Luna's review).
   const nav =
     '<a href="#program">Program</a>' +
     '<a href="#team">Team</a>' +
     '<a href="#attendees">Attendees</a>' +
     '<a href="#mechanics">How it works</a>' +
-    '<a href="#ask-anywhere">Concierge</a>' +
-    '<a href="#live">Walk one</a>' +
     (signedIn
       ? '<a href="/admin">Backstage</a><a href="/sign-out">Sign out</a>'
       : '<a href="/sign-in">Sign in</a>');
@@ -418,6 +419,12 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     '<a class="btn btn-lg" href="#program">See the program desk</a>' +
     (signedIn ? '<a class="btn btn-lg" href="/admin">Your backstage</a>' : '') +
     '</div>' +
+    // Four things that are true of the software and rare together, said plainly
+    // (the tight feature strip Aditya liked on untitledconference.com).
+    '<ul class="mkt-feat">' +
+    '<li>Free and open source</li><li>Self-hostable, one Worker</li>' +
+    '<li>No attendee accounts</li><li>API and MCP built in</li>' +
+    '</ul>' +
     '</div>' +
     vgPulse() +
     '</div>' +

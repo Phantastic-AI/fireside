@@ -30,7 +30,7 @@ import {
   type BuilderSession,
   type BuilderWaiting,
 } from '../../queries/builder';
-import { initialsOf } from '../../queries/public';
+import { eventDayKey, initialsOf } from '../../queries/public';
 import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import {
@@ -488,6 +488,38 @@ function headline(view: Builder): string {
   return parts.map((p) => esc(p)).join('<span class="sep">·</span>');
 }
 
+/**
+ * The masthead's one live fact (fresh-eyes-design-review.md item 2): when the
+ * day on screen is today, who runs next; otherwise, how many accepted talks
+ * still have nowhere to be. Both read off `view`, already fetched for this
+ * render — no second query. "Now" only means anything when the grid on
+ * screen is today's, because `view.placed` is scoped to the one day being
+ * shown, not the whole event.
+ */
+function liveFact(view: Builder): string {
+  const nowMs = Date.now();
+  if (view.day === eventDayKey(nowMs, view.timezone)) {
+    const next = view.placed
+      .filter((s) => !s.cancelled && s.startsAt + s.minutes * 60_000 > nowMs)
+      .sort((a, b) => a.startsAt - b.startsAt)[0];
+    if (next) {
+      const room = esc(next.roomName ?? 'no room set');
+      const said =
+        next.startsAt <= nowMs
+          ? `On now — ${esc(next.title)}, ${room}.`
+          : `Next — ${esc(next.title)}, ${esc(timeOfDay(next.startsAt, view.timezone))} in ${room}.`;
+      return `<p class="livefact">${said}</p>`;
+    }
+  }
+  const n = view.counts.waiting;
+  if (n === 0) return '';
+  const said =
+    n === 1
+      ? 'One accepted talk still has nowhere to be.'
+      : `${n} accepted talks still have nowhere to be.`;
+  return `<p class="livefact">${esc(said)}</p>`;
+}
+
 function publishButton(view: Builder): string {
   if (!view.canEdit) return '';
   if (view.agendaPublished) {
@@ -527,7 +559,9 @@ function builderPage(view: Builder, principal: Principal, q: Params): string {
   const body =
     '<div style="padding:24px 0 0;display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">' +
     '<div><h1 class="display">Agenda</h1>' +
-    `<p class="counts">${headline(view)}</p></div>` +
+    `<p class="counts">${headline(view)}</p>` +
+    liveFact(view) +
+    '</div>' +
     `<div class="btnrow" style="margin-left:auto">${publishButton(view)}</div>` +
     '</div>' +
     `<div class="filters daybar" style="margin-top:14px">${dayTabs}` +

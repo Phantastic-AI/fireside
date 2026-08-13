@@ -826,59 +826,104 @@ const STANDING: Record<string, string> = {
   reviewer: 'Reviewer',
 };
 
-/** One reader's line: what they are carrying, and how far in they are. */
-function teamRow(r: TeamReader, ev: ReviewEvent, nowMs: number): string {
-  // Two numbers where there used to be one. A reader six proposals into an
-  // evening and a reader who has recused herself from six are both "six
-  // finished", and telling them apart is the difference between a chair who
-  // chases the right person and one who chases the wrong one.
-  const progress =
-    r.assigned === 0
+/**
+ * What a reader is carrying and how far in they are. Two numbers where there
+ * used to be one: a reader six proposals into an evening and a reader who has
+ * recused herself from six are both "six finished", and telling them apart is
+ * the difference between a chair who chases the right person and one who
+ * chases the wrong one.
+ *
+ * Shared by teamRow (the table, ≥720px) and teamCard (the ≤720px composition
+ * fresh-eyes-design-review.md item 1 asks for) so the two breakpoints can
+ * never say a different thing about the same reader.
+ */
+function progressText(r: TeamReader): string {
+  return (
+    (r.assigned === 0
       ? `<span class="sub">Nothing handed to ${r.isYou ? 'you' : 'them'} yet.</span>`
-      : (r.recused > 0
-          ? `${esc(num(r.completed))} scored<span class="sep"> · </span>` +
-            `${esc(num(r.recused))} stepped aside`
-          : esc(say('review.progress', { n: num(r.completed), m: num(r.assigned) }))) +
-        (r.started > 0
-          ? `<span class="sep"> · </span><span class="sub">${esc(num(r.started))} started</span>`
-          : '');
+      : r.recused > 0
+        ? `${esc(num(r.completed))} scored<span class="sep"> · </span>` +
+          `${esc(num(r.recused))} stepped aside`
+        : esc(say('review.progress', { n: num(r.completed), m: num(r.assigned) }))) +
+    (r.started > 0
+      ? `<span class="sep"> · </span><span class="sub">${esc(num(r.started))} started</span>`
+      : '')
+  );
+}
 
-  // Only the untouched ones can come back, and the button says how many so the
-  // number she reads is the number the guard checks.
-  const back =
-    r.untouched > 0
-      ? `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/take-back">` +
-        `<input type="hidden" name="who" value="${esc(r.personId)}">` +
-        `<input type="hidden" name="expected" value="${r.untouched}">` +
-        `<button class="btn btn-sm" type="submit">Retract ${esc(num(r.untouched))} unopened</button>` +
-        '</form>'
-      : r.assigned > 0
-        ? `<span class="sub">Every one of ${r.isYou ? 'yours' : 'theirs'} has been written in.</span>`
-        : '';
+/** Only the untouched ones can come back, and the button says how many so the
+ *  number she reads is the number the guard checks. */
+function retractForm(ev: ReviewEvent, r: TeamReader): string {
+  return r.untouched > 0
+    ? `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/take-back">` +
+      `<input type="hidden" name="who" value="${esc(r.personId)}">` +
+      `<input type="hidden" name="expected" value="${r.untouched}">` +
+      `<button class="btn btn-sm" type="submit">Retract ${esc(num(r.untouched))} unopened</button>` +
+      '</form>'
+    : r.assigned > 0
+      ? `<span class="sub">Every one of ${r.isYou ? 'yours' : 'theirs'} has been written in.</span>`
+      : '';
+}
 
-  // A nudge is for somebody who still owes the room something. Nudging
-  // yourself is a note to yourself, and nudging a person who is finished is
-  // noise, so neither turns up as a button.
+/** A nudge is for somebody who still owes the room something. Nudging
+ *  yourself is a note to yourself, and nudging a person who is finished is
+ *  noise, so neither turns up as a button. */
+function nudgeControl(ev: ReviewEvent, r: TeamReader, nowMs: number): string {
   const open = r.started + r.untouched;
   const recent = r.nudgedAt !== null && nowMs - r.nudgedAt < NUDGE_HOURS * 3_600_000;
-  const nudge =
-    open === 0 || r.isYou
-      ? ''
-      : recent
-        ? `<span class="sub">Nudged ${esc(onDay(r.nudgedAt ?? nowMs, ev.timezone))}</span>`
-        : `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/nudge">` +
-          `<input type="hidden" name="who" value="${esc(r.personId)}">` +
-          `<button class="btn btn-sm" type="submit">Nudge</button></form>`;
+  return open === 0 || r.isYou
+    ? ''
+    : recent
+      ? `<span class="sub">Nudged ${esc(onDay(r.nudgedAt ?? nowMs, ev.timezone))}</span>`
+      : `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/nudge">` +
+        `<input type="hidden" name="who" value="${esc(r.personId)}">` +
+        `<button class="btn btn-sm" type="submit">Nudge</button></form>`;
+}
 
+/** One reader's line: what they are carrying, and how far in they are. */
+function teamRow(r: TeamReader, ev: ReviewEvent, nowMs: number): string {
   return (
     '<tr>' +
     `<td><div class="t-name">${esc(r.name)}${r.isYou ? '<span class="sub"> · you</span>' : ''}</div>` +
     `<div class="t-sub">${esc(STANDING[r.standing] ?? r.standing)}</div></td>` +
     `<td style="font-variant-numeric:tabular-nums">${esc(num(r.assigned))}</td>` +
-    `<td>${progress}</td>` +
-    `<td>${nudge}</td>` +
-    `<td>${back}</td>` +
+    `<td>${progressText(r)}</td>` +
+    `<td>${nudgeControl(ev, r, nowMs)}</td>` +
+    `<td>${retractForm(ev, r)}</td>` +
     '</tr>'
+  );
+}
+
+/**
+ * The same reader, as a card — the ≤720px composition fresh-eyes-design-
+ * review.md item 1 asks for: a five-column table has nowhere to go on a
+ * phone, so a phone gets one card per reader with the same three counts and
+ * the same two acts, never a sixth column squeezed smaller. It calls the
+ * same three functions teamRow does, so the two breakpoints can never drift.
+ *
+ * "Waiting on {name}" (the taste rules' team-handoff language) only prints
+ * when it is true of real data: a reader who still has something started or
+ * unopened is, in fact, who the chair is waiting on. It never prints for the
+ * chair's own row.
+ */
+function teamCard(r: TeamReader, ev: ReviewEvent, nowMs: number): string {
+  const waitingOn =
+    !r.isYou && r.started + r.untouched > 0
+      ? `<p class="rcard-waiting">Waiting on <b>${esc(r.name)}</b>.</p>`
+      : '';
+  return (
+    '<div class="card card-pad rcard">' +
+    `<div class="t-name">${esc(r.name)}${r.isYou ? '<span class="sub"> · you</span>' : ''}</div>` +
+    `<div class="t-sub">${esc(STANDING[r.standing] ?? r.standing)}</div>` +
+    '<div class="rcard-nums">' +
+    `<div class="rcard-num"><b>${esc(num(r.assigned))}</b><span>holding</span></div>` +
+    `<div class="rcard-num"><b>${esc(num(r.completed))}</b><span>scored</span></div>` +
+    `<div class="rcard-num"><b>${esc(num(r.untouched))}</b><span>unopened</span></div>` +
+    '</div>' +
+    `<p class="sub" style="margin-top:8px">${progressText(r)}</p>` +
+    waitingOn +
+    `<div class="btnrow" style="margin-top:10px">${nudgeControl(ev, r, nowMs)}${retractForm(ev, r)}</div>` +
+    '</div>'
   );
 }
 
@@ -1059,11 +1104,14 @@ function whoReadsWhat(
   return (
     '<section class="sec" id="team">' +
     heading +
-    '<div class="tablewrap" style="margin-top:14px"><table class="t"><thead><tr>' +
+    '<div class="tablewrap rteam-table" style="margin-top:14px"><table class="t"><thead><tr>' +
     '<th>Reader</th><th>Holding</th><th>Progress</th><th>Nudge</th><th>Retract</th>' +
     '</tr></thead><tbody>' +
     team.map((r) => teamRow(r, ev, nowMs)).join('') +
     '</tbody></table></div>' +
+    `<div class="rteam-cards" style="margin-top:14px">${team
+      .map((r) => teamCard(r, ev, nowMs))
+      .join('')}</div>` +
     newArrivals(ev, standing) +
     (pile > 0
       ? handOutForm(ev, team, pile)
@@ -1134,6 +1182,26 @@ function pager(ev: ReviewEvent, q: ReviewQueue, v: View): string {
   );
 }
 
+/**
+ * The masthead's one live fact (fresh-eyes-design-review.md item 2): how many
+ * undecided proposals nobody has been handed yet, read straight off the round
+ * standing already fetched for "Who reads what" below — the same number
+ * newArrivals() acts on, no second query. A reviewer's own screen has no
+ * RoundStanding to read (it is scoped to one person's list, not the pile), so
+ * there is nothing honest to say there, and this renders nothing.
+ */
+function readerFact(standing: RoundStanding | null): string {
+  if (!standing) return '';
+  const n = standing.unassigned;
+  const said =
+    n === 0
+      ? 'Every undecided proposal has a reader.'
+      : n === 1
+        ? 'One proposal still needs a reader.'
+        : `${num(n)} proposals still need a reader.`;
+  return `<p class="livefact">${esc(said)}</p>`;
+}
+
 function queuePage(
   principal: Principal,
   ev: ReviewEvent,
@@ -1201,7 +1269,9 @@ function queuePage(
     const head =
       '<div style="padding:26px 0 0">' +
       '<h1 class="display" style="font-size:34px">Reviews</h1>' +
-      `<p class="counts">${round}</p></div>` +
+      `<p class="counts">${round}</p>` +
+      readerFact(opts.standing) +
+      '</div>' +
       said;
 
     // Three different silences, and they are not the same news. The chair's
@@ -1310,6 +1380,7 @@ function queuePage(
       ? `<span class="sep">·</span>${esc(`${num(q.recused)} stepped aside`)}`
       : '') +
     `<span class="sep">·</span>${round}</p>` +
+    readerFact(opts.standing) +
     whose +
     `<p class="hint">${esc(say('review.blind'))}</p>` +
     '</div>' +
