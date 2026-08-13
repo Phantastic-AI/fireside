@@ -123,6 +123,17 @@ function sentences(say: string[]): string {
 /** What the reader sees after asking. `data-ask-answer` is what the island
  *  appends; the whole block is also what a JavaScript-free page renders. */
 function answerBlock(result: AskResult, ev: EventHome): string {
+  if (result.kind === 'busy') {
+    // The model could not be reached — a transient, not a verdict on the
+    // question. Say so honestly, and point at the pages that always answer.
+    return (
+      '<div class="cc-fs" data-ask-answer>' +
+      '<p class="cc-lead">I could not reach the program just now — that is on me, not your question. ' +
+      'Try again in a moment, or the agenda and the speakers page have it.</p>' +
+      doorRow(result.doors.length ? result.doors : plainDoors(ev, ev.agendaPublished)) +
+      '</div>'
+    );
+  }
   if (result.kind === 'unsure') {
     return (
       '<div class="cc-fs" data-ask-answer>' +

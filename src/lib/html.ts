@@ -108,6 +108,23 @@ export function eventNav(slug: string, here: string, callOpen: boolean): string 
   );
 }
 
+/**
+ * The masthead's link cluster, rendered twice: once as the ordinary inline
+ * nav a wide screen shows, once folded behind a "Menu" disclosure that a
+ * narrow one shows instead — see onstage.css's ~720px block for which half
+ * is visible where. `<details>` toggles it with no script, the same
+ * convention as the portal's task disclosures (onstage.css `.task`). A
+ * masthead assembled by hand outside `onstageShell` (the marketing home)
+ * keeps its own plain `<nav>` and never sees this split.
+ */
+function navFold(links: string): string {
+  return (
+    `<nav class="mast-links">${links}</nav>` +
+    '<details class="mast-fold"><summary>Menu</summary>' +
+    `<nav class="mast-fold-links">${links}</nav></details>`
+  );
+}
+
 const BS_NAV: [path: string, label: string][] = [
   ['', 'Program'],
   ['/submissions', 'Proposals'],
@@ -189,7 +206,7 @@ export function onstageShell(
 ): string {
   return (
     '<div class="stage onstage">' +
-    `<header class="mast"><div class="wrap mast-in">${brand()}<nav>${nav}</nav></div></header>` +
+    `<header class="mast"><div class="wrap mast-in">${brand()}${navFold(nav)}</div></header>` +
     `<main>${body}</main>` +
     '<footer class="foot"><div class="wrap foot-in">' +
     `<span class="fname">${NAME}</span>` +

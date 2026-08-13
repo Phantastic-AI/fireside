@@ -386,10 +386,21 @@
   .mkt-ev{padding:22px}
   .mkt-ev .more{gap:12px 18px;font-size:15px}
   .mkt-try{padding:20px}
-  /* the shared masthead pins its nav right, which puts the first links out of
-     reach once they overflow. On a page with five of them, start left and let
-     the rail scroll. */
-  .mkt-mast nav{justify-content:flex-start}
+  /* the marketing home hand-rolls its own header rather than calling
+     onstageShell(), so it never gets the .mast-fold "Menu" disclosure (see
+     onstage.css) — it keeps the shared masthead's plain, sideways-scrolling
+     fallback nav, which hid "Sign in" (the last link) off the right edge on
+     a page with five of them. Wrap the links onto their own row instead:
+     nothing sits off screen, and the header grows by one line rather than
+     hiding anything behind a scroll. */
+  .mkt-mast .mast-in{height:auto;flex-wrap:wrap;row-gap:6px;padding:10px 0}
+  /* .mast.mkt-mast .mast-in nav (rather than the shorter ".mkt-mast nav")
+     is load-bearing: onstage.css's fallback rule (".mast nav:not(.mast-
+     fold-links)") carries two classes' worth of specificity to a plain
+     ".mkt-mast nav"'s one, so the shorter selector would lose outright —
+     file order being later in the bundle is not enough to save it. */
+  .mast.mkt-mast .mast-in nav{flex:1 1 100%;margin-left:0;overflow-x:visible;
+    flex-wrap:wrap;justify-content:flex-start;gap:2px 4px}
   .mkt-run{grid-template-columns:repeat(2,1fr);gap:0 14px}
   .mkt-cols .mkt-vg{justify-self:stretch}
 }

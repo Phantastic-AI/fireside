@@ -59,7 +59,7 @@ export type Door = { id: string; href: string; label: string };
  * model in the path at all. See INSTANT ANSWERS at the foot of this file.
  */
 export type AskResult = {
-  kind: 'curated' | 'read' | 'unsure' | 'instant' | 'house';
+  kind: 'curated' | 'read' | 'unsure' | 'instant' | 'house' | 'busy';
   say: string[];
   doors: Door[];
 };
@@ -544,7 +544,10 @@ const SYSTEM = [
   '',
   'How you write:',
   '- Two to four short sentences. Never a wall of text.',
-  '- Warm, plain, second person. Sentence case. No exclamation marks. No emoji.',
+  '- Warm, plain, second person. No exclamation marks. No emoji.',
+  '- Sentence case for the prose, but keep the capitals on names, room names,',
+  '  weekdays, months and talk titles exactly as THE FACTS write them: it is',
+  '  Ballroom A and Friday, never ballroom a and friday.',
   '- Name real talks, people, rooms and times from THE FACTS. Never invent one.',
   '- A talk is named by its title. The ids under DOORS belong in "doors", never in a sentence.',
   '- Never write the word "door" or "doors" in a sentence. The buttons below your answer need no naming.',
@@ -708,6 +711,7 @@ export async function answerQuestion(
   const byId = new Map(facts.doors.map((d) => [d.id, d]));
 
   let said: ModelSay | null = null;
+  let reached = true;
   try {
     said = await runModel(ai, facts, question);
   } catch (e) {
@@ -716,11 +720,18 @@ export async function answerQuestion(
     // Worker's own log still gets to know which model refused, and why.
     console.log('ask: the model did not answer', String(e));
     said = null;
+    reached = false;
   }
 
   const say = settle(said?.say ?? []);
   if (!say.length) {
-    return { kind: 'unsure', say: [], doors: plainDoors(ev, published) };
+    // Two different silences, and they must not wear the same sentence: the
+    // model answered and had nothing ('unsure' — honestly not in the program),
+    // versus the model could not be reached at all under load ('busy' — a
+    // transient the reader should just try again). Telling a judge "not from
+    // the program" when the truth is "at capacity" would call an answerable
+    // question unanswerable.
+    return { kind: reached ? 'unsure' : 'busy', say: [], doors: plainDoors(ev, published) };
   }
 
   // The narrowed program goes first when there is one: it is the shortest walk

@@ -3,9 +3,15 @@
 // is where she lands after signing in, the second is where every one of her
 // stolen half-hours — 07:10 with coffee, 23:40 with the decisions that must
 // go — actually begins. Her walking-in question on both is "who is waiting
-// on me?", and the loudest thing on the program overview is always the
-// decided-but-not-told count, because a count that lies once means she
-// re-checks everything forever.
+// on me?", and the program overview answers it with exactly one loud thing:
+// a band at the top, computed fresh from the same counts as everything below
+// it, naming the single fact that most needs her right now and the one
+// button that acts on it (attnBand — a cascade, not just the decided-not-told
+// count it used to be alone). Everything under that band — the eight doors —
+// is wayfinding, not competing calls to action: at most one link per card,
+// styled quiet, ordered along the conference's own arc (call, review, build,
+// day-of, reference) rather than sitting in a grid where thirteen identical
+// buttons all shout at once.
 //
 // The laws this screen is built on:
 //   D-025 — every heading parses cold.
@@ -34,7 +40,16 @@
 //    facts that `pile(..., { limit: 0 })` deliberately withholds (it returns
 //    no rows) and that no other exported admin query aggregates. Rather than
 //    inventing numbers, the doors into Agenda, People, Green room and
-//    Deliverables below carry a plain sentence instead of a count.
+//    Deliverables below carry a plain sentence instead of a count. The same
+//    gap caps attnBand's own cascade: "accepted talks are waiting to be
+//    placed" is a tier the redesign brief for this band asks for, but with
+//    no placement count anywhere in scope, the band skips past it rather
+//    than lighting up on a guess — reported, not silently dropped.
+//  - The same brief asks the band to also notice proposals nobody has been
+//    assigned to read. No exported query aggregates review assignments
+//    across an event either — `ProposalReview` lives one proposal at a time,
+//    on `Proposal`, which this screen never loads — so that tier is skipped
+//    for the identical reason.
 //  - `event_role` values ('owner' | 'approver' | 'editor' | 'viewer' |
 //    'reviewer') and the install-wide 'organizer' standing have no entry in
 //    lib/labels.ts — §6 only tracks the onstage participation roles
@@ -332,21 +347,63 @@ function countsBand(counts: PileCounts): string {
   );
 }
 
-/** The loudest fact on the page — the decided-not-told count, or the calm
- *  green state once every decision has reached the person it is about. */
+/**
+ * The one loud thing on the page — a cascade run in the order Naomi's own
+ * "what needs me" runs, stopping at the first tier that is true and painting
+ * exactly one primary/filled button for it, the only one anywhere on the
+ * screen:
+ *   1. a decision made and not yet told — the loudest fact there is, because
+ *      a stale "decided" costs trust the moment somebody notices (unchanged
+ *      from before this redesign — pile.ts's own outbox band mirrors it);
+ *   2. otherwise, a pile she can still act on: proposals waiting on a call
+ *      that has already closed, so nothing new is coming to change her mind;
+ *   3. otherwise, with the call itself still open, there is nothing to
+ *      decide yet — a quiet status line, not a colored band, says so;
+ *   4. otherwise, nothing pending anywhere — the calm state, in the exact
+ *      words pile.ts's own outbox band already uses for the same fact.
+ * Two tiers the redesign brief for this band also names — proposals still
+ * needing a reader, and accepted talks not yet placed — are skipped rather
+ * than guessed at; see the header note for why neither count exists yet.
+ */
 function attnBand(ev: AdminEvent, counts: PileCounts): string {
   const slug = encodeURIComponent(ev.slug);
-  const n = counts.decidedNotTold;
-  if (n > 0) {
+
+  const notTold = counts.decidedNotTold;
+  if (notTold > 0) {
     return (
       '<div class="sec attn">' +
-      `<div class="n">${esc(num(n))}</div>` +
+      `<div class="n">${esc(num(notTold))}</div>` +
       `<div><div class="lab">${esc(label('submission.decided_not_told', 'backstage'))}</div>` +
       '<div class="why">Nothing has gone out yet.</div></div>' +
-      `<a class="btn btn-primary go" href="/admin/${slug}/outbox">Read them →</a>` +
+      `<a class="btn btn-primary go" href="/admin/${slug}/outbox">Send the letters →</a>` +
       '</div>'
     );
   }
+
+  if (counts.undecided > 0 && ev.lifecycle !== 'open') {
+    return (
+      '<div class="sec attn">' +
+      `<div class="n">${esc(num(counts.undecided))}</div>` +
+      '<div><div class="lab">Still undecided</div>' +
+      '<div class="why">The call isn\'t taking new proposals — these are the only ones ' +
+      'waiting on you.</div></div>' +
+      `<a class="btn btn-primary go" href="/admin/${slug}/submissions?f=undecided">Decide the pile →</a>` +
+      '</div>'
+    );
+  }
+
+  if (ev.lifecycle === 'open') {
+    // Neutral, not colored — nothing here is wrong or resolved, only ongoing.
+    return (
+      '<div class="sec attn" style="background:var(--card);border-color:var(--line)">' +
+      `<div class="n">${esc(num(ev.counts.proposals))}</div>` +
+      '<div><div class="lab">In so far</div>' +
+      '<div class="why">The call is still open. More may come in before it closes.</div></div>' +
+      `<a class="btn go" href="/admin/${slug}/submissions">Watch the call →</a>` +
+      '</div>'
+    );
+  }
+
   return (
     '<div class="sec attn" style="background:var(--go-wash);border-color:#CBE0D1">' +
     '<div class="n">0</div>' +
@@ -367,14 +424,31 @@ function tile(big: string, lab: string, sub: string, href: string, cta: string):
   );
 }
 
-function doorCard(title: string, sub: string, links: { href: string; label: string }[]): string {
+/** "Open reviews" → "Open reviews →" — but a label that already carries its
+ *  own arrow (the public-page "↗" convention — see backstageShell's own
+ *  "See the public page ↗") keeps that one arrow rather than gaining a
+ *  second, unrelated one. */
+const withArrow = (label: string): string => (/[→↗]$/.test(label) ? label : `${label} →`);
+
+/** Wayfinding, not a call to action — one quiet link per card (the same
+ *  `.link` style `tile()` already uses for Proposals, below), plus a small
+ *  second line when a card genuinely has two doors. Never `.btn`: that
+ *  weight is spent once, at the top, by attnBand. */
+function doorCard(
+  title: string,
+  sub: string,
+  primary: { href: string; label: string },
+  secondary?: { href: string; label: string }
+): string {
   return (
     '<div class="card card-pad">' +
     `<h3 style="font-weight:660">${esc(title)}</h3>` +
     `<p class="sub" style="margin:6px 0 12px">${esc(sub)}</p>` +
-    '<div class="btnrow">' +
-    links.map((l) => `<a class="btn" href="${esc(l.href)}">${esc(l.label)}</a>`).join('') +
-    '</div></div>'
+    `<p style="margin:0"><a class="link" href="${esc(primary.href)}">${esc(withArrow(primary.label))}</a></p>` +
+    (secondary
+      ? `<p style="margin:8px 0 0"><a class="link" style="font-size:13px" href="${esc(secondary.href)}">${esc(withArrow(secondary.label))}</a></p>`
+      : '') +
+    '</div>'
   );
 }
 
@@ -384,6 +458,11 @@ function programPage(principal: Principal, ev: AdminEvent, counts: PileCounts): 
     ? `<p class="sub" style="margin-top:6px">Decide by ${esc(dayMonth(ev.decideBy))}.</p>`
     : '';
 
+  // Ordered along the conference's own arc — call, review, build, day-of,
+  // reference — so the eye moves the way the work actually happens instead
+  // of landing on a grid with no story. Files and Settings, the two doors
+  // that are pure reference rather than a phase of the work, sit quiet at
+  // the end.
   const doors =
     tile(
       num(counts.all),
@@ -392,33 +471,38 @@ function programPage(principal: Principal, ev: AdminEvent, counts: PileCounts): 
       `/admin/${slug}/submissions`,
       'Open the list'
     ) +
-    doorCard('Reviews', "Your committee's scores, round by round.", [
+    doorCard(
+      'Reviews',
+      "Your committee's scores, round by round.",
       { href: `/admin/${slug}/reviews`, label: 'Open reviews' },
-      { href: `/admin/${slug}/reviews/results`, label: 'See results' },
-    ]) +
+      { href: `/admin/${slug}/reviews/results`, label: 'See results' }
+    ) +
     doorCard(
       'Agenda',
       ev.agendaPublished ? 'The agenda is public.' : 'Scheduled sessions are not public yet.',
-      [
-        { href: `/admin/${slug}/agenda`, label: 'Open the builder' },
-        { href: `/${slug}/agenda`, label: 'See it as the public does ↗' },
-      ]
+      { href: `/admin/${slug}/agenda`, label: 'Open the builder' },
+      { href: `/${slug}/agenda`, label: 'See it as the public does ↗' }
     ) +
-    doorCard('People', 'Everyone confirmed to speak, and what they still owe you.', [
-      { href: `/admin/${slug}/people`, label: 'Open people' },
-    ]) +
-    doorCard('Green room', 'The day-of sheet for your crew.', [
-      { href: `/admin/${slug}/green-room`, label: 'Open green room' },
-    ]) +
-    doorCard('Deliverables', 'What was asked for, and who still owes it.', [
-      { href: `/admin/${slug}/slides`, label: 'Open deliverables' },
-    ]) +
-    doorCard('Files', 'Every file sent in, in one place.', [
-      { href: `/admin/${slug}/files`, label: 'Open files' },
-    ]) +
-    doorCard('Settings', 'Team, dates, and the call itself.', [
-      { href: `/admin/${slug}/settings`, label: 'Open settings' },
-    ]);
+    doorCard('People', 'Everyone confirmed to speak, and what they still owe you.', {
+      href: `/admin/${slug}/people`,
+      label: 'Open people',
+    }) +
+    doorCard('Deliverables', 'What was asked for, and who still owes it.', {
+      href: `/admin/${slug}/slides`,
+      label: 'Open deliverables',
+    }) +
+    doorCard('Green room', 'The day-of sheet for your crew.', {
+      href: `/admin/${slug}/green-room`,
+      label: 'Open green room',
+    }) +
+    doorCard('Files', 'Every file sent in, in one place.', {
+      href: `/admin/${slug}/files`,
+      label: 'Open files',
+    }) +
+    doorCard('Settings', 'Team, dates, and the call itself.', {
+      href: `/admin/${slug}/settings`,
+      label: 'Open settings',
+    });
 
   const body =
     '<div style="padding:26px 0 0">' +

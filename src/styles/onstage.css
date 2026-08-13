@@ -20,6 +20,10 @@
 .mast nav a:hover{background:var(--paper-deep)}
 .mast nav a[aria-current]{color:var(--ember);font-weight:620;background:var(--ember-wash)}
 
+/* the folded twin of the nav above (see html.ts navFold()) — inert above
+   ~720px, where the plain .mast-links copy is the one that shows */
+.mast-fold{display:none}
+
 /* ---------- mirror grid (anti-features) — pairs align, row by row ---------- */
 .mirror{display:grid;grid-template-columns:1fr 1fr;gap:0 30px;border-top:1px solid var(--line);margin-top:8px}
 .mirror h3{font-size:14px;letter-spacing:.03em;padding:16px 0 10px;font-weight:700;align-self:end}
@@ -136,12 +140,42 @@
   .mi.proud{border-top:0;padding:6px 0 16px 26px;color:var(--muted)}
   .mi.proud::before{top:6px}
 
-  /* --- one-row sticky masthead, nav scrolls sideways --- */
+  /* --- one-row sticky masthead: the link cluster folds behind "Menu" ---
+     onstageShell()/eventNav() emit both halves of navFold() — the inline
+     .mast-links copy (hidden here) and the .mast-fold <details> (shown
+     here). Collapsed by default, opened by a tap, no script. A masthead
+     assembled without that split (the marketing home hand-rolls its own
+     header) has neither class, so its bare <nav> falls through to the
+     sideways-scrolling rule below instead. */
   .mast-in{height:52px;gap:10px;flex-wrap:nowrap}
-  .mast nav{margin-left:auto;flex:1;min-width:0;justify-content:flex-end;
-    overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}
-  .mast nav::-webkit-scrollbar{display:none}
-  .mast nav a{padding:7px 9px;font-size:14px}
+  .mast-in .mast-links{display:none}
+  .mast-fold{display:block;margin-left:auto;position:relative}
+  .mast-fold summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:5px;
+    font-size:14px;font-weight:600;color:var(--ink-soft);padding:8px 11px;min-height:36px;
+    border:1px solid var(--field-line);border-radius:8px;background:var(--card)}
+  .mast-fold summary::-webkit-details-marker{display:none}
+  .mast-fold summary::after{content:"";width:6px;height:6px;margin-top:-3px;
+    border-right:1.5px solid var(--muted);border-bottom:1.5px solid var(--muted);transform:rotate(45deg)}
+  .mast-fold[open] summary::after{margin-top:3px;transform:rotate(-135deg)}
+  /* .mast prefix is load-bearing: it out-specifies the unscoped, all-widths
+     ".mast nav{display:flex;flex-wrap:wrap;...}" rule above, which would
+     otherwise still win these properties on a bare ".mast-fold-links". */
+  .mast .mast-fold-links{position:absolute;top:calc(100% + 6px);right:0;z-index:40;
+    display:flex;flex-direction:column;gap:1px;min-width:190px;padding:6px;
+    background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-lift)}
+  .mast .mast-fold-links a{padding:10px 12px;min-height:40px;display:flex;align-items:center;
+    border-radius:7px;font-size:15px}
+  .mast .mast-fold-links a:hover{background:var(--paper-deep)}
+  .mast .mast-fold-links a[aria-current]{color:var(--ember);font-weight:620;background:var(--ember-wash)}
+
+  /* --- a masthead with no fold split (the marketing home): nav scrolls
+     sideways rather than wrapping, unless marketing.css overrides it. (No
+     need to exclude .mast-links here too — it is already display:none, so
+     nothing below can make it visible.) --- */
+  .mast nav:not(.mast-fold-links){margin-left:auto;flex:1;min-width:0;
+    justify-content:flex-end;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}
+  .mast nav:not(.mast-fold-links)::-webkit-scrollbar{display:none}
+  .mast nav:not(.mast-fold-links) a{padding:7px 9px;font-size:14px}
 
   /* --- anything sticky at the bottom clears the chrome bar --- */
   .starcount{gap:10px;padding:11px 0}
