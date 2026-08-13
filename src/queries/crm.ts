@@ -70,6 +70,16 @@ function inClause(n: number): string {
   return Array.from({ length: n }, () => '?').join(',');
 }
 
+// D1 caps bound parameters per statement, so an org-wide directory (a thousand
+// people) cannot pass every id into one IN clause. Ninety at a time stays well
+// under the cap and keeps the read to a handful of batched round trips.
+const ID_CHUNK = 90;
+function chunk<T>(arr: T[], n: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
 /* ------------------------------------------------------------------ *
  * The directory — CRM-01, CRM-02
  * ------------------------------------------------------------------ */
@@ -150,40 +160,38 @@ async function statusFactsFor(
     return f;
   };
 
-  const [rosterRes, subRes, taskRes] = await db.batch<Record<string, unknown>>([
-    db
-      .prepare(`SELECT person_id, event_id FROM roster_entry WHERE person_id IN (${inClause(ids.length)})`)
-      .bind(...ids),
-    db
-      .prepare(
-        `SELECT pa.person_id, s.event_id, s.state
-         FROM participation pa JOIN submission s ON s.id = pa.submission_id
-         WHERE pa.person_id IN (${inClause(ids.length)}) AND s.state <> 'draft'`
-      )
-      .bind(...ids),
-    db
-      .prepare(
-        `SELECT person_id, completed_at, cancelled_at FROM task
-         WHERE person_id IN (${inClause(ids.length)})`
-      )
-      .bind(...ids),
-  ]);
+  for (const part of chunk(ids, ID_CHUNK)) {
+    const ph = inClause(part.length);
+    const [rosterRes, subRes, taskRes] = await db.batch<Record<string, unknown>>([
+      db.prepare(`SELECT person_id, event_id FROM roster_entry WHERE person_id IN (${ph})`).bind(...part),
+      db
+        .prepare(
+          `SELECT pa.person_id, s.event_id, s.state
+           FROM participation pa JOIN submission s ON s.id = pa.submission_id
+           WHERE pa.person_id IN (${ph}) AND s.state <> 'draft'`
+        )
+        .bind(...part),
+      db
+        .prepare(`SELECT person_id, completed_at, cancelled_at FROM task WHERE person_id IN (${ph})`)
+        .bind(...part),
+    ]);
 
-  for (const r of rowsOf<{ person_id: string; event_id: string }>(rosterRes)) {
-    const f = get(r.person_id);
-    f.hasRoster = true;
-    f.events.add(r.event_id);
-  }
-  for (const r of rowsOf<{ person_id: string; event_id: string; state: SubmissionState }>(subRes)) {
-    const f = get(r.person_id);
-    f.hasSubmission = true;
-    f.events.add(r.event_id);
-    if (r.state === 'accepted' || r.state === 'cancelled') f.hasAccepted = true;
-  }
-  for (const r of rowsOf<{ person_id: string; completed_at: number | null; cancelled_at: number | null }>(taskRes)) {
-    const f = get(r.person_id);
-    f.hasAnyTask = true;
-    if (r.completed_at === null && r.cancelled_at === null) f.hasOpenTask = true;
+    for (const r of rowsOf<{ person_id: string; event_id: string }>(rosterRes)) {
+      const f = get(r.person_id);
+      f.hasRoster = true;
+      f.events.add(r.event_id);
+    }
+    for (const r of rowsOf<{ person_id: string; event_id: string; state: SubmissionState }>(subRes)) {
+      const f = get(r.person_id);
+      f.hasSubmission = true;
+      f.events.add(r.event_id);
+      if (r.state === 'accepted' || r.state === 'cancelled') f.hasAccepted = true;
+    }
+    for (const r of rowsOf<{ person_id: string; completed_at: number | null; cancelled_at: number | null }>(taskRes)) {
+      const f = get(r.person_id);
+      f.hasAnyTask = true;
+      if (r.completed_at === null && r.cancelled_at === null) f.hasOpenTask = true;
+    }
   }
   return facts;
 }
@@ -191,14 +199,16 @@ async function statusFactsFor(
 async function tagsFor(db: D1Database, ids: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   if (ids.length === 0) return out;
-  const res = await db
-    .prepare(`SELECT person_id, tag FROM crm_tag WHERE person_id IN (${inClause(ids.length)}) ORDER BY tag`)
-    .bind(...ids)
-    .all<{ person_id: string; tag: string }>();
-  for (const r of res.results) {
-    const list = out.get(r.person_id) ?? [];
-    list.push(r.tag);
-    out.set(r.person_id, list);
+  for (const part of chunk(ids, ID_CHUNK)) {
+    const res = await db
+      .prepare(`SELECT person_id, tag FROM crm_tag WHERE person_id IN (${inClause(part.length)}) ORDER BY tag`)
+      .bind(...part)
+      .all<{ person_id: string; tag: string }>();
+    for (const r of res.results) {
+      const list = out.get(r.person_id) ?? [];
+      list.push(r.tag);
+      out.set(r.person_id, list);
+    }
   }
   return out;
 }
@@ -732,16 +742,19 @@ export async function rosterOnlyPeople(
 
   if (res.results.length === 0) return [];
   const ids = res.results.map((r) => r.id);
-  const taskRes = await db
-    .prepare(
-      `SELECT person_id, COUNT(*) AS n FROM task
-       WHERE event_id = ? AND completed_at IS NULL AND cancelled_at IS NULL
-         AND person_id IN (${inClause(ids.length)})
-       GROUP BY person_id`
-    )
-    .bind(eventId, ...ids)
-    .all<{ person_id: string; n: number }>();
-  const openTasks = new Map(taskRes.results.map((t) => [t.person_id, t.n]));
+  const openTasks = new Map<string, number>();
+  for (const part of chunk(ids, ID_CHUNK)) {
+    const taskRes = await db
+      .prepare(
+        `SELECT person_id, COUNT(*) AS n FROM task
+         WHERE event_id = ? AND completed_at IS NULL AND cancelled_at IS NULL
+           AND person_id IN (${inClause(part.length)})
+         GROUP BY person_id`
+      )
+      .bind(eventId, ...part)
+      .all<{ person_id: string; n: number }>();
+    for (const t of taskRes.results) openTasks.set(t.person_id, t.n);
+  }
 
   return res.results.map((r) => ({
     personId: r.id,
