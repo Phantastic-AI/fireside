@@ -68,14 +68,18 @@ export async function sendFriendRequest(
               WHERE event_id = ? AND requester_id = ? AND recipient_id = ? AND revoked_at IS NOT NULL`
           )
           .bind(nowMs, eventId, meId, recipientId),
+        // The recipient must be an attendee of THIS event — someone with a
+        // schedule here — the same pool search draws from. This is what stops
+        // a crafted POST from firing a request at a guessable person id
+        // (an organizer's, another event's speaker's) who was never findable.
         db
           .prepare(
             `INSERT INTO friend_request (id, event_id, requester_id, recipient_id, requested_at)
              SELECT ?, ?, ?, ?, ?
               WHERE NOT EXISTS (SELECT 1 FROM friend_request WHERE event_id = ? AND requester_id = ? AND recipient_id = ?)
-                AND EXISTS (SELECT 1 FROM person WHERE id = ?)`
+                AND EXISTS (SELECT 1 FROM my_schedule WHERE person_id = ? AND event_id = ?)`
           )
-          .bind(newId('frq'), eventId, meId, recipientId, nowMs, eventId, meId, recipientId, recipientId),
+          .bind(newId('frq'), eventId, meId, recipientId, nowMs, eventId, meId, recipientId, recipientId, eventId),
       ],
       [0, 'any', 'any'],
       STALE
@@ -111,7 +115,10 @@ export async function acceptFriendRequest(
           )
           .bind(nowMs, eventId, requesterId, meId),
       ],
-      ['any'],
+      // Exactly the one pending request becomes accepted. If it was withdrawn
+      // or revoked in the meantime, nothing changes and the batch aborts to
+      // 'moved' — so the screen says "that moved", not a false "you're friends".
+      [{ atLeast: 1 }],
       STALE
     );
     return 'done';
