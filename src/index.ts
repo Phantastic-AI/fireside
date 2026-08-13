@@ -89,6 +89,14 @@ app.get('/a/back.css', (c) => c.body(tokensCss + sharedCss + backstageCss, 200, 
 
 app.get('/', async (c) => {
   const me = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+  // Somebody signed in with a place to be is taken there — the same landing
+  // signing in itself uses. The home page is the public front, not where an
+  // organizer runs a conference or a speaker reads their portal; landing them
+  // here, one click short of their own work, is a dead end this page owns.
+  if (me) {
+    const dest = await afterSignIn(c.env.DB, me.personId);
+    if (dest !== '/') return c.redirect(dest);
+  }
   // The live section reads the world rather than asserting it: a conference
   // created while the page is up — by an organizer, or by an agent walking the
   // call — is counted and shown, so the page never says "two" when there are
