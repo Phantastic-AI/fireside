@@ -36,6 +36,8 @@ import {
 import { agenda, type AgendaSession } from '../../queries/public';
 import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
+// @ts-ignore -- plain-JS island; see cfp.ts for the same note.
+import embedCopyIsland from '../../islands/embed-copy.js';
 
 /* ------------------------------------------------------------------ *
  * Small words — local, matching this build's per-file convention.
@@ -90,7 +92,7 @@ function block(title: string, sentence: string, snippet: string): string {
     '<div class="card card-pad" style="margin-bottom:14px;max-width:56em">' +
     `<h2 style="font-size:16px;font-weight:700;margin:0">${esc(title)}</h2>` +
     `<p class="sub" style="margin:6px 0 10px">${esc(sentence)}</p>` +
-    `<textarea readonly rows="3" aria-label="${esc(title)}" ` +
+    `<textarea readonly rows="3" aria-label="${esc(title)}" data-copy-source ` +
     'style="width:100%;font-family:var(--mono);font-size:12.5px;line-height:1.5;' +
     `background:var(--paper-deep)">${esc(snippet)}</textarea>` +
     '</div>'
@@ -185,7 +187,7 @@ function embedsPage(
       whoInitials: initialsOf(principal.name),
       tzLabel: ev.tzLabel ?? ev.timezone,
       crumb: `<a href="/admin/${esc(ev.slug)}">Program</a> › <span>Embeds</span>`,
-      body: head + notPublished + blocks,
+      body: head + notPublished + blocks + `<script>${String(embedCopyIsland)}</script>`,
     }),
   });
 }

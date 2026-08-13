@@ -20,6 +20,7 @@ import {
   UNTOUCHED_SQL,
   NUDGE_SUBJECT,
   NUDGE_HOURS,
+  ROUND_NAME_MAX,
   type Scores,
 } from '../queries/reviews';
 import { requireDecider } from './decide';
@@ -811,6 +812,127 @@ export type RoundOutcome = 'opened' | 'moved' | 'refused' | 'trouble';
  *  a new round will not fix. The ceiling exists so the number stays a number. */
 export const MOST_ROUNDS = 20;
 
+/** What the round-name-and-dates form posts, for the round it names. */
+export type RoundConfigInput = {
+  name: string;
+  opensOn: string;
+  closesOn: string;
+  blind: boolean;
+};
+
+/**
+ * The closed set for naming and dating a round.
+ *
+ *   'saved'        — the round's name, dates and blind setting are on record
+ *   'bad_date'     — one of the two dates is not a day the calendar has
+ *   'closes_first' — the close date is before the open date
+ *   'moved'        — the config changed underneath between reading and saving
+ *   'trouble'      — something unexpected; nothing was written
+ */
+export type RoundConfigOutcome = 'saved' | 'bad_date' | 'closes_first' | 'moved' | 'trouble';
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A day the calendar actually has — same check settings.ts's event dates use,
+ *  kept local rather than shared so this file's writes stay self-contained. */
+function isDay(day: string): boolean {
+  if (!ISO_DAY.test(day)) return false;
+  const ms = Date.parse(`${day}T00:00:00Z`);
+  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 10) === day;
+}
+
+/**
+ * Two days into the range a round is stored as: null when the field was left
+ * blank (a round need not carry dates to be real), the day's own start and
+ * end in UTC otherwise — the same within-a-day convention the call's own
+ * open/close dates use. Returns the outcome code in place of a value when
+ * either day fails its own check.
+ */
+function roundRange(
+  opensOn: string,
+  closesOn: string
+): { opensAt: number | null; closesAt: number | null } | 'bad_date' | 'closes_first' {
+  if (opensOn !== '' && !isDay(opensOn)) return 'bad_date';
+  if (closesOn !== '' && !isDay(closesOn)) return 'bad_date';
+  if (opensOn !== '' && closesOn !== '' && closesOn < opensOn) return 'closes_first';
+  return {
+    opensAt: opensOn === '' ? null : Date.parse(`${opensOn}T00:00:00Z`),
+    closesAt: closesOn === '' ? null : Date.parse(`${closesOn}T23:59:59Z`),
+  };
+}
+
+/** Read, patch one round's entry, write back — the same shape openNextRound
+ *  uses for round_scorecards, so a round's name and its scorecard are always
+ *  read fresh rather than trusted from whatever the screen last rendered. */
+function patchedConfig(stored: string, round: number, patch: Record<string, unknown>): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stored);
+  } catch {
+    parsed = {};
+  }
+  const configs: Record<string, unknown> =
+    typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  configs[String(round)] = patch;
+  return JSON.stringify(configs);
+}
+
+/**
+ * Name a round, date it, and say whether it is blind — the identity a round
+ * never had before this file grew one for it (ABS-01/ABS-07). One round at a
+ * time, by number: the current round from the reviews screen's own form, or
+ * the round about to open from openNextRound's confirm, below.
+ *
+ * TWO PASSES is not this act's law: a round's own facts bind nobody's letter
+ * and move no decision, so — the same reasoning stepAside's header gives for
+ * a reviewer's own recusal — one confirm carrying the values is enough, and
+ * saving it again is exactly how a chair fixes a typo in a round's name.
+ */
+export async function saveRoundConfig(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  round: number,
+  input: RoundConfigInput
+): Promise<RoundConfigOutcome> {
+  requireDecider(principal, eventId);
+  if (!Number.isInteger(round) || round < 1) return 'trouble';
+
+  const range = roundRange(input.opensOn.trim(), input.closesOn.trim());
+  if (range === 'bad_date' || range === 'closes_first') return range;
+
+  const ev = await db
+    .prepare('SELECT round_config FROM event WHERE id = ?')
+    .bind(eventId)
+    .first<{ round_config: string | null }>();
+  if (!ev) return 'moved';
+  const stored = ev.round_config ?? '{}';
+  const written = patchedConfig(stored, round, {
+    name: input.name.trim().slice(0, ROUND_NAME_MAX) || null,
+    opensAt: range.opensAt,
+    closesAt: range.closesAt,
+    blind: input.blind,
+  });
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(db, 'SELECT 1 FROM event WHERE id = ?1 AND round_config <> ?2', eventId, stored),
+        db.prepare('UPDATE event SET round_config = ?2 WHERE id = ?1').bind(eventId, written),
+      ],
+      [0, 1],
+      STALE
+    );
+  } catch (e) {
+    const outcome = outcomeOf(e, 'saveRoundConfig');
+    return outcome === 'moved' ? 'moved' : 'trouble';
+  }
+  return 'saved';
+}
+
 /**
  * Open round n+1. TWO PASSES, and the second one carries the number.
  *
@@ -828,22 +950,32 @@ export const MOST_ROUNDS = 20;
  * lines are copied to n+1 unless n+1 already has its own. Copied, not shared:
  * editing round two's card afterwards leaves round one's marks meaning exactly
  * what they meant when they were given.
+ *
+ * `config`, when given, names and dates the round about to open in the same
+ * breath — the confirm form ABS-S2 fills in before the click, rather than a
+ * second trip through saveRoundConfig afterwards. Left out entirely (an
+ * agent calling this directly, say), the new round opens exactly as it
+ * always did: unnamed, undated, blind.
  */
 export async function openNextRound(
   db: D1Database,
   principal: Principal,
   eventId: string,
   fromRound: number,
-  toRound: number
+  toRound: number,
+  config?: RoundConfigInput
 ): Promise<RoundOutcome> {
   requireDecider(principal, eventId);
   if (!Number.isInteger(fromRound) || !Number.isInteger(toRound)) return 'refused';
   if (toRound !== fromRound + 1 || toRound < 2 || toRound > MOST_ROUNDS) return 'refused';
 
+  const range = config ? roundRange(config.opensOn.trim(), config.closesOn.trim()) : null;
+  if (range === 'bad_date' || range === 'closes_first') return 'refused';
+
   const ev = await db
-    .prepare('SELECT current_round, round_scorecards FROM event WHERE id = ?')
+    .prepare('SELECT current_round, round_scorecards, round_config FROM event WHERE id = ?')
     .bind(eventId)
-    .first<{ current_round: number; round_scorecards: string }>();
+    .first<{ current_round: number; round_scorecards: string; round_config: string | null }>();
   if (!ev) return 'moved';
   if (ev.current_round !== fromRound) return 'moved';
 
@@ -867,7 +999,18 @@ export async function openNextRound(
     const previous = cards[String(fromRound)];
     if (Array.isArray(previous) && previous.length > 0) cards[String(toRound)] = previous;
   }
-  const written = JSON.stringify(cards);
+  const writtenCards = JSON.stringify(cards);
+
+  const storedConfig = ev.round_config ?? '{}';
+  const writtenConfig =
+    config && range
+      ? patchedConfig(storedConfig, toRound, {
+          name: config.name.trim().slice(0, ROUND_NAME_MAX) || null,
+          opensAt: range.opensAt,
+          closesAt: range.closesAt,
+          blind: config.blind,
+        })
+      : storedConfig;
 
   try {
     await checkedBatch(
@@ -875,14 +1018,19 @@ export async function openNextRound(
       [
         guard(
           db,
-          'SELECT 1 FROM event WHERE id = ?1 AND (current_round <> ?2 OR round_scorecards <> ?3)',
+          `SELECT 1 FROM event WHERE id = ?1 AND (current_round <> ?2
+             OR round_scorecards <> ?3 OR round_config <> ?4)`,
           eventId,
           fromRound,
-          stored
+          stored,
+          storedConfig
         ),
         db
-          .prepare('UPDATE event SET current_round = ?2, round_scorecards = ?3 WHERE id = ?1')
-          .bind(eventId, toRound, written),
+          .prepare(
+            `UPDATE event SET current_round = ?2, round_scorecards = ?3, round_config = ?4
+              WHERE id = ?1`
+          )
+          .bind(eventId, toRound, writtenCards, writtenConfig),
       ],
       [0, 1],
       STALE

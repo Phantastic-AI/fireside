@@ -33,8 +33,8 @@
 //    already placed, "decks in") need per-submission placement and file-task
 //    facts that `pile(..., { limit: 0 })` deliberately withholds (it returns
 //    no rows) and that no other exported admin query aggregates. Rather than
-//    inventing numbers, the doors into Agenda, People, Green room and Slides
-//    below carry a plain sentence instead of a count.
+//    inventing numbers, the doors into Agenda, People, Green room and
+//    Deliverables below carry a plain sentence instead of a count.
 //  - `event_role` values ('owner' | 'approver' | 'editor' | 'viewer' |
 //    'reviewer') and the install-wide 'organizer' standing have no entry in
 //    lib/labels.ts — §6 only tracks the onstage participation roles
@@ -406,8 +406,11 @@ function programPage(principal: Principal, ev: AdminEvent, counts: PileCounts): 
     doorCard('Green room', 'The day-of sheet for your crew.', [
       { href: `/admin/${slug}/green-room`, label: 'Open green room' },
     ]) +
-    doorCard('Slides', 'Which decks are in.', [
-      { href: `/admin/${slug}/slides`, label: 'Open slides' },
+    doorCard('Deliverables', 'What was asked for, and who still owes it.', [
+      { href: `/admin/${slug}/slides`, label: 'Open deliverables' },
+    ]) +
+    doorCard('Files', 'Every file sent in, in one place.', [
+      { href: `/admin/${slug}/files`, label: 'Open files' },
     ]) +
     doorCard('Settings', 'Team, dates, and the call itself.', [
       { href: `/admin/${slug}/settings`, label: 'Open settings' },

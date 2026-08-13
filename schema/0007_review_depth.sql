@@ -1,0 +1,14 @@
+-- Review depth (02 ABS cluster): rounds get a name, a date range and their own
+-- anonymization setting, instead of being an auto-numbered integer with one
+-- global blind behaviour.
+--
+-- Additive only, and it follows round_scorecards' own discipline exactly: one
+-- JSON object on the event, keyed by round number as a string, and a round
+-- with no entry reads as the product's original defaults — an auto-numbered
+-- round, blind by construction. Nothing already stored has to change shape
+-- for this column to exist; scorecardFor and roundConfigFor both fall back
+-- the same way when a round predates the column that names it.
+--
+-- Shape, one entry per round:
+--   {"1":{"name":"Initial Review","opensAt":<ms|null>,"closesAt":<ms|null>,"blind":true}}
+ALTER TABLE event ADD COLUMN round_config TEXT NOT NULL DEFAULT '{}';

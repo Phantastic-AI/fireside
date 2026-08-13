@@ -1,17 +1,18 @@
-// The reviewer's read layer (R-11) — round-scoped, and blind by construction.
+// The reviewer's read layer (R-11) — round-scoped, and blind by default.
 //
-// BLIND IS A PROPERTY OF THIS FILE, not of the template that renders it. No
-// statement below joins `participation` or `person`, and none selects a name,
-// an employer, an address or a headshot. A screen built on this query cannot
-// show a reviewer who wrote a proposal, because the fact never reaches it.
-// That is the same discipline queries/admin.ts applies to scope: the read is
-// the chokepoint, and a template's good intentions are not a security model.
-//
-// GAP, flagged rather than invented: the schema has no per-event blind toggle,
-// so blind is unconditional here. An event that wants names visible during
-// round 2 has no way to say so. The fix is a column on `event` plus a settings
-// control, both of which belong to the settings parcel — not to a route file
-// quietly selecting names when a query string asks it to.
+// BLIND IS A PROPERTY OF THIS FILE, not of the template that renders it. The
+// row-list statement in reviewQueue never joins `participation` or `person`
+// unless it has already checked event.roundConfig.blind and found it false
+// for the round being read — the one round-scoped exception, ABS-07's per-
+// round anonymization setting (event.round_config, schema/0007). Every round
+// with no entry in that column, which is every round written before this
+// column existed, reads back blind: the fallback in roundConfigFor is `true`,
+// not `false`, so an upgrade cannot un-blind a round nobody touched. A screen
+// built on a blind round still cannot show a name it was never given, because
+// the fact never reaches it — that is the same discipline queries/admin.ts
+// applies to scope: the read is the chokepoint, and a template's good
+// intentions are not a security model. See the note beside the join itself,
+// a few hundred lines down, for exactly what widens and why.
 //
 // ASSIGNMENT IS ALSO A PROPERTY OF THIS FILE. "Which of these are mine?" used
 // to answer "every proposal still undecided on this event", which is the same
@@ -56,7 +57,7 @@
 //   line nobody marked is a missing opinion rather than a nought.
 
 import type { Principal } from '../workflows/account';
-import { requireScope, REVIEW_ROLES } from './admin';
+import { requireScope, REVIEW_ROLES, type SubmissionState } from './admin';
 import { requireDecider } from '../workflows/decide';
 
 /* ------------------------------------------------------------------ *
@@ -169,6 +170,10 @@ export type ScorecardKey = {
 export type ScoreValue = number | string;
 export type Scores = Record<string, ScoreValue>;
 
+/** One name on a proposal, only ever read when a round has said out loud that
+ *  it is not blind — see reviewQueue's ASSIGNED_TO_ME/authors note below. */
+export type QueueAuthor = { name: string; role: string; organisation: string | null };
+
 export type QueueRow = {
   id: string;
   title: string;
@@ -188,6 +193,13 @@ export type QueueRow = {
   staged: boolean;
   /** Finished with nothing in it: I know this speaker and stepped aside. */
   myRecused: boolean;
+  /**
+   * Who wrote this, in participation order — null on every blind round, by
+   * construction: reviewQueue only runs the query that reaches `participation`
+   * when event.roundConfig.blind is false for the round being read. A blind
+   * round never has this field populated, whatever the caller asks for.
+   */
+  authors: QueueAuthor[] | null;
 };
 
 export type ReviewQueue = {
@@ -289,6 +301,12 @@ export type ReviewEvent = {
   scorecard: ScorecardKey[];
   /** Every round's scorecard as stored, so the round panel can see ahead. */
   scorecardsRaw: string;
+  /** Every round's name, dates and blind setting as stored — round history
+   *  reads every round out of this, not only the current one. */
+  roundConfigRaw: string;
+  /** This round's own config, already resolved — reviewQueue reads `blind`
+   *  off this rather than re-parsing roundConfigRaw itself. */
+  roundConfig: RoundConfig;
   /** This person reads the whole pile and may hand it out. See seesEverything. */
   everything: boolean;
 };
@@ -439,6 +457,43 @@ export function scorecardFor(stored: string | null, round: number): ScorecardKey
 }
 
 /**
+ * One round's own identity: a name, a date range, and whether it is blind —
+ * everything about a round that used to be nothing but its integer.
+ *
+ * Stored on event.round_config, the same discipline round_scorecards already
+ * keeps: one JSON object keyed by round number as a string, and a round with
+ * no entry — every round written before this column existed — reads back as
+ * the product's original defaults: no name (the screen falls back to "Round
+ * N"), no dates, and blind, because blind used to be the only behaviour there
+ * was and an upgrade must not un-blind a round nobody touched.
+ */
+export type RoundConfig = {
+  name: string | null;
+  opensAt: number | null;
+  closesAt: number | null;
+  /** Absent or anything but `false` reads as blind — the same "say so on
+   *  purpose to change it" rule scorecardFor's weight fallback uses. */
+  blind: boolean;
+};
+
+/** How long a round's own name may run — a line, not a paragraph. */
+export const ROUND_NAME_MAX = 80;
+
+export function roundConfigFor(stored: string | null, round: number): RoundConfig {
+  const raw = asObject(stored)[String(round)];
+  const o =
+    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const name =
+    typeof o.name === 'string' && o.name.trim() ? o.name.trim().slice(0, ROUND_NAME_MAX) : null;
+  const opensAt = typeof o.opensAt === 'number' && Number.isFinite(o.opensAt) ? o.opensAt : null;
+  const closesAt =
+    typeof o.closesAt === 'number' && Number.isFinite(o.closesAt) ? o.closesAt : null;
+  return { name, opensAt, closesAt, blind: o.blind !== false };
+}
+
+/**
  * The weighted average of one set of marks: sum of w·score over sum of w,
  * across the numbered lines only.
  *
@@ -495,6 +550,7 @@ type EventSqlRow = {
   tz_label: string | null;
   current_round: number;
   round_scorecards: string | null;
+  round_config: string | null;
 };
 
 /**
@@ -511,13 +567,14 @@ export async function reviewEvent(
 ): Promise<ReviewEvent | null> {
   const row = await db
     .prepare(
-      `SELECT id, slug, name, timezone, tz_label, current_round, round_scorecards
+      `SELECT id, slug, name, timezone, tz_label, current_round, round_scorecards, round_config
          FROM event WHERE slug = ?`
     )
     .bind(slug)
     .first<EventSqlRow>();
   if (!row) return null;
   requireScope(principal, row.id, REVIEW_ROLES);
+  const roundConfigRaw = row.round_config ?? '{}';
   return {
     id: row.id,
     slug: row.slug,
@@ -527,6 +584,8 @@ export async function reviewEvent(
     round: row.current_round,
     scorecard: scorecardFor(row.round_scorecards, row.current_round),
     scorecardsRaw: row.round_scorecards ?? '{}',
+    roundConfigRaw,
+    roundConfig: roundConfigFor(roundConfigRaw, row.current_round),
     everything: seesEverything(principal, row.id),
   };
 }
@@ -717,7 +776,7 @@ export async function reviewQueue(
   const total = event.everything ? pile : assigned;
   const submitted = c?.submitted ?? 0;
   const recused = c?.recused ?? 0;
-  const rows = rowsOf<QueueSqlRow>(rowRes).map((r) => ({
+  const rows: QueueRow[] = rowsOf<QueueSqlRow>(rowRes).map((r) => ({
     id: r.id,
     title: r.title,
     abstract: r.abstract,
@@ -734,7 +793,36 @@ export async function reviewQueue(
     mySubmittedAt: r.my_submitted_at,
     staged: r.staged === 1,
     myRecused: r.recused === 1,
+    authors: null,
   }));
+
+  // THE ONE PLACE THIS FILE EVER READS A NAME. It runs only when the round
+  // being read has said, on its own config, that it is not blind — every
+  // other round takes the branch above and never builds this statement, so a
+  // blind round still cannot show a name it never asked the database for.
+  // Scoped to the ids already on this page: a committee's whole pile is never
+  // read for names in one call just because one page of it is unblinded.
+  if (!event.roundConfig.blind && rows.length > 0) {
+    const ids = rows.map((r) => r.id);
+    const authored = await db
+      .prepare(
+        `SELECT pa.submission_id AS submission_id, p.name AS name, pa.role AS role,
+                p.organisation AS organisation
+           FROM participation pa
+           JOIN person p ON p.id = pa.person_id
+          WHERE pa.submission_id IN (${ids.map(() => '?').join(',')})
+          ORDER BY pa.submission_id, pa.position`
+      )
+      .bind(...ids)
+      .all<{ submission_id: string; name: string; role: string; organisation: string | null }>();
+    const byId = new Map<string, QueueAuthor[]>();
+    for (const a of authored.results) {
+      const list = byId.get(a.submission_id) ?? [];
+      list.push({ name: a.name, role: a.role, organisation: a.organisation });
+      byId.set(a.submission_id, list);
+    }
+    for (const r of rows) r.authors = byId.get(r.id) ?? [];
+  }
 
   const matching = needle ? (rowsOf<{ n: number }>(matchRes)[0]?.n ?? 0) : total;
 
@@ -1008,6 +1096,211 @@ export async function roundStanding(
     unassigned: rowsOf<{ n: number }>(waitingRes)[0]?.n ?? 0,
     nextCardExists: Array.isArray(next) && next.length > 0,
   };
+}
+
+/** One past or present round, as the history list reads it. */
+export type RoundHistoryEntry = {
+  round: number;
+  name: string | null;
+  opensAt: number | null;
+  closesAt: number | null;
+  blind: boolean;
+  onRecord: number;
+  stepped: number;
+  readers: number;
+  current: boolean;
+};
+
+/**
+ * Every round the committee has ever been on, oldest first, each with its own
+ * name, dates, blind setting and its own counts — the answer to "opening
+ * round two hid round one's work," which it does not: nothing here is
+ * deleted or overwritten when the next round opens, only current_round moves,
+ * and this reads every round that number has ever pointed at.
+ *
+ * The set is 1..current_round. A round only ever comes to exist by being
+ * opened (round 1 at event creation, every later one through openNextRound),
+ * so there is no round to list past the one the committee is on, and no gap
+ * inside that range either.
+ */
+export async function roundHistory(
+  db: D1Database,
+  principal: Principal,
+  event: ReviewEvent
+): Promise<RoundHistoryEntry[]> {
+  requireDecider(principal, event.id);
+  const res = await db
+    .prepare(
+      `SELECT rv.round AS round,
+              COUNT(CASE WHEN ${SCORED_SQL} THEN 1 END) AS on_record,
+              COUNT(CASE WHEN ${RECUSED_SQL} THEN 1 END) AS stepped,
+              COUNT(DISTINCT rv.reviewer_person_id) AS readers
+         FROM review rv
+         JOIN submission s ON s.id = rv.submission_id
+        WHERE s.event_id = ?1
+        GROUP BY rv.round`
+    )
+    .bind(event.id)
+    .all<{ round: number; on_record: number; stepped: number; readers: number }>();
+  const counted = new Map(res.results.map((r) => [r.round, r]));
+
+  const out: RoundHistoryEntry[] = [];
+  for (let round = 1; round <= event.round; round++) {
+    const c = counted.get(round);
+    const cfg = roundConfigFor(event.roundConfigRaw, round);
+    out.push({
+      round,
+      name: cfg.name,
+      opensAt: cfg.opensAt,
+      closesAt: cfg.closesAt,
+      blind: cfg.blind,
+      onRecord: c?.on_record ?? 0,
+      stepped: c?.stepped ?? 0,
+      readers: c?.readers ?? 0,
+      current: round === event.round,
+    });
+  }
+  return out;
+}
+
+/** The most submissions one results read carries — a ceiling on the query,
+ *  not on the program: a call this size wants its results paged, and the
+ *  screen says so rather than quietly truncating without a word. */
+export const MOST_RESULTS = 500;
+
+/** One submission's place in the results table. */
+export type ResultsRow = {
+  submissionId: string;
+  title: string;
+  format: string;
+  state: SubmissionState;
+  track: { slug: string; name: string; colour: string } | null;
+  /** Mean of every scored review's own average, across every round — the same
+   *  averageOf arithmetic the reviewer's own screen shows, read back once per
+   *  proposal instead of once per reviewer. Null when nobody has scored it. */
+  aggregate: number | null;
+  weighted: boolean;
+  reviewCount: number;
+  /** Every select-kind mark (Accept/Maybe/Reject and the like) any scored
+   *  review left, most recent first, deduplicated with a count when a value
+   *  repeats — 'Accept ×2' rather than 'Accept, Accept'. */
+  recommendation: string | null;
+};
+
+type ResultsSqlRow = {
+  submission_id: string;
+  title: string;
+  format: string;
+  state: SubmissionState;
+  track_slug: string | null;
+  track_name: string | null;
+  track_colour: string | null;
+  round: number | null;
+  scores: string | null;
+};
+
+/**
+ * The committee's own results table (ABS-10): one row per submission, its
+ * aggregate score, and how many reviews stand behind it — the read the whole
+ * feature was missing. Decider-only, the same standing that hands the pile
+ * out and opens a round: an aggregate is committee business, not a single
+ * reviewer's.
+ *
+ * The arithmetic happens here rather than in SQL because it is the same
+ * function every other screen already trusts — averageOf, read against the
+ * scorecard the review's own round actually used. A submission reviewed in
+ * two rounds with two different scorecards gets one number back: the mean of
+ * each round's own honest average, so a criterion that only exists on one
+ * round's card is never silently averaged against a criterion it is not.
+ */
+export async function reviewResults(
+  db: D1Database,
+  principal: Principal,
+  event: ReviewEvent
+): Promise<{ rows: ResultsRow[]; more: boolean }> {
+  requireDecider(principal, event.id);
+  const res = await db
+    .prepare(
+      `SELECT s.id AS submission_id, s.title, s.format, s.state,
+              t.slug AS track_slug, t.name AS track_name, t.colour AS track_colour,
+              rv.round AS round, rv.scores AS scores
+         FROM submission s
+         LEFT JOIN track t ON t.id = s.track_id
+         LEFT JOIN review rv ON rv.submission_id = s.id AND ${SCORED_SQL}
+        WHERE s.event_id = ?1 AND s.state <> 'draft'
+        ORDER BY s.id
+        LIMIT ?2`
+    )
+    .bind(event.id, MOST_RESULTS * 20)
+    .all<ResultsSqlRow>();
+
+  const bySubmission = new Map<
+    string,
+    {
+      title: string;
+      format: string;
+      state: SubmissionState;
+      track: { slug: string; name: string; colour: string } | null;
+      averages: MarksAverage[];
+      recs: string[];
+    }
+  >();
+  for (const r of res.results) {
+    let s = bySubmission.get(r.submission_id);
+    if (!s) {
+      s = {
+        title: r.title,
+        format: r.format,
+        state: r.state,
+        track:
+          r.track_slug && r.track_name && r.track_colour
+            ? { slug: r.track_slug, name: r.track_name, colour: r.track_colour }
+            : null,
+        averages: [],
+        recs: [],
+      };
+      bySubmission.set(r.submission_id, s);
+    }
+    if (r.round === null || r.scores === null) continue;
+    const card = scorecardFor(event.scorecardsRaw, r.round);
+    const scores = asScores(r.scores);
+    const avg = averageOf(card, scores);
+    if (avg) s.averages.push(avg);
+    for (const k of card) {
+      if (k.kind === 'select' && typeof scores[k.key] === 'string') {
+        s.recs.push(scores[k.key] as string);
+        break; // one recommendation-shaped answer per review is plenty to show
+      }
+    }
+  }
+
+  const rows: ResultsRow[] = [...bySubmission.entries()]
+    .slice(0, MOST_RESULTS)
+    .map(([id, s]) => {
+      const aggregate =
+        s.averages.length === 0
+          ? null
+          : s.averages.reduce((sum, a) => sum + a.value, 0) / s.averages.length;
+      const counted = new Map<string, number>();
+      for (const v of s.recs) counted.set(v, (counted.get(v) ?? 0) + 1);
+      const recommendation =
+        counted.size === 0
+          ? null
+          : [...counted.entries()].map(([v, n]) => (n > 1 ? `${v} ×${n}` : v)).join(', ');
+      return {
+        submissionId: id,
+        title: s.title,
+        format: s.format,
+        state: s.state,
+        track: s.track,
+        aggregate,
+        weighted: s.averages.some((a) => a.weighted),
+        reviewCount: s.averages.length,
+        recommendation,
+      };
+    });
+
+  return { rows, more: bySubmission.size > MOST_RESULTS };
 }
 
 /**

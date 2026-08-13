@@ -423,7 +423,7 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     // (the tight feature strip Aditya liked on untitledconference.com).
     '<ul class="mkt-feat">' +
     '<li>Free and open source</li><li>Self-hostable, one Worker</li>' +
-    '<li>No attendee accounts</li><li>API and MCP built in</li>' +
+    '<li>No attendee accounts</li><li>Speaks MCP</li>' +
     '</ul>' +
     '</div>' +
     vgPulse() +

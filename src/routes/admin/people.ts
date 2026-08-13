@@ -40,6 +40,18 @@ import {
   type PersonElsewhere,
 } from '../../queries/people';
 import { cancelTask, createTask, TASK_KINDS } from '../../workflows/tasks';
+import { rosterOnlyPeople } from '../../queries/crm';
+import { setLogisticsForEvent } from '../../workflows/crm';
+import {
+  parseSpeakersCsv,
+  previewImportRows,
+  writeImportedRows,
+  MAX_CSV_BYTES,
+  CSV_ACCEPT,
+  type ParsedCsvRow,
+  type PreviewRow,
+} from '../../workflows/import';
+import { filePart } from '../../workflows/files';
 
 /* ------------------------------------------------------------------ *
  * Shared small bits.
@@ -87,6 +99,32 @@ const num = (n: number): string => n.toLocaleString('en-US');
 /** What she calls them out loud. One word, the one on the front of their name. */
 const firstNameOf = (name: string): string => name.trim().split(/\s+/)[0] ?? name;
 
+const text = (v: unknown): string => (typeof v === 'string' ? v : '');
+const manyOf = (v: unknown): string[] => {
+  const arr = Array.isArray(v) ? v : v === undefined ? [] : [v];
+  return arr.map((x) => (typeof x === 'string' ? x : '')).filter((x, i, self) => self.indexOf(x) === i);
+};
+
+/** Roster-only rows (no proposal yet, only a place on the list) rendered
+ *  through the same PersonListRow shape the search-based rows already use —
+ *  their "proposals" column is honestly empty rather than a second table. */
+function rosterOnlyAsListRow(r: {
+  personId: string;
+  name: string;
+  jobTitle: string | null;
+  organisation: string | null;
+  openTaskCount: number;
+}): PersonListRow {
+  return {
+    personId: r.personId,
+    name: r.name,
+    jobTitle: r.jobTitle,
+    organisation: r.organisation,
+    proposals: [],
+    openTaskCount: r.openTaskCount,
+  };
+}
+
 /* ------------------------------------------------------------------ *
  * What just happened. One closed set of codes in the query string, one
  * sentence each here — free text never travels through a URL.
@@ -102,11 +140,21 @@ const OUTCOMES: Record<string, string> = {
   'bad-date': 'That is not a day anyone has. Give the date again and it goes on their list.',
   gone: 'That one was already off their list. Nothing changed.',
   trouble: 'That did not go through, and nothing changed. Worth trying once more.',
+  saved: 'Saved.',
+  'not-found': 'That record could not be found. Nothing changed.',
 };
 
 function outcomeNote(code: string | undefined): string {
   const text = code ? OUTCOMES[code] : undefined;
   if (!text) return '';
+  return noteBox(text);
+}
+
+/** The same box, for a sentence this file built from validated counts rather
+ *  than looked up from the OUTCOMES closed set — the import summary's own
+ *  numbers, the same way outbox.ts's sentSentence() builds its own from
+ *  ?sent=/?emailed= rather than echoing anything free-form from the URL. */
+function noteBox(text: string): string {
   return (
     '<div class="notebox" style="margin-top:18px" role="status">' +
     `<p style="margin:0" class="serif">${esc(text)}</p></div>`
@@ -136,11 +184,33 @@ function stateChip(state: SubmissionState): string {
  *  one of them is a page nobody can read. Search reaches the rest. */
 const ROOM = 120;
 
-function countsLine(list: PeopleList, eventName: string): string {
-  const owing = list.rows.filter((r) => r.openTaskCount > 0).length;
-  const peopleNoun = list.rows.length === 1 ? '1 speaker' : `${num(list.rows.length)} speakers`;
-  const owe = owing > 0 ? `${num(owing)} owe you something` : 'nobody is waiting on anything';
-  return `<p class="counts"><b>${esc(peopleNoun)}</b><span class="sep">·</span>${esc(owe)}<span class="sep">·</span>${esc(eventName)}</p>`;
+/** The "owe you something" toggle's own address: the search carries over,
+ *  and asking again just flips the one flag rather than losing it. */
+function oweHref(slug: string, q: string | null, oweActive: boolean): string {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (!oweActive) params.set('owe', '1');
+  const qs = params.toString();
+  return `/admin/${esc(slug)}/people${qs ? `?${qs}` : ''}`;
+}
+
+function countsLine(
+  slug: string,
+  q: string | null,
+  shown: number,
+  owing: number,
+  oweActive: boolean,
+  eventName: string
+): string {
+  const peopleNoun = shown === 1 ? '1 speaker' : `${num(shown)} speakers`;
+  const oweWord = owing > 0 ? `${num(owing)} owe you something` : 'nobody is waiting on anything';
+  const owe =
+    owing > 0
+      ? `<a class="link" href="${oweHref(slug, q, oweActive)}">${esc(
+          oweActive ? 'showing who owes you — see everyone' : oweWord
+        )}</a>`
+      : esc(oweWord);
+  return `<p class="counts"><b>${esc(peopleNoun)}</b><span class="sep">·</span>${owe}<span class="sep">·</span>${esc(eventName)}</p>`;
 }
 
 function searchForm(slug: string, q: string | null): string {
@@ -196,7 +266,7 @@ function emptyPeople(event: AdminEvent): string {
   return (
     '<div style="padding:26px 0"><h1 class="display">People</h1></div>' +
     '<div class="state-out"><h2>Nobody yet.</h2>' +
-    '<p>Speakers appear here as proposals arrive.</p>' +
+    '<p>Speakers appear here as proposals arrive, or as you bring a list in below.</p>' +
     `<a class="btn btn-primary" href="/${esc(event.slug)}/cfp">See the call for speakers →</a></div>`
   );
 }
@@ -209,6 +279,107 @@ function noSearchResults(slug: string, q: string): string {
   );
 }
 
+function noOweMatches(slug: string): string {
+  return (
+    '<div class="state-out"><h2>Nobody owes you anything.</h2>' +
+    `<a class="btn btn-primary" href="/admin/${esc(slug)}/people">See everyone →</a></div>`
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Bringing in a list — SPK-03. The control lives on this page; what it
+ * does is workflows/import.ts's own act, in two passes so nothing lands
+ * silently: read the file, then confirm what it read.
+ * ------------------------------------------------------------------ */
+
+function importCard(slug: string): string {
+  return (
+    '<div class="card card-pad" style="margin-top:22px;max-width:44em">' +
+    '<h2 class="display" style="font-size:20px;margin-bottom:4px">Bring in a list</h2>' +
+    '<p class="sub" style="margin-bottom:14px">A CSV with name, email, job title, company and bio columns. ' +
+    'Anyone already here by email is left as they are — only what was blank gets filled in.</p>' +
+    `<form method="post" action="/admin/${esc(slug)}/people/import" enctype="multipart/form-data" ` +
+    'style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
+    `<input type="file" name="csv" accept="${esc(CSV_ACCEPT)}" required>` +
+    '<button class="btn btn-sm" type="submit">Read the file</button>' +
+    '</form></div>'
+  );
+}
+
+function importedNote(imported: number, matched: number, skipped: number): string {
+  const parts: string[] = [];
+  if (imported > 0) parts.push(`${num(imported)} new`);
+  if (matched > 0) parts.push(`${num(matched)} already here`);
+  if (skipped > 0) parts.push(`${num(skipped)} skipped`);
+  return parts.length ? `Brought the list in — ${parts.join(', ')}.` : 'Nothing usable was in that file.';
+}
+
+const DISPOSITION_WORD: Record<PreviewRow['disposition'], string> = {
+  new: 'New',
+  existing: 'Already here',
+  invalid: 'Needs a name and an email',
+};
+const DISPOSITION_CHIP: Record<PreviewRow['disposition'], string> = {
+  new: 's-accepted',
+  existing: 's-undecided',
+  invalid: 'warn',
+};
+
+function previewRow(i: number, r: PreviewRow): string {
+  const chip = `<span class="chip ${DISPOSITION_CHIP[r.disposition]}">${esc(DISPOSITION_WORD[r.disposition])}</span>`;
+  if (r.disposition === 'invalid') {
+    return (
+      '<tr><td></td>' +
+      `<td>${esc(r.name || '—')}</td><td>${esc(r.email || '—')}</td>` +
+      `<td>${chip}<div class="t-sub">${esc(r.invalid ?? '')}</div></td></tr>`
+    );
+  }
+  return (
+    '<tr>' +
+    `<td><input type="checkbox" name="keep" value="${i}" checked></td>` +
+    `<td>${esc(r.name)}` +
+    `<input type="hidden" name="r${i}_name" value="${esc(r.name)}">` +
+    `<input type="hidden" name="r${i}_email" value="${esc(r.email)}">` +
+    `<input type="hidden" name="r${i}_job" value="${esc(r.jobTitle ?? '')}">` +
+    `<input type="hidden" name="r${i}_org" value="${esc(r.organisation ?? '')}">` +
+    `<input type="hidden" name="r${i}_bio" value="${esc(r.bio ?? '')}"></td>` +
+    `<td>${esc(r.email)}</td>` +
+    `<td>${chip}</td></tr>`
+  );
+}
+
+function importPreviewPage(event: AdminEvent, principal: Principal, rows: PreviewRow[]): string {
+  const { who, whoInitials } = whoLine(event, principal);
+  const usable = rows.filter((r) => r.disposition !== 'invalid').length;
+  const body =
+    '<div style="padding:26px 0 0"><h1 class="display">Check the list before it lands</h1>' +
+    `<p class="counts">${esc(num(usable))} of ${esc(num(rows.length))} rows are usable — untick any you do not want.</p></div>` +
+    `<form method="post" action="/admin/${esc(event.slug)}/people/import/confirm" style="margin-top:16px">` +
+    `<input type="hidden" name="count" value="${rows.length}">` +
+    '<div class="tablewrap"><table class="t"><thead><tr>' +
+    '<th></th><th>Name</th><th>Email</th><th></th>' +
+    '</tr></thead><tbody>' +
+    rows.map((r, i) => previewRow(i, r)).join('') +
+    '</tbody></table></div>' +
+    '<div class="btnrow" style="margin-top:16px">' +
+    `<button class="btn btn-primary" type="submit">Bring ${esc(String(usable))} in</button>` +
+    `<a class="btn" href="/admin/${esc(event.slug)}/people">Not yet</a></div>` +
+    '</form>';
+  return page({
+    title: `Check the list · ${event.name}`,
+    register: 'backstage',
+    body: backstageShell({
+      eventSlug: event.slug,
+      eventName: event.name,
+      here: '/people',
+      who,
+      whoInitials,
+      tzLabel: event.tzLabel ?? event.timezone,
+      body,
+    }),
+  });
+}
+
 /** The roster is longer than the page. Say so in the same breath as the way
  *  through it, and say it under the rows, where the reader runs out. */
 function moreLine(total: number, shown: number): string {
@@ -219,22 +390,41 @@ function moreLine(total: number, shown: number): string {
   );
 }
 
-function peopleBody(event: AdminEvent, list: PeopleList): string {
+function peopleBody(
+  event: AdminEvent,
+  list: PeopleList,
+  rows: PersonListRow[],
+  owing: number,
+  oweActive: boolean,
+  note: string
+): string {
   const head =
     '<div style="padding:26px 0 0"><h1 class="display">People</h1>' +
-    countsLine(list, event.name) +
+    countsLine(event.slug, list.search, rows.length, owing, oweActive, event.name) +
     '</div>' +
+    (note ? noteBox(note) : '') +
     searchForm(event.slug, list.search);
-  if (list.rows.length === 0) {
-    return head + noSearchResults(event.slug, list.search ?? '');
+  if (rows.length === 0) {
+    return head + (oweActive ? noOweMatches(event.slug) : noSearchResults(event.slug, list.search ?? ''));
   }
-  const shown = list.rows.slice(0, ROOM);
-  return head + peopleTable(event.slug, shown) + moreLine(list.rows.length, shown.length);
+  const shown = rows.slice(0, ROOM);
+  return head + peopleTable(event.slug, shown) + moreLine(rows.length, shown.length);
 }
 
-function peoplePage(event: AdminEvent, principal: Principal, list: PeopleList): string {
+function peoplePage(
+  event: AdminEvent,
+  principal: Principal,
+  list: PeopleList,
+  rows: PersonListRow[],
+  owing: number,
+  oweActive: boolean,
+  note: string
+): string {
   const { who, whoInitials } = whoLine(event, principal);
-  const body = list.rows.length === 0 && !list.search ? emptyPeople(event) : peopleBody(event, list);
+  const body =
+    rows.length === 0 && !list.search && !oweActive
+      ? emptyPeople(event) + importCard(event.slug)
+      : peopleBody(event, list, rows, owing, oweActive, note) + importCard(event.slug);
   return page({
     title: `People · ${event.name}`,
     register: 'backstage',
@@ -259,7 +449,21 @@ function contactCard(detail: PersonDetail): string {
     ? `<p style="margin:0 0 6px">${esc(detail.email)}</p>`
     : `<p style="margin:0 0 6px"><span class="chip warn">${esc(label('message.blocked', 'backstage'))}</span></p>`;
   const phone = detail.phone ? `<p style="margin:0">${esc(detail.phone)}</p>` : '';
-  return `<div class="railbox"><h4>Contact</h4>${email}${phone}</div>`;
+  return `<div class="railbox" id="contact"><h4>Contact</h4>${email}${phone}</div>`;
+}
+
+/** Travel preferences, dietary notes, anything logistics — SPK-15. Free text
+ *  on the person, so it means the same thing wherever they turn up again. */
+function logisticsCard(slug: string, personId: string, value: string | null): string {
+  return (
+    '<div class="railbox"><h4>Travel and logistics</h4>' +
+    `<form method="post" action="/admin/${esc(slug)}/people/${esc(personId)}/logistics">` +
+    `<textarea name="logistics" rows="3" maxlength="600" placeholder="Arrival day, seating, dietary notes">${esc(
+      value ?? ''
+    )}</textarea>` +
+    '<div class="btnrow" style="margin-top:8px"><button class="btn btn-sm" type="submit">Save</button></div>' +
+    '</form></div>'
+  );
 }
 
 function proposalsCard(slug: string, proposals: PersonProposal[]): string {
@@ -426,7 +630,8 @@ function personBody(
   event: AdminEvent,
   detail: PersonDetail,
   mayAsk: boolean,
-  outcome: string | undefined
+  outcome: string | undefined,
+  logistics: string | null
 ): string {
   const today = eventDayKey(Date.now(), event.timezone);
   return (
@@ -437,8 +642,12 @@ function personBody(
     proposalsCard(event.slug, detail.proposals) +
     tasksCard(detail.tasks, today, event.slug, detail.personId, mayAsk) +
     elsewhereCard(detail.elsewhere) +
+    logisticsCard(event.slug, detail.personId, logistics) +
     '</div>' +
-    (mayAsk ? askCard(event, detail) : '')
+    (mayAsk ? askCard(event, detail) : '') +
+    `<p class="sub" style="margin-top:18px"><a class="link" href="/admin/crm/${esc(
+      detail.personId
+    )}">See their whole history across every event →</a></p>`
   );
 }
 
@@ -447,7 +656,8 @@ function personPage(
   principal: Principal,
   detail: PersonDetail,
   mayAsk: boolean,
-  outcome: string | undefined
+  outcome: string | undefined,
+  logistics: string | null
 ): string {
   const { who, whoInitials } = whoLine(event, principal);
   const crumb = `<a href="/admin/${esc(event.slug)}/people">People</a><span> / </span>${esc(detail.name)}`;
@@ -462,7 +672,7 @@ function personPage(
       whoInitials,
       tzLabel: event.tzLabel ?? event.timezone,
       crumb,
-      body: personBody(event, detail, mayAsk, outcome),
+      body: personBody(event, detail, mayAsk, outcome, logistics),
     }),
   });
 }
@@ -523,8 +733,35 @@ export function registerPeople(app: Hono<{ Bindings: Env }>): void {
       if (!resolved) return c.notFound();
       if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
 
-      const list = await peopleList(c.env.DB, principal, resolved.event.id, { search: c.req.query('q') ?? '' });
-      return c.html(peoplePage(resolved.event, principal, list));
+      const q = c.req.query('q') ?? '';
+      const list = await peopleList(c.env.DB, principal, resolved.event.id, { search: q });
+      const rosterOnly = await rosterOnlyPeople(c.env.DB, principal, resolved.event.id);
+      const needle = q.trim().toLowerCase();
+      const matches = (r: { name: string; organisation: string | null }): boolean =>
+        !needle ||
+        r.name.toLowerCase().includes(needle) ||
+        (r.organisation ?? '').toLowerCase().includes(needle);
+      const combined = [...list.rows, ...rosterOnly.filter(matches).map(rosterOnlyAsListRow)].sort((a, b) =>
+        a.name.localeCompare(b.name)
+      );
+
+      const owing = combined.filter((r) => r.openTaskCount > 0).length;
+      const oweActive = c.req.query('owe') === '1';
+      const rows = oweActive ? combined.filter((r) => r.openTaskCount > 0) : combined;
+
+      // ?imported=/?matched=/?skipped= are counts this screen wrote itself
+      // after a CSV landed — validated as plain integers, then folded into a
+      // sentence this file owns, never echoed as free text.
+      const ic = c.req.query('imported');
+      const mc = c.req.query('matched');
+      const sc = c.req.query('skipped');
+      const digits = /^\d+$/;
+      const importNote =
+        ic !== undefined && digits.test(ic) && digits.test(mc ?? '0') && digits.test(sc ?? '0')
+          ? importedNote(Number(ic), Number(mc ?? '0'), Number(sc ?? '0'))
+          : '';
+
+      return c.html(peoplePage(resolved.event, principal, list, rows, owing, oweActive, importNote));
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;
@@ -542,6 +779,9 @@ export function registerPeople(app: Hono<{ Bindings: Env }>): void {
 
       const detail = await personDetail(c.env.DB, principal, resolved.event.id, c.req.param('personId'));
       if (!detail) return c.notFound();
+      const logisticsRow = await c.env.DB.prepare('SELECT logistics FROM person WHERE id = ?')
+        .bind(detail.personId)
+        .first<{ logistics: string | null }>();
       // One organizer's private reading of one person's file.
       c.header('cache-control', 'private, no-store');
       return c.html(
@@ -550,7 +790,8 @@ export function registerPeople(app: Hono<{ Bindings: Env }>): void {
           principal,
           detail,
           canAsk(principal, resolved.event.id),
-          c.req.query('note')
+          c.req.query('note'),
+          logisticsRow?.logistics ?? null
         )
       );
     } catch (e) {
@@ -615,6 +856,117 @@ export function registerPeople(app: Hono<{ Bindings: Env }>): void {
       const result = await cancelTask(c.env.DB, principal, resolved.event.id, c.req.param('taskId'));
       const code = result.ok ? 'withdrawn' : result.code;
       return c.redirect(`${home}?note=${encodeURIComponent(code)}#tasks`, 303);
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  /* ---------- bringing in a list — SPK-03 ---------- */
+
+  app.post('/admin/:eventSlug/people/import', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const home = `/admin/${encodeURIComponent(slug)}/people`;
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, slug);
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Bringing in a list is held by this event’s organizers.'), 403);
+      }
+
+      const form = await c.req.parseBody();
+      const file = filePart(form['csv']);
+      if (!file) return c.redirect(`${home}?note=${encodeURIComponent('Choose a CSV file first.')}`, 303);
+      if (file.size > MAX_CSV_BYTES) {
+        return c.redirect(`${home}?note=${encodeURIComponent('That file is bigger than this brings in — keep it under 512 KB.')}`, 303);
+      }
+      const parsed = parseSpeakersCsv(await file.text());
+      if (!parsed.ok) {
+        const said =
+          parsed.code === 'no-header'
+            ? 'The file needs a name column and an email column.'
+            : parsed.code === 'too-many'
+              ? 'That is more rows than one file can bring in at once.'
+              : 'That file had nothing in it.';
+        return c.redirect(`${home}?note=${encodeURIComponent(said)}`, 303);
+      }
+      const preview = await previewImportRows(c.env.DB, parsed.rows);
+      return c.html(importPreviewPage(resolved.event, principal, preview));
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  app.post('/admin/:eventSlug/people/import/confirm', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const home = `/admin/${encodeURIComponent(slug)}/people`;
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, slug);
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Bringing in a list is held by this event’s organizers.'), 403);
+      }
+
+      const form = await c.req.parseBody({ all: true });
+      const keep = new Set(manyOf(form['keep']));
+      const count = Math.min(Number(text(form['count'])) || 0, 500);
+      const rows: ParsedCsvRow[] = [];
+      for (let i = 0; i < count; i++) {
+        if (!keep.has(String(i))) continue;
+        const name = text(form[`r${i}_name`]);
+        const email = text(form[`r${i}_email`]);
+        if (!name || !email) continue;
+        rows.push({
+          line: i + 2,
+          name,
+          email,
+          jobTitle: text(form[`r${i}_job`]) || null,
+          organisation: text(form[`r${i}_org`]) || null,
+          bio: text(form[`r${i}_bio`]) || null,
+          invalid: null,
+        });
+      }
+
+      const result = await writeImportedRows(c.env.DB, principal, resolved.event.id, rows);
+      return c.redirect(
+        `${home}?imported=${result.imported}&matched=${result.matched}&skipped=${result.skipped}`,
+        303
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  /* ---------- travel and logistics — SPK-15 ---------- */
+
+  app.post('/admin/:eventSlug/people/:personId/logistics', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const personId = c.req.param('personId');
+    const home = `/admin/${encodeURIComponent(slug)}/people/${encodeURIComponent(personId)}`;
+    try {
+      const resolved = await resolveEvent(c.env.DB, principal, slug);
+      if (!resolved) return c.notFound();
+      if ('deny' in resolved) return c.html(deniedPage(resolved.message), 403);
+      if (!canAsk(principal, resolved.event.id)) {
+        return c.html(deniedPage('Editing a speaker’s record is held by this event’s organizers.'), 403);
+      }
+
+      const form = await c.req.parseBody();
+      const res = await setLogisticsForEvent(c.env.DB, principal, resolved.event.id, personId, text(form['logistics']));
+      return c.redirect(`${home}?note=${encodeURIComponent(res.ok ? 'saved' : 'not-found')}#contact`, 303);
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;

@@ -34,6 +34,8 @@ import {
   type SpeakerRef,
   type TrackRef,
 } from '../../queries/public';
+import { socialView } from '../../queries/social';
+import { principalFromCookie } from '../../workflows/account';
 
 /* ------------------------------------------------------------------ *
  * RFC 5545 primitives — escaping, folding, date formatting. Small and
@@ -216,6 +218,45 @@ export function registerIcs(app: Hono<{ Bindings: Env }>): void {
     const dtstampMs = Date.now();
     const body = calendar(matched.map((s) => agendaSessionEvent(origin, slug, dtstampMs, s)));
     return c.body(body, 200, ICS_HEADERS(`${slug}-my-picks.ics`));
+  });
+
+  // GET /:event/my-schedule.ics[?ids=a,b,c] — the visitor's own starred
+  // sessions, wired for both halves of the same promise the HTML my-schedule
+  // page keeps: signed in, this reads straight from the account's own
+  // starred list (socialView, same source my-schedule.ts and the agenda
+  // page's account-mode star bar already read) with no ids= needed at all —
+  // a visitor cannot be handed somebody else's calendar by guessing this
+  // address. Signed out, the picks live only in this browser's localStorage,
+  // so the same ?ids= contract my-picks.ics already answers is the only way
+  // a server-rendered file can name them. This is the guessable address the
+  // widget-polish pass named (my-picks.ics existed; this one 404'd).
+  app.get('/:event/my-schedule.ics', async (c) => {
+    const slug = c.req.param('event');
+    const db = c.env.DB;
+    const event = await eventBySlug(db, slug);
+    if (!event) return c.notFound();
+    const ag = await agenda(db, event.id);
+    if (!ag) return c.notFound();
+
+    const principal = await principalFromCookie(db, c.env.SESSION_SECRET, c.req.header('cookie'));
+    const ids = principal
+      ? (await socialView(db, event.id, principal.personId)).mine.starred
+      : [...new Set((c.req.query('ids') ?? '').split(',').map((s) => s.trim()).filter(Boolean))];
+    if (!ids.length) return c.notFound();
+
+    const bySessionId = new Map(ag.days.flatMap((d) => d.slots.flatMap((sl) => sl.sessions)).map((s) => [s.id, s]));
+    const matched = ids.map((id) => bySessionId.get(id)).filter((s): s is AgendaSession => Boolean(s));
+    if (!matched.length) return c.notFound();
+
+    const origin = new URL(c.req.url).origin;
+    const dtstampMs = Date.now();
+    const body = calendar(matched.map((s) => agendaSessionEvent(origin, slug, dtstampMs, s)));
+    // Signed in, this file is one person's own picks — never held in a shared
+    // cache anywhere (the same rule the HTML page and the account-mode star
+    // bar keep). Signed out it is exactly my-picks.ics's own shape, and
+    // carries no more than that route already does.
+    if (principal) c.header('cache-control', 'private, no-store');
+    return c.body(body, 200, ICS_HEADERS(`${slug}-my-schedule.ics`));
   });
 
   // GET /:event/s/:slug.ics — one session. The route pattern keeps the

@@ -21,9 +21,12 @@ import { registerOutbox } from './routes/admin/outbox';
 import { registerAdminAgenda } from './routes/admin/agenda';
 import { registerPeople } from './routes/admin/people';
 import { registerGreenRoomAdmin } from './routes/admin/greenroom';
+import { registerFilesLibrary } from './routes/admin/files';
 import { registerSettings } from './routes/admin/settings';
 import { registerReviews } from './routes/admin/reviews';
 import { registerEmbeds } from './routes/admin/embeds';
+import { registerCrm } from './routes/admin/crm';
+import { registerParticipants } from './routes/admin/participants';
 import {
   signUp,
   signIn,
@@ -64,7 +67,7 @@ app.post('/__cp0/reseed', async (c) => {
   if (!c.env.RESEED_KEY || !key || key !== c.env.RESEED_KEY) return c.text('no', 403);
   const { reseed } = await import('./workflows/reseed');
   try {
-    return c.json(await reseed(c.env.DB));
+    return c.json(await reseed(c.env.DB, c.env.FILES));
   } catch (e) {
     return c.json({ error: String(e) }, 500);
   }
@@ -269,15 +272,23 @@ app.get('/api/me', async (c) => {
 });
 
 // ---------- Backstage ----------
+// The CRM lives at /admin/crm and must be registered BEFORE registerAdminHome's
+// broad GET /admin/:eventSlug, or "crm" is read as an event slug and the
+// database page 404s. Static prefix, so first-registered wins the match.
+registerCrm(app);
 // All /admin/* prefixes are static and /gr/:nonce is its own street —
 // no matcher-order hazards among these nine.
 registerAdminHome(app);
 registerPile(app);
 registerProposal(app);
+// Participant correction sits under /admin/:eventSlug/submissions/:id/participants
+// — a deeper path than the proposal page, so order with registerProposal is safe.
+registerParticipants(app);
 registerOutbox(app);
 registerAdminAgenda(app);
 registerPeople(app);
 registerGreenRoomAdmin(app);
+registerFilesLibrary(app);
 registerSettings(app);
 registerReviews(app);
 registerEmbeds(app);
@@ -324,7 +335,7 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     if (env.RESEED_ENABLED === 'true') {
       const { reseed } = await import('./workflows/reseed');
-      ctx.waitUntil(reseed(env.DB));
+      ctx.waitUntil(reseed(env.DB, env.FILES));
     }
   },
 };

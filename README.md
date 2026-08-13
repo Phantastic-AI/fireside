@@ -110,6 +110,8 @@ npx wrangler d1 execute fireside --remote --file schema/0001_init.sql
 npx wrangler d1 execute fireside --remote --file schema/0002_roles.sql
 npx wrangler d1 execute fireside --remote --file schema/0003_passwords.sql
 npx wrangler d1 execute fireside --remote --file schema/0004_reviewer_role.sql
+npx wrangler d1 execute fireside --remote --file schema/0005_submission_waves.sql
+npx wrangler d1 execute fireside --remote --file schema/0006_file_comments.sql
 npx wrangler secret put SESSION_SECRET   # any long random string
 npx wrangler deploy
 ```

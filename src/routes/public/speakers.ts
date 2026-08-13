@@ -87,6 +87,30 @@ function roleParts(jobTitle: string | null, organisation: string | null): string
   return out;
 }
 
+/**
+ * EMB-13: a speaker's bio, with a "Show more" for the long ones. A short bio
+ * renders exactly as before; a longer one sits behind a native <details>
+ * disclosure — no script, nothing added to the no-JS baseline. Same shape as
+ * agenda.ts's abstractSnippet(), kept local here since no shared lib.ts owns
+ * this yet (the file's own established convention for small formatting
+ * helpers with no other caller).
+ */
+function bioBlock(bio: string | null): string {
+  const clean = (bio ?? '').trim();
+  if (!clean) return '';
+  const LIMIT = 220;
+  const box = 'margin-top:16px;font-size:18px;line-height:1.62;max-width:44em';
+  if (clean.length <= LIMIT) {
+    return `<p class="serif" style="${box}">${esc(clean)}</p>`;
+  }
+  const cut = clean.slice(0, LIMIT).replace(/\s+\S*$/, '');
+  return (
+    `<details class="serif" style="${box}">` +
+    `<summary style="cursor:pointer;color:inherit">${esc(cut)}… <span style="text-decoration:underline;font-size:15px">Show more</span></summary>` +
+    `<p style="margin-top:8px">${esc(clean)}</p></details>`
+  );
+}
+
 /** "{day} {time}, {room}" filled from the label map, in the event's own timezone. */
 function placementLine(startsAt: number, timezone: string, roomName: string | null): string {
   const day = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'long', day: 'numeric', month: 'long' }).format(
@@ -336,7 +360,7 @@ function speakerPersonPage(event: EventHome, sp: SpeakerPage): string {
     '<div style="flex:1;min-width:min(100%,280px)">' +
     `<h1 class="display" style="font-size:clamp(28px,4.4vw,40px)">${esc(p.name)}</h1>` +
     (role ? `<p style="margin-top:6px;font-size:17px;color:var(--ink-soft)">${role}</p>` : '') +
-    (p.bio ? `<p class="serif" style="margin-top:16px;font-size:18px;line-height:1.62;max-width:44em">${esc(p.bio)}</p>` : '') +
+    bioBlock(p.bio) +
     '</div></div>';
 
   const sessions = sessionsSection(event, firstName, sp.sessions, sp.agendaPublished);

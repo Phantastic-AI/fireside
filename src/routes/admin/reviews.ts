@@ -10,10 +10,12 @@
 //                 to a server-side guard. Same law release.ts holds for
 //                 letters, one desk over.
 //
-// Blind is not enforced here. It is enforced in queries/reviews.ts, which
-// never selects a name — so this file could not print one if it tried. The
-// missing per-event blind toggle is flagged there, at the place a fix would
-// land.
+// Blind is not enforced here. It is enforced in queries/reviews.ts: row.authors
+// stays null unless the round's own config said, on purpose, that it is not
+// blind — this file only ever renders what that read handed it (authorLine),
+// so it could not print a name on a blind round if it tried. Per-round dates,
+// a name and the blind setting itself are edited from roundConfigForm, on the
+// same screen the round history reads back from (ABS-01/ABS-07).
 //
 // Neither is assignment enforced here. The queue reads what was handed to the
 // person reading it, and a reviewer with nothing handed to her gets a calm
@@ -62,26 +64,32 @@ import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { esc, page, backstageShell, deniedPage } from '../../lib/html';
 import { label, FORMAT_KEY, LEVEL_KEY, type LabelKey } from '../../lib/labels';
-import { ScopeError } from '../../queries/admin';
+import { ScopeError, type SubmissionState } from '../../queries/admin';
 import {
   averageOf,
   handTarget,
   queuePosition,
   reviewEvent,
   reviewQueue,
+  reviewResults,
   reviewTeam,
+  roundHistory,
   roundStanding,
   stagedReviews,
   needleOf,
   pageNumber,
   NUDGE_HOURS,
   PAGE,
+  ROUND_NAME_MAX,
   SEARCH_MAX,
   TEXT_MARK_MAX,
   type HandTarget,
+  type QueueAuthor,
   type QueueRow,
+  type ResultsRow,
   type ReviewEvent,
   type ReviewQueue,
+  type RoundHistoryEntry,
   type RoundStanding,
   type ScorecardKey,
   type Scores,
@@ -97,6 +105,7 @@ import {
   takeBackAssignments,
   stepAside,
   openNextRound,
+  saveRoundConfig,
   nudgeReviewer,
   MOST_EACH,
   HANDOUT_CAP,
@@ -104,6 +113,8 @@ import {
   type AssignOutcome,
   type HandOneOutcome,
   type NudgeOutcome,
+  type RoundConfigInput,
+  type RoundConfigOutcome,
   type RoundOutcome,
   type StepAsideOutcome,
 } from '../../workflows/review';
@@ -117,6 +128,20 @@ function say(key: LabelKey, values: Record<string, string> = {}): string {
   return label(key, 'backstage').replace(/\{(\w+)\}/g, (whole, token: string) =>
     values[token] ?? whole
   );
+}
+
+/**
+ * The blind hint, true of THIS round rather than assumed of every round
+ * (ABS-07). §6's own 'review.blind' string is the product's original,
+ * always-blind sentence — still correct on every round that has not said
+ * otherwise — so only the un-blinded case is worded here, literal rather than
+ * added to the shared map, the same accommodation the round panel's "average"
+ * vs "weighted average" words already make while §6 has no row for them.
+ */
+function blindHint(ev: ReviewEvent): string {
+  return ev.roundConfig.blind
+    ? say('review.blind')
+    : 'Author names and employers are visible while you score this round.';
 }
 
 /**
@@ -303,6 +328,33 @@ function roundSaid(code: RoundOutcome, round: number): string {
   }
 }
 
+const ROUND_CONFIG_CODES: readonly RoundConfigOutcome[] = [
+  'saved',
+  'bad_date',
+  'closes_first',
+  'moved',
+  'trouble',
+];
+
+function roundConfigCode(raw: string | undefined): RoundConfigOutcome | null {
+  return ROUND_CONFIG_CODES.find((c) => c === raw) ?? null;
+}
+
+function roundConfigSaid(code: RoundConfigOutcome): string {
+  switch (code) {
+    case 'saved':
+      return 'Saved.';
+    case 'bad_date':
+      return 'One of those dates is not a day the calendar has. Nothing was changed.';
+    case 'closes_first':
+      return 'The close date is before the open date. Nothing was changed.';
+    case 'moved':
+      return 'The round moved while you were looking. Read it again, then save.';
+    case 'trouble':
+      return 'That did not go through. Try it once more.';
+  }
+}
+
 const HAND_CODES: readonly HandOneOutcome[] = [
   'handed',
   'already',
@@ -431,14 +483,17 @@ const handUrl = (
  *
  * The weight is said out loud on the heavy and light lines and left silent on
  * the normal ones, because "Normal" on every line is nine words that tell a
- * reviewer nothing — and a line that counts double is the one fact she needs
- * before she marks it, not after.
+ * reviewer nothing — and a heavy line is the one fact she needs before she
+ * marks it, not after. Worded to match the editor's own caption exactly
+ * ("heavy counts three times light", settings.ts) rather than a paraphrase:
+ * heavy is weight 3 against light's weight 1, so "three times" is the
+ * arithmetic, not a rounder word standing in for it.
  */
 function criterion(k: ScorecardKey, mark: string | number | undefined): string {
   const name = `score_${esc(k.key)}`;
   const weight =
     k.weight === 3
-      ? '<span class="opt">counts double</span>'
+      ? '<span class="opt">counts three times light</span>'
       : k.weight === 1
         ? '<span class="opt">counts light</span>'
         : '';
@@ -539,6 +594,35 @@ function writtenMarks(card: ScorecardKey[], scores: Scores): string {
     .join('');
 }
 
+// Word for word what proposal.ts's own ROLE_KEY says (02 §6's vocabulary) —
+// a co-presenter should not learn a fourth word for the same role because a
+// different screen happened to render it.
+const PARTICIPATION_ROLE_KEY: Record<string, LabelKey> = {
+  speaker: 'role.speaker',
+  co_speaker: 'role.cospeaker',
+  moderator: 'role.host',
+};
+
+/**
+ * Who wrote it, said out loud — the contrast ABS-07 asks the whole file for.
+ * This line exists on the row only when reviewQueue actually fetched authors
+ * for it, which it only does when the round's own config said, on purpose,
+ * that it is not blind. A blind round renders nothing here no matter who is
+ * reading the page, because row.authors is null before this function ever runs.
+ */
+function authorLine(row: QueueRow): string {
+  if (!row.authors || row.authors.length === 0) return '';
+  const said = row.authors
+    .map((a) => {
+      const key = PARTICIPATION_ROLE_KEY[a.role];
+      const role = key ? label(key, 'backstage') : a.role;
+      const org = a.organisation ? `, ${a.organisation}` : '';
+      return a.role === 'speaker' ? `${a.name}${org}` : `${a.name} (${role})${org}`;
+    })
+    .join(' · ');
+  return `<p class="sub" style="margin:0 0 8px">${esc(said)}</p>`;
+}
+
 function rowHead(row: QueueRow, ev: ReviewEvent): string {
   const bits = [word(FORMAT_KEY[row.format]), mins(row.minutes), word(LEVEL_KEY[row.level ?? ''])]
     .filter(Boolean)
@@ -550,7 +634,8 @@ function rowHead(row: QueueRow, ev: ReviewEvent): string {
       ? `<span class="tk" style="${esc(trackStyle(row.track.colour))}">${esc(row.track.name)}</span>`
       : '') +
     `<span class="sub">${esc(bits)}${esc(waited)}</span>` +
-    '</div>'
+    '</div>' +
+    authorLine(row)
   );
 }
 
@@ -931,6 +1016,77 @@ function teamCard(r: TeamReader, ev: ReviewEvent, nowMs: number): string {
  * The round — the widest act in the room, and the quietest panel
  * ------------------------------------------------------------------ */
 
+/** An epoch millisecond, as the day it names in UTC — the form field this
+ *  round's dates are edited through, and the shape they are stored in. */
+function isoDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** A round's dates, said as a range, an open end, or their absence — the
+ *  same three shapes the history block and the masthead both need. */
+function roundDates(ev: ReviewEvent, opensAt: number | null, closesAt: number | null): string {
+  if (opensAt !== null && closesAt !== null) {
+    return `${onDay(opensAt, ev.timezone)} – ${onDay(closesAt, ev.timezone)}`;
+  }
+  if (opensAt !== null) return `Opens ${onDay(opensAt, ev.timezone)}`;
+  if (closesAt !== null) return `Closes ${onDay(closesAt, ev.timezone)}`;
+  return 'No dates set';
+}
+
+/**
+ * The form a round's own facts are edited through: a name, an open and close
+ * date, and whether readers see who wrote what — ABS-01's editable identity
+ * and ABS-07's per-round anonymization, both missing before this file grew
+ * them. One confirm, not two: it binds nobody's letter and moves no decision,
+ * the same reasoning stepAside's header gives for a reviewer's own act.
+ */
+function roundConfigForm(ev: ReviewEvent, round: number): string {
+  const cfg = round === ev.round ? ev.roundConfig : null;
+  return (
+    `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/round-config"` +
+    ' style="margin-top:14px">' +
+    `<input type="hidden" name="round" value="${round}">` +
+    '<div style="display:flex;gap:12px;flex-wrap:wrap">' +
+    '<label class="f" style="flex:1;min-width:200px"><span class="f-lab">Name this round</span>' +
+    `<input type="text" name="name" maxlength="${ROUND_NAME_MAX}" value="${esc(cfg?.name ?? '')}" ` +
+    `placeholder="${esc(say('review.round', { n: num(round) }))}"></label>` +
+    '<label class="f" style="min-width:140px"><span class="f-lab">Opens</span>' +
+    `<input type="text" name="opens" value="${esc(cfg?.opensAt ? isoDay(cfg.opensAt) : '')}" ` +
+    'placeholder="2026-08-01"></label>' +
+    '<label class="f" style="min-width:140px"><span class="f-lab">Closes</span>' +
+    `<input type="text" name="closes" value="${esc(cfg?.closesAt ? isoDay(cfg.closesAt) : '')}" ` +
+    'placeholder="2026-10-15"></label>' +
+    '</div>' +
+    '<label class="radio" style="margin-top:10px;align-items:flex-start">' +
+    `<input type="checkbox" name="blind" value="1"${cfg === null || cfg.blind ? ' checked' : ''}>` +
+    '<span>Hide author names and employers from everyone reading this round</span></label>' +
+    '<div class="btnrow" style="margin-top:10px">' +
+    '<button class="btn btn-sm" type="submit">Save round details</button></div>' +
+    '</form>'
+  );
+}
+
+/** One earlier round, read back whole — the proof that opening the next one
+ *  did not touch it: its own name, its own dates, its own counts, unmoved. */
+function roundHistoryLine(ev: ReviewEvent, r: RoundHistoryEntry): string {
+  const name = r.name ?? say('review.round', { n: num(r.round) });
+  const record =
+    r.onRecord === 0
+      ? 'Nothing was sent in.'
+      : `${count(r.onRecord, 'review is', 'reviews are')} on the record.`;
+  const stepped = r.stepped > 0 ? ` ${count(r.stepped, 'reader', 'readers')} stepped aside.` : '';
+  return (
+    '<div style="padding:10px 0;border-top:1px solid var(--line-soft)">' +
+    `<div style="font-weight:640">${esc(name)}` +
+    (r.name ? `<span class="sub"> · ${esc(say('review.round', { n: num(r.round) }))}</span>` : '') +
+    '</div>' +
+    `<div class="sub" style="margin-top:2px">${esc(roundDates(ev, r.opensAt, r.closesAt))} · ` +
+    `${esc(r.blind ? 'Names hidden while scoring' : 'Names visible while scoring')}</div>` +
+    `<div class="sub" style="margin-top:2px">${esc(`${record}${stepped}`)}</div>` +
+    '</div>'
+  );
+}
+
 /**
  * Round n, and the door to n+1.
  *
@@ -944,9 +1100,19 @@ function teamCard(r: TeamReader, ev: ReviewEvent, nowMs: number): string {
  * It is a panel rather than a banner on purpose. Most evenings nobody opens a
  * round, and a control that shouts every time it is not needed teaches people
  * to stop reading the screen.
+ *
+ * `history` is every round up to and including this one (ABS-01/ABS-08): the
+ * evidence that opening round two left round one exactly where it was, each
+ * with its own name, its own dates and its own counts rather than one number
+ * overwriting the last.
  */
-function roundPanel(ev: ReviewEvent, standing: RoundStanding, opening: boolean): string {
-  const here = say('review.round', { n: num(standing.round) });
+function roundPanel(
+  ev: ReviewEvent,
+  standing: RoundStanding,
+  history: RoundHistoryEntry[],
+  opening: boolean
+): string {
+  const here = ev.roundConfig.name ?? say('review.round', { n: num(standing.round) });
   const next = say('review.round', { n: num(standing.round + 1) });
   const record =
     standing.onRecord === 0
@@ -979,19 +1145,47 @@ function roundPanel(ev: ReviewEvent, standing: RoundStanding, opening: boolean):
           'out again. Settings is where it changes.'
     )}</p>` +
     `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/open-round"` +
-    ' class="btnrow" style="margin-top:12px">' +
+    ' style="margin-top:12px">' +
     `<input type="hidden" name="from" value="${standing.round}">` +
     `<input type="hidden" name="to" value="${standing.round + 1}">` +
+    '<div style="display:flex;gap:12px;flex-wrap:wrap">' +
+    '<label class="f" style="flex:1;min-width:200px"><span class="f-lab">Name it</span>' +
+    `<input type="text" name="name" maxlength="${ROUND_NAME_MAX}" placeholder="${esc(next)}"></label>` +
+    '<label class="f" style="min-width:140px"><span class="f-lab">Opens</span>' +
+    '<input type="text" name="opens" placeholder="2026-10-16"></label>' +
+    '<label class="f" style="min-width:140px"><span class="f-lab">Closes</span>' +
+    '<input type="text" name="closes" placeholder="2026-11-30"></label>' +
+    '</div>' +
+    '<label class="radio" style="margin-top:10px;align-items:flex-start">' +
+    '<input type="checkbox" name="blind" value="1" checked>' +
+    '<span>Hide author names and employers from everyone reading it</span></label>' +
+    '<div class="btnrow" style="margin-top:12px">' +
     `<button class="btn btn-danger" type="submit">Open ${esc(next.toLowerCase())}</button>` +
     `<a class="btn btn-quiet" href="${esc(queueUrl(ev.slug))}#team">Stay on ${esc(here.toLowerCase())}</a>` +
-    '</form></div>';
+    '</div></form></div>';
+
+  const earlier = history.slice(0, -1).reverse();
+  const past =
+    earlier.length > 0
+      ? '<div class="card card-pad" style="margin-top:12px">' +
+        '<h4 class="serif" style="font-size:15.5px;font-weight:600">Earlier rounds</h4>' +
+        earlier.map((r) => roundHistoryLine(ev, r)).join('') +
+        '</div>'
+      : '';
 
   return (
     '<div class="card card-pad" style="margin-top:16px">' +
     `<h3 class="serif" style="font-size:19px;font-weight:600">${esc(here)}</h3>` +
+    (ev.roundConfig.name
+      ? `<p class="sub" style="margin:2px 0 0">${esc(say('review.round', { n: num(standing.round) }))}</p>`
+      : '') +
+    `<p class="sub" style="margin:6px 0 0">${esc(roundDates(ev, ev.roundConfig.opensAt, ev.roundConfig.closesAt))} · ` +
+    `${esc(ev.roundConfig.blind ? 'Names hidden while scoring' : 'Names visible while scoring')}</p>` +
     `<p class="sub" style="margin:6px 0 0">${esc(`${record}${stepped}`)} ` +
     'Every list on this page is this round&#39;s. Nothing written in an earlier one moves.</p>' +
+    roundConfigForm(ev, standing.round) +
     (opening ? confirm : first) +
+    past +
     '</div>'
   );
 }
@@ -1074,6 +1268,7 @@ function whoReadsWhat(
   pile: number,
   said: string | null,
   standing: RoundStanding,
+  history: RoundHistoryEntry[],
   opening: boolean,
   nowMs: number
 ): string {
@@ -1096,7 +1291,7 @@ function whoReadsWhat(
       'proposals to. Add readers from settings and they turn up here.</p>' +
       `<a class="btn btn-primary" href="/admin/${encodeURIComponent(ev.slug)}/settings">` +
       'Add someone to the team →</a></div>' +
-      roundPanel(ev, standing, opening) +
+      roundPanel(ev, standing, history, opening) +
       '</section>'
     );
   }
@@ -1117,9 +1312,165 @@ function whoReadsWhat(
       ? handOutForm(ev, team, pile)
       : '<p class="sub" style="margin-top:16px">Nothing is undecided on this program, ' +
         'so there is nothing to hand out.</p>') +
-    roundPanel(ev, standing, opening) +
+    roundPanel(ev, standing, history, opening) +
     '</section>'
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * The results table (ABS-10/ABS-13) — the committee's own aggregate,
+ * sortable, and a CSV of it besides.
+ * ------------------------------------------------------------------ */
+
+const resultsUrl = (
+  slug: string,
+  q: Record<string, string | number | undefined> = {}
+): string => {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) {
+    if (v !== undefined && v !== '') params.set(k, String(v));
+  }
+  const tail = params.toString();
+  return `/admin/${encodeURIComponent(slug)}/reviews/results${tail ? `?${tail}` : ''}`;
+};
+
+// Word for word what proposal.ts's own STATE_KEY and CHIP maps say (02 §6's
+// vocabulary and the lifted CSS's own chip skins) — a status should not learn
+// a fifth name on the results table when the proposals list already gave it
+// one.
+const STATE_LABEL: Record<SubmissionState, LabelKey> = {
+  draft: 'submission.draft',
+  submitted: 'submission.submitted',
+  accepted: 'submission.accepted',
+  waitlisted: 'submission.waitlisted',
+  rejected: 'submission.rejected',
+  withdrawn: 'submission.withdrawn',
+  cancelled: 'submission.cancelled',
+};
+const STATE_CHIP: Record<SubmissionState, string> = {
+  draft: 's-draft',
+  submitted: 's-undecided',
+  accepted: 's-accepted',
+  waitlisted: 's-maybe',
+  rejected: 's-declined',
+  withdrawn: 's-withdrawn',
+  cancelled: 'warn',
+};
+
+/** Highest first unless the address asked otherwise — the direction a chair
+ *  opens a results table wanting, every time this screen has been watched
+ *  used. */
+type ResultsSort = 'desc' | 'asc';
+
+function sortResults(rows: ResultsRow[], sort: ResultsSort): ResultsRow[] {
+  const scored = rows.filter((r) => r.aggregate !== null);
+  const unscored = rows.filter((r) => r.aggregate === null);
+  scored.sort((a, b) =>
+    sort === 'desc' ? (b.aggregate as number) - (a.aggregate as number) : (a.aggregate as number) - (b.aggregate as number)
+  );
+  // Unscored proposals sort last whichever direction is asked for: a sort
+  // toggle is about the scores that exist, not about scrambling the ones that
+  // do not.
+  return [...scored, ...unscored];
+}
+
+function resultsRow(ev: ReviewEvent, r: ResultsRow): string {
+  const track = r.track
+    ? `<div style="margin-top:4px"><span class="tk" style="${esc(trackStyle(r.track.colour))}">` +
+      `${esc(r.track.name)}</span></div>`
+    : '';
+  const score =
+    r.aggregate === null
+      ? '<span class="sub">Not scored yet</span>'
+      : `<span class="score">${r.aggregate.toFixed(1)}</span> ` +
+        `<span class="sub">${r.weighted ? 'weighted average' : 'average'} · ` +
+        `${esc(count(r.reviewCount, 'review', 'reviews'))}</span>`;
+  return (
+    '<tr>' +
+    `<td><a class="link" href="/admin/${encodeURIComponent(ev.slug)}/submissions/` +
+    `${encodeURIComponent(r.submissionId)}">${esc(r.title)}</a>${track}</td>` +
+    `<td>${esc(word(FORMAT_KEY[r.format]) || r.format)}</td>` +
+    `<td><span class="chip ${esc(STATE_CHIP[r.state])}">${esc(label(STATE_LABEL[r.state], 'backstage'))}</span></td>` +
+    `<td>${score}</td>` +
+    `<td>${r.recommendation ? esc(r.recommendation) : '<span class="sub">—</span>'}</td>` +
+    '</tr>'
+  );
+}
+
+function resultsPage(
+  principal: Principal,
+  ev: ReviewEvent,
+  results: { rows: ResultsRow[]; more: boolean },
+  sort: ResultsSort
+): string {
+  const crumb = `<a href="${esc(queueUrl(ev.slug))}">Reviews</a> › <span>results</span>`;
+  const ordered = sortResults(results.rows, sort);
+  const scoredCount = results.rows.filter((r) => r.aggregate !== null).length;
+
+  const head =
+    '<div style="padding:26px 0 0">' +
+    '<h1 class="display" style="font-size:32px">Results</h1>' +
+    `<p class="counts">${esc(
+      `${count(results.rows.length, 'submission', 'submissions')} · ` +
+        `${count(scoredCount, 'has a score', 'have a score')}`
+    )}${results.more ? esc(` · showing the first ${num(results.rows.length)}`) : ''}</p>` +
+    '</div>';
+
+  if (results.rows.length === 0) {
+    return shell(
+      principal,
+      ev,
+      head +
+        '<div class="sec state-out"><h2>Nothing to show yet.</h2>' +
+        '<p>Once a proposal has been sent in and a reviewer has scored it, it lands here.</p>' +
+        `<a class="btn btn-primary" href="${esc(queueUrl(ev.slug))}">Back to Reviews →</a></div>`,
+      crumb
+    );
+  }
+
+  const csvHref = `/admin/${encodeURIComponent(ev.slug)}/reviews/results.csv${sort === 'asc' ? '?sort=asc' : ''}`;
+  const sortBar =
+    '<div class="btnrow" style="margin-top:14px">' +
+    `<a class="btn btn-sm" href="${esc(resultsUrl(ev.slug, { sort: 'desc' }))}"` +
+    `${sort === 'desc' ? ' aria-current="page"' : ''}>Highest score first</a>` +
+    `<a class="btn btn-sm" href="${esc(resultsUrl(ev.slug, { sort: 'asc' }))}"` +
+    `${sort === 'asc' ? ' aria-current="page"' : ''}>Lowest score first</a>` +
+    `<a class="btn btn-sm" href="${esc(csvHref)}">Download as CSV →</a>` +
+    '</div>';
+
+  const table =
+    '<div class="tablewrap" style="margin-top:14px"><table class="t"><thead><tr>' +
+    '<th>Submission</th><th>Format</th><th>Status</th><th>Score</th><th>Recommendation</th>' +
+    '</tr></thead><tbody>' +
+    ordered.map((r) => resultsRow(ev, r)).join('') +
+    '</tbody></table></div>';
+
+  return shell(principal, ev, head + sortBar + table, crumb);
+}
+
+function csvField(v: string): string {
+  return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+function resultsCsv(ev: ReviewEvent, results: { rows: ResultsRow[] }, sort: ResultsSort): string {
+  const header = ['title', 'track', 'format', 'status', 'aggregate_score', 'reviews', 'recommendation'];
+  const lines = [header.map(csvField).join(',')];
+  for (const r of sortResults(results.rows, sort)) {
+    lines.push(
+      [
+        r.title,
+        r.track?.name ?? '',
+        word(FORMAT_KEY[r.format]) || r.format,
+        label(STATE_LABEL[r.state], 'backstage'),
+        r.aggregate === null ? '' : r.aggregate.toFixed(2),
+        String(r.reviewCount),
+        r.recommendation ?? '',
+      ]
+        .map(csvField)
+        .join(',')
+    );
+  }
+  return lines.join('\r\n') + '\r\n';
 }
 
 /* ------------------------------------------------------------------ *
@@ -1219,6 +1570,9 @@ function queuePage(
     /** The sentence the last act on the chair's half of the room left behind. */
     teamSaid: string | null;
     standing: RoundStanding | null;
+    /** Every round up to this one, dates and all — null on a reviewer's own
+     *  screen, which has no committee history to show. */
+    history: RoundHistoryEntry[] | null;
     opening: boolean;
     nowMs: number;
   }
@@ -1250,13 +1604,14 @@ function queuePage(
       ? handCard(ev, opts.team, opts.hand.target, v, opts.hand.said)
       : '';
   const team =
-    ev.everything && opts.standing
+    ev.everything && opts.standing && opts.history
       ? whoReadsWhat(
           ev,
           opts.team,
           q.pile,
           opts.teamSaid,
           opts.standing,
+          opts.history,
           opts.opening,
           opts.nowMs
         )
@@ -1280,11 +1635,14 @@ function queuePage(
     // an evening that has not started — and none of the three may fall back to
     // the whole pile to fill the screen.
     const door = `<a class="btn btn-primary" href="/admin/${encodeURIComponent(ev.slug)}">See the program →</a>`;
+    const results = ev.everything
+      ? ` <a class="btn" href="${esc(resultsUrl(ev.slug))}">See the results table →</a>`
+      : '';
     const thisRound = say('review.round', { n: num(q.round) }).toLowerCase();
     const empty = ev.everything
       ? '<div class="sec state-out"><h2>Nothing is waiting on the committee.</h2>' +
         '<p>Every proposal on this program has a decision. When the next call closes, ' +
-        `what comes in lands here.</p>${door}</div>`
+        `what comes in lands here.</p>${door}${results}</div>`
       : q.mine > 0
         ? '<div class="sec state-out"><h2>Everything on your list has been decided.</h2>' +
           `<p>The ${esc(count(q.mine, 'proposal', 'proposals'))} handed to you in ` +
@@ -1344,7 +1702,7 @@ function queuePage(
       : q.matching === 0
         ? '<div class="sec state-out"><h2>Nothing here matches that.</h2>' +
           `<p>${esc(`No proposal on this list has “${v.q}” in its title.`)} ` +
-          `${esc(say('review.blind'))}</p>` +
+          `${esc(blindHint(ev))}</p>` +
           `<a class="btn btn-primary" href="${esc(queueUrl(ev.slug))}">Back to the whole list →</a>` +
           '</div>'
         : '<div class="sec state-out"><h2>That page is past the end.</h2>' +
@@ -1366,6 +1724,14 @@ function queuePage(
       }</p>`
     : '';
 
+  // ABS-10/ABS-13: a chair should reach the aggregate table in one click from
+  // the screen she is already on, not by finding it — so it sits beside the
+  // heading rather than waiting at the foot of "Who reads what".
+  const resultsLink = ev.everything
+    ? `<a class="btn btn-primary" style="margin-top:14px" href="${esc(resultsUrl(ev.slug))}">` +
+      'See the results table →</a>'
+    : '';
+
   // With nothing left, "Yours to score · 0" is a zero standing next to a
   // sentence that already says so. The progress count leads instead.
   const head =
@@ -1382,7 +1748,8 @@ function queuePage(
     `<span class="sep">·</span>${round}</p>` +
     readerFact(opts.standing) +
     whose +
-    `<p class="hint">${esc(say('review.blind'))}</p>` +
+    `<p class="hint">${esc(blindHint(ev))}</p>` +
+    resultsLink +
     '</div>' +
     said;
 
@@ -1607,10 +1974,11 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     // the standing that may hand work out, so a reviewer's screen costs what it
     // costed before.
     const handAsked = ev.everything ? (c.req.query('hand') ?? '').trim() : '';
-    const [q, team, standing, target] = await Promise.all([
+    const [q, team, standing, history, target] = await Promise.all([
       reviewQueue(c.env.DB, principal, ev, { page: view.page, q: view.q }),
       ev.everything ? reviewTeam(c.env.DB, principal, ev) : Promise.resolve([]),
       ev.everything ? roundStanding(c.env.DB, principal, ev) : Promise.resolve(null),
+      ev.everything ? roundHistory(c.env.DB, principal, ev) : Promise.resolve(null),
       handAsked ? handTarget(c.env.DB, principal, ev, handAsked) : Promise.resolve(null),
     ]);
 
@@ -1618,6 +1986,7 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     // against its own closed set before it is allowed to mean anything.
     const did = ev.everything ? assignCode(c.req.query('did')) : null;
     const rnd = ev.everything ? roundCode(c.req.query('round')) : null;
+    const rc = ev.everything ? roundConfigCode(c.req.query('rc')) : null;
     const nudged = ev.everything ? nudgeCode(c.req.query('nudged')) : null;
     // A name off the address bar would be a stranger's word. This one is
     // matched back to the committee the screen already read — the nudge and the
@@ -1636,17 +2005,71 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
         hand: handAsked ? { target, said: handed ? handSaid(handed, whoName) : null } : null,
         team,
         standing,
+        history,
         opening: ev.everything && c.req.query('open_round') === String(ev.round + 1),
         nowMs: Date.now(),
         teamSaid: did
           ? assignSaid(did, tally(c.req.query('gave')), tally(c.req.query('held')), c.req.query('more') === '1')
           : rnd
             ? roundSaid(rnd, ev.round)
-            : nudged
-              ? nudgeSaid(nudged, whoName, tally(c.req.query('open_left')))
-              : null,
+            : rc
+              ? roundConfigSaid(rc)
+              : nudged
+                ? nudgeSaid(nudged, whoName, tally(c.req.query('open_left')))
+                : null,
       })
     );
+  });
+
+  // ABS-10 — the committee's own aggregate, sortable. Decider-only, the same
+  // standing that hands the pile out: an aggregate is committee business.
+  app.get('/admin/:eventSlug/reviews/results', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const opened = await enter(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'), slug);
+    if (opened instanceof Response) return opened;
+    const { principal, ev } = opened;
+    if (!ev.everything) {
+      return new Response(deniedPage('The results table is the committee&#39;s to read.'), {
+        status: 403,
+        headers: HTML,
+      });
+    }
+    c.header('cache-control', 'private, no-store');
+    const sort: ResultsSort = c.req.query('sort') === 'asc' ? 'asc' : 'desc';
+    try {
+      const results = await reviewResults(c.env.DB, principal, ev);
+      return c.html(resultsPage(principal, ev, results, sort));
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  // ABS-13 — the same table, honouring the same ?sort=, as a file rather than
+  // a screen. No ROOM ceiling here: a download is read somewhere else, later,
+  // with nothing left on the page to page through.
+  app.get('/admin/:eventSlug/reviews/results.csv', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const opened = await enter(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'), slug);
+    if (opened instanceof Response) return opened;
+    const { principal, ev } = opened;
+    if (!ev.everything) {
+      return new Response(deniedPage('The results table is the committee&#39;s to read.'), {
+        status: 403,
+        headers: HTML,
+      });
+    }
+    const sort: ResultsSort = c.req.query('sort') === 'asc' ? 'asc' : 'desc';
+    try {
+      const results = await reviewResults(c.env.DB, principal, ev);
+      c.header('content-type', 'text/csv; charset=utf-8');
+      c.header('content-disposition', `attachment; filename="${ev.slug}-review-results.csv"`);
+      c.header('cache-control', 'private, no-store');
+      return c.body(resultsCsv(ev, results, sort));
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
   });
 
   // ONE CLICK — hers, and hers to overwrite. Nothing leaves the building.
@@ -1795,13 +2218,54 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     const form = await c.req.parseBody();
     const from = Number.parseInt(typeof form['from'] === 'string' ? form['from'] : '', 10);
     const to = Number.parseInt(typeof form['to'] === 'string' ? form['to'] : '', 10);
+    // The round about to open can be named and dated in the same confirm —
+    // ABS-S2's "Final Review" is this form's own fields, not a second trip
+    // through settings afterwards.
+    const config: RoundConfigInput = {
+      name: typeof form['name'] === 'string' ? form['name'] : '',
+      opensOn: typeof form['opens'] === 'string' ? form['opens'] : '',
+      closesOn: typeof form['closes'] === 'string' ? form['closes'] : '',
+      blind: form['blind'] === '1',
+    };
 
     try {
-      const outcome = await openNextRound(c.env.DB, principal, ev.id, from, to);
+      const outcome = await openNextRound(c.env.DB, principal, ev.id, from, to, config);
       return c.redirect(teamUrl(ev.slug, { round: outcome }), 303);
     } catch (e) {
       if (e instanceof ScopeError) {
         return new Response(deniedPage('Opening a round is not yours to do.'), {
+          status: 403,
+          headers: HTML,
+        });
+      }
+      throw e;
+    }
+  });
+
+  // NAMING A ROUND — one confirm, since it binds nobody's letter and moves no
+  // decision: the current round's own facts, or (from the confirm above) the
+  // round about to open.
+  app.post('/admin/:eventSlug/reviews/round-config', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const opened = await enter(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'), slug);
+    if (opened instanceof Response) return opened;
+    const { principal, ev } = opened;
+
+    const form = await c.req.parseBody();
+    const round = Number.parseInt(typeof form['round'] === 'string' ? form['round'] : '', 10);
+    const input: RoundConfigInput = {
+      name: typeof form['name'] === 'string' ? form['name'] : '',
+      opensOn: typeof form['opens'] === 'string' ? form['opens'] : '',
+      closesOn: typeof form['closes'] === 'string' ? form['closes'] : '',
+      blind: form['blind'] === '1',
+    };
+
+    try {
+      const outcome = await saveRoundConfig(c.env.DB, principal, ev.id, round, input);
+      return c.redirect(teamUrl(ev.slug, { rc: outcome }), 303);
+    } catch (e) {
+      if (e instanceof ScopeError) {
+        return new Response(deniedPage('Naming a round is not yours to do.'), {
           status: 403,
           headers: HTML,
         });

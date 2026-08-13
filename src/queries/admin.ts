@@ -184,13 +184,36 @@ export type ProposalMessage = {
   staged: boolean;
 };
 
-export type ProposalFile = {
+export type ProposalDeliverableVersion = {
   id: string;
   filename: string;
   contentType: string;
   sizeBytes: number;
   uploadedAt: number;
-  replacedAt: number | null;
+  current: boolean;
+};
+
+export type ProposalDeliverableComment = {
+  id: string;
+  authorPersonId: string;
+  authorName: string;
+  body: string;
+  createdAt: number;
+};
+
+/** CNT-04/CNT-05 — one file-request task on this proposal, whole: every
+ *  version it has ever been sent (current first) and the comment thread
+ *  underneath it. Grouped by task rather than left as a flat file list, so
+ *  the organizer's own file view can show what a version list can only mean
+ *  once it knows which request the versions belong to. */
+export type ProposalDeliverable = {
+  taskId: string;
+  title: string;
+  dueOn: string | null;
+  completedAt: number | null;
+  cancelledAt: number | null;
+  versions: ProposalDeliverableVersion[];
+  comments: ProposalDeliverableComment[];
 };
 
 export type ProposalRevision = {
@@ -237,7 +260,7 @@ export type Proposal = {
   reviewsSubmitted: number;
   tasks: ProposalTask[];
   messages: ProposalMessage[];
-  files: ProposalFile[];
+  deliverables: ProposalDeliverable[];
   revisions: ProposalRevision[];
 };
 
@@ -607,7 +630,7 @@ export async function proposal(
 ): Promise<Proposal | null> {
   requireScope(principal, eventId, READ_ROLES);
 
-  const [subRes, partRes, reviewRes, aggRes, taskRes, msgRes, fileRes, revRes] = await db.batch<
+  const [subRes, partRes, reviewRes, aggRes, taskRes, msgRes, deliverableTaskRes, deliverableFileRes, deliverableCommentRes, revRes] = await db.batch<
     Record<string, unknown>
   >([
     db
@@ -677,11 +700,38 @@ export async function proposal(
          ORDER BY m.created_at DESC, m.id`
       )
       .bind(submissionId),
+    // CNT-04/CNT-05 — the deliverable requests on this proposal (whatever the
+    // organizer has ever asked for here), each with its own versions and its
+    // own thread. Cancelled requests are not filtered out: a request that was
+    // withdrawn can still carry a comment worth reading.
     db
       .prepare(
-        `SELECT id, filename, content_type, size_bytes, uploaded_at, replaced_at
-         FROM file WHERE owner_kind = 'submission' AND owner_id = ?
-         ORDER BY replaced_at IS NOT NULL, uploaded_at DESC`
+        `SELECT id, title, due_on, completed_at, cancelled_at
+           FROM task WHERE submission_id = ? AND kind = 'file_request'
+          ORDER BY cancelled_at IS NOT NULL, completed_at IS NOT NULL, due_on IS NULL, due_on, title`
+      )
+      .bind(submissionId),
+    // Every version ever sent against one of those requests. The join
+    // reconstructs the key a version was written under (workflows/files.ts's
+    // 'slides/{taskId}/{fileId}') rather than parsing it back out of a string,
+    // so a task and its files can never silently drift apart.
+    db
+      .prepare(
+        `SELECT f.id, f.filename, f.content_type, f.size_bytes, f.uploaded_at, f.replaced_at, tk.id AS task_id
+           FROM file f
+           JOIN task tk ON tk.submission_id = ?1 AND tk.kind = 'file_request'
+                        AND f.r2_key = 'slides/' || tk.id || '/' || f.id
+          WHERE f.owner_kind = 'submission' AND f.owner_id = ?1
+          ORDER BY tk.id, f.replaced_at IS NOT NULL, f.uploaded_at DESC`
+      )
+      .bind(submissionId),
+    db
+      .prepare(
+        `SELECT fc.id, fc.task_id, fc.author_person_id, pe.name AS author_name, fc.body, fc.created_at
+           FROM file_comment fc
+           JOIN task tk ON tk.id = fc.task_id AND tk.submission_id = ?
+           JOIN person pe ON pe.id = fc.author_person_id
+          ORDER BY fc.task_id, fc.created_at`
       )
       .bind(submissionId),
     db
@@ -827,21 +877,63 @@ export async function proposal(
       blockedReason: m.blocked_reason,
       staged: m.delivered_at === null,
     })),
-    files: rowsOf<{
-      id: string;
-      filename: string;
-      content_type: string;
-      size_bytes: number;
-      uploaded_at: number;
-      replaced_at: number | null;
-    }>(fileRes).map((f) => ({
-      id: f.id,
-      filename: f.filename,
-      contentType: f.content_type,
-      sizeBytes: f.size_bytes,
-      uploadedAt: f.uploaded_at,
-      replacedAt: f.replaced_at,
-    })),
+    deliverables: (() => {
+      const versionsByTask = new Map<string, ProposalDeliverableVersion[]>();
+      for (const f of rowsOf<{
+        id: string;
+        filename: string;
+        content_type: string;
+        size_bytes: number;
+        uploaded_at: number;
+        replaced_at: number | null;
+        task_id: string;
+      }>(deliverableFileRes)) {
+        const list = versionsByTask.get(f.task_id) ?? [];
+        list.push({
+          id: f.id,
+          filename: f.filename,
+          contentType: f.content_type,
+          sizeBytes: f.size_bytes,
+          uploadedAt: f.uploaded_at,
+          current: f.replaced_at === null,
+        });
+        versionsByTask.set(f.task_id, list);
+      }
+      const commentsByTask = new Map<string, ProposalDeliverableComment[]>();
+      for (const c of rowsOf<{
+        id: string;
+        task_id: string;
+        author_person_id: string;
+        author_name: string;
+        body: string;
+        created_at: number;
+      }>(deliverableCommentRes)) {
+        const list = commentsByTask.get(c.task_id) ?? [];
+        list.push({
+          id: c.id,
+          authorPersonId: c.author_person_id,
+          authorName: c.author_name,
+          body: c.body,
+          createdAt: c.created_at,
+        });
+        commentsByTask.set(c.task_id, list);
+      }
+      return rowsOf<{
+        id: string;
+        title: string;
+        due_on: string | null;
+        completed_at: number | null;
+        cancelled_at: number | null;
+      }>(deliverableTaskRes).map((t) => ({
+        taskId: t.id,
+        title: t.title,
+        dueOn: t.due_on,
+        completedAt: t.completed_at,
+        cancelledAt: t.cancelled_at,
+        versions: versionsByTask.get(t.id) ?? [],
+        comments: commentsByTask.get(t.id) ?? [],
+      }));
+    })(),
     revisions: rowsOf<{ id: string; body: string; source: string; created_at: number }>(revRes).map(
       (r) => ({ id: r.id, body: r.body, source: r.source, createdAt: r.created_at })
     ),

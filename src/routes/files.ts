@@ -81,13 +81,35 @@ function holdsEvent(principal: Principal, eventId: string): boolean {
   }
 }
 
+// A person-owned deck (workflows/files.ts's saveDeck, for a file-request task
+// with no talk behind it — CNT's headshot-style ask) carries no event_id of
+// its own; its key does, the same way a task's own id does: 'slides/{taskId}/
+// {fileId}'. A person-owned headshot never reaches this file at all (its key
+// is public, served above before mayOpen is ever asked), so the only key
+// shaped this way that arrives here is a deck's.
+const DECK_PREFIX = 'slides/';
+function taskIdFromDeckKey(r2Key: string): string | null {
+  if (!r2Key.startsWith(DECK_PREFIX)) return null;
+  const rest = r2Key.slice(DECK_PREFIX.length);
+  const slash = rest.indexOf('/');
+  return slash > 0 ? rest.slice(0, slash) : null;
+}
+
 /**
  * A private file opens for the person it belongs to, and for anyone with
  * backstage standing on the conference it was sent to. Both facts are asked
  * of the database rather than inferred from the id in the address bar.
  */
 async function mayOpen(db: D1Database, principal: Principal, row: FileRow): Promise<boolean> {
-  if (row.ownerKind === 'person') return row.ownerId === principal.personId;
+  if (row.ownerKind === 'person') {
+    if (row.ownerId === principal.personId) return true;
+    const taskId = taskIdFromDeckKey(row.r2Key);
+    if (!taskId) return false;
+    const task = await db.prepare('SELECT event_id FROM task WHERE id = ?').bind(taskId).first<{
+      event_id: string;
+    }>();
+    return task ? holdsEvent(principal, task.event_id) : false;
+  }
 
   if (row.ownerKind === 'event') return holdsEvent(principal, row.ownerId);
 

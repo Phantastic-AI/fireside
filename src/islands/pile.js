@@ -88,4 +88,11 @@ function pileIsland() {
   tally();
 }
 
-export default '(' + pileIsland.toString() + ')();';
+// The bundler's keepNames pass wraps every named function it carries in
+// `__name(fn, 'name')`, and that helper lives in the bundle's module scope — it
+// does not travel inside the source text this exports. So the page defines its
+// own before running it. Without this line the whole island dies on its first
+// wrapped call (this file has several named inner functions), and the pile's
+// keyboard selection, focus and typeahead go with it. Matches cfp/concierge/ask.
+export default
+  '(function(){var __name=function(f){return f};(' + pileIsland.toString() + ')();})();';

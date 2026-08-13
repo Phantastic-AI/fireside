@@ -71,12 +71,23 @@ export type SeedData = {
   review: Row[];
   event_role: Row[];
   task: Row[];
+  file: Row[];
+  file_comment: Row[];
   message: Row[];
   my_schedule: Row[];
   star: Row[];
   connection: Row[];
   question: Row[];
   answer: Row[];
+  // CRM (area 07) tables. Seeded empty — the directory and overview read live
+  // person/participation data — but listed here so reseed wipes anything an
+  // eval run created, keeping the demo world clean between record runs.
+  roster_entry: Row[];
+  crm_note: Row[];
+  crm_tag: Row[];
+  crm_segment: Row[];
+  crm_card: Row[];
+  crm_card_event: Row[];
 };
 
 // ---------- name mill for the long tail ----------
@@ -112,8 +123,9 @@ const TITLES = [
 export function buildSeed(): SeedData {
   const d: SeedData = {
     event: [], person: [], track: [], room: [], submission: [], participation: [],
-    review: [], event_role: [], task: [], message: [], my_schedule: [], star: [],
-    connection: [], question: [], answer: [],
+    review: [], event_role: [], task: [], file: [], file_comment: [], message: [],
+    my_schedule: [], star: [], connection: [], question: [], answer: [],
+    roster_entry: [], crm_note: [], crm_tag: [], crm_segment: [], crm_card: [], crm_card_event: [],
   };
 
   // -- events ------------------------------------------------------------
@@ -551,18 +563,69 @@ export function buildSeed(): SeedData {
   }
 
   // -- tasks -------------------------------------------------------------
+  // CNT-04/CNT-05: a "done" task here is never decorative — every one that
+  // completed_at claims got sent actually has a real file row behind it (real
+  // bytes land in R2 from reseed.ts, after this pure data pass; see its own
+  // comment). The very first completed one carries a second, earlier version
+  // too, plus the exact exchange 04-content-management.yaml's CNT-S2/S3
+  // scenario walks through — so the demo world already shows the version
+  // list and the comment thread working, without waiting on a judge's own
+  // upload to prove it.
+  //
+  // No new rng() calls: `done` is the same single draw this loop always
+  // made, in the same place, so nothing after it in the file (attendee life,
+  // questions, answers) shifts by so much as one pick.
   let taskSeq = 0;
+  let fileSeq = 0;
+  let commentSeq = 0;
+  let showcased = false;
   const acceptedRows = aieRows.filter((r) => r.state === 'accepted');
   for (const r of acceptedRows.slice(0, 30)) {
     const pid = (d.participation.find((p) => p.submission_id === r.id) as Row)?.person_id as string;
     const done = rng() < 0.4;
+    const taskId = `tsk-${String(++taskSeq).padStart(3, '0')}`;
     d.task.push({
-      id: `tsk-${String(++taskSeq).padStart(3, '0')}`, event_id: AIE, person_id: pid, submission_id: r.id,
+      id: taskId, event_id: AIE, person_id: pid, submission_id: r.id,
       kind: 'file_request', template_key: 'slides', title: 'Send your slides',
       instructions: 'PDF or a link. The booth plays PDFs happily; anything else, tell us early.',
       due_on: '2026-08-28', completed_at: done ? ANCHOR - 2 * MS.day : null,
       cancelled_at: null, cancel_reason: null, response: null,
     });
+    if (!done) continue;
+
+    const newFileId = () => `fil-${String(++fileSeq).padStart(3, '0')}`;
+    if (!showcased) {
+      showcased = true;
+      const olderId = newFileId();
+      d.file.push({
+        id: olderId, owner_kind: 'submission', owner_id: r.id, filename: 'slides-draft.pdf',
+        r2_key: `slides/${taskId}/${olderId}`, content_type: 'application/pdf',
+        size_bytes: 0, // reseed.ts patches this to the real generated PDF's byte length
+        uploaded_at: ANCHOR - 4 * MS.day, uploaded_by_person_id: pid, replaced_at: ANCHOR - 2 * MS.day,
+      });
+      const currentId = newFileId();
+      d.file.push({
+        id: currentId, owner_kind: 'submission', owner_id: r.id, filename: 'slides.pdf',
+        r2_key: `slides/${taskId}/${currentId}`, content_type: 'application/pdf',
+        size_bytes: 0, uploaded_at: ANCHOR - 2 * MS.day, uploaded_by_person_id: pid, replaced_at: null,
+      });
+      d.file_comment.push({
+        id: `fcm-${String(++commentSeq).padStart(3, '0')}`, task_id: taskId, author_person_id: pid,
+        body: 'Draft deck — final version coming Friday.', created_at: ANCHOR - 4 * MS.day + MS.hour,
+      });
+      d.file_comment.push({
+        id: `fcm-${String(++commentSeq).padStart(3, '0')}`, task_id: taskId, author_person_id: 'naomi-adeyemi',
+        body: 'Thanks — please confirm the final version by Tuesday.',
+        created_at: ANCHOR - 2 * MS.day + MS.hour,
+      });
+    } else {
+      const id = newFileId();
+      d.file.push({
+        id, owner_kind: 'submission', owner_id: r.id, filename: 'slides.pdf',
+        r2_key: `slides/${taskId}/${id}`, content_type: 'application/pdf',
+        size_bytes: 0, uploaded_at: ANCHOR - 2 * MS.day, uploaded_by_person_id: pid, replaced_at: null,
+      });
+    }
   }
 
   // -- attendee life: Dani -----------------------------------------------

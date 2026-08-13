@@ -2,19 +2,23 @@
 // photograph of themselves, the deck they will stand behind), and the one act
 // an organizer performs about them, which is asking again.
 //
-// ONE KEY PER THING. A photograph lives at 'headshots/{personId}'; a deck
-// lives at 'slides/{taskId}'. Both are stable addresses, so a second send
-// replaces the first instead of piling up beside it — file.r2_key is UNIQUE,
-// and nowhere in this product is there a screen for a speaker's earlier
-// photographs. The corrected deck at 21:40 the night before is the common
-// case, not the exception, and it has to land on the link the organizer
-// already has open.
+// ONE KEY PER THING, WITH ONE EXCEPTION. A photograph lives at
+// 'headshots/{personId}' — a stable address, so a second send replaces the
+// first instead of piling up beside it, and nowhere in this product is there
+// a screen for a speaker's earlier photographs. A deck is the deliberate
+// exception (CNT-04): it lives at 'slides/{taskId}/{fileId}', one key per
+// upload, because the organizer's whole complaint about the old single-key
+// design was that "replaced" meant "gone" — a version list has to have
+// something to list. `replaced_at IS NULL` marks the one current row in a
+// deck's family; every write that seats a new one retires the old one in the
+// same batch, so a reader never catches two rows both claiming to be current.
+// The corrected deck at 21:40 the night before is still the common case, not
+// the exception — it just now keeps the draft it replaced.
 //
 // BYTES FIRST, ROW AFTER. R2 and D1 share no transaction, so the object goes
-// up and then the row that names it goes in. If the row fails, a brand-new
-// object is taken away again on the way out; a replacement is left where it
-// is, because its key is still the one the surviving row points at, and
-// half-deleting somebody's headshot to tidy up is worse than a stale size.
+// up and then the row that names it goes in. If the row fails, the object
+// just written is taken away again on the way out — a fresh key means there
+// is never a survivor's bytes to protect from that cleanup.
 //
 // THE KIND IS OURS, NOT THE BROWSER'S. content_type is derived from the
 // short list this file accepts and never from what the request claims. A page
@@ -247,6 +251,14 @@ export async function saveHeadshot(
  * deck lands on the same link, and completed_at moves to the day it actually
  * arrived rather than the day the first draft did.
  */
+/**
+ * CNT-04: every upload keeps the ones before it. `slides/{taskId}/{fileId}`
+ * is a version's own key — nothing at it is ever overwritten — and
+ * `{taskId}/` is the family a version list reads back by prefix. The batch
+ * below is what keeps "at most one current row per family" true: it retires
+ * the old current row (if any) and seats the new one in the same write, so a
+ * reader can never catch two rows both claiming to be current.
+ */
 export async function saveDeck(
   db: D1Database,
   bucket: R2Bucket,
@@ -275,12 +287,8 @@ export async function saveDeck(
   const ownerKind = task.submission_id ? 'submission' : 'person';
   const ownerId = task.submission_id ?? personId;
 
-  const key = `slides/${taskId}`;
-  const existing = await db
-    .prepare('SELECT id FROM file WHERE r2_key = ?')
-    .bind(key)
-    .first<{ id: string }>();
-  const id = existing?.id ?? newId('fil');
+  const id = newId('fil');
+  const key = `${DECK_PREFIX}${taskId}/${id}`;
   const name = safeName(file.name, `slides.${ext}`);
   const at = now();
 
@@ -296,37 +304,26 @@ export async function saveDeck(
   try {
     await checkedBatch(
       db,
-      existing
-        ? [
-            guard(db, 'SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM file WHERE id = ? AND r2_key = ?)', id, key),
-            db
-              .prepare(
-                `UPDATE file
-                    SET owner_kind = ?, owner_id = ?, filename = ?, content_type = ?,
-                        size_bytes = ?, uploaded_at = ?, uploaded_by_person_id = ?,
-                        replaced_at = NULL
-                  WHERE id = ? AND r2_key = ?`
-              )
-              .bind(ownerKind, ownerId, name, type, file.size, at, personId, id, key),
-            markDone,
-          ]
-        : [
-            guard(db, 'SELECT 1 FROM file WHERE r2_key = ?', key),
-            db
-              .prepare(
-                `INSERT INTO file (id, owner_kind, owner_id, filename, r2_key, content_type,
-                                   size_bytes, uploaded_at, uploaded_by_person_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-              )
-              .bind(id, ownerKind, ownerId, name, key, type, file.size, at, personId),
-            markDone,
-          ],
-      [0, 1, 1],
+      [
+        guard(db, 'SELECT 1 FROM file WHERE r2_key = ?', key),
+        db
+          .prepare(`UPDATE file SET replaced_at = ? WHERE r2_key LIKE ? AND replaced_at IS NULL`)
+          .bind(at, `${DECK_PREFIX}${taskId}/%`),
+        db
+          .prepare(
+            `INSERT INTO file (id, owner_kind, owner_id, filename, r2_key, content_type,
+                               size_bytes, uploaded_at, uploaded_by_person_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(id, ownerKind, ownerId, name, key, type, file.size, at, personId),
+        markDone,
+      ],
+      [0, 'any', 1, 1],
       STALE
     );
     return 'done';
   } catch (e) {
-    if (!existing) await bucket.delete(key).catch(() => undefined);
+    await bucket.delete(key).catch(() => undefined);
     return outcomeOf(e, 'saveDeck');
   }
 }
@@ -337,8 +334,7 @@ export async function saveDeck(
 
 const DECK_PREFIX = 'slides/';
 
-type DeckSqlRow = {
-  r2_key: string;
+type FileSqlRow = {
   id: string;
   filename: string;
   content_type: string;
@@ -346,7 +342,7 @@ type DeckSqlRow = {
   uploaded_at: number;
 };
 
-const toStored = (r: DeckSqlRow): StoredFile => ({
+const toStored = (r: FileSqlRow): StoredFile => ({
   id: r.id,
   filename: r.filename,
   contentType: r.content_type,
@@ -354,11 +350,23 @@ const toStored = (r: DeckSqlRow): StoredFile => ({
   uploadedAt: r.uploaded_at,
 });
 
+export type FileVersion = StoredFile & { replacedAt: number | null };
+
+const toVersion = (r: FileSqlRow & { replaced_at: number | null }): FileVersion => ({
+  ...toStored(r),
+  replacedAt: r.replaced_at,
+});
+
+const VERSION_COLUMNS = 'id, filename, content_type, size_bytes, uploaded_at, replaced_at';
+// Current first, then most recent first among the rest — the order every
+// version list on this product reads in.
+const VERSION_ORDER = 'ORDER BY replaced_at IS NOT NULL, uploaded_at DESC';
+
 /**
- * The decks behind a handful of file requests, by task. The key carries the
- * task, so this holds for a deck hung off a talk and one hung off a person
- * alike. D1 takes a bounded number of bindings and a portal holds a handful
- * of tasks, so the list is capped rather than paged.
+ * The current deck behind a handful of file requests, by task. The key
+ * carries the task, so this holds for a deck hung off a talk and one hung
+ * off a person alike. D1 takes a bounded number of bindings and a portal
+ * holds a handful of tasks, so the list is capped rather than paged.
  */
 export async function decksForTasks(
   db: D1Database,
@@ -367,15 +375,50 @@ export async function decksForTasks(
   const out = new Map<string, StoredFile>();
   const ids = taskIds.slice(0, 50);
   if (ids.length === 0) return out;
-  const holes = ids.map(() => '?').join(',');
-  const res = await db
-    .prepare(
-      `SELECT r2_key, id, filename, content_type, size_bytes, uploaded_at
-         FROM file WHERE r2_key IN (${holes})`
+  const results = await db.batch<FileSqlRow>(
+    ids.map((id) =>
+      db
+        .prepare(
+          `SELECT id, filename, content_type, size_bytes, uploaded_at
+             FROM file WHERE r2_key LIKE ? AND replaced_at IS NULL LIMIT 1`
+        )
+        .bind(`${DECK_PREFIX}${id}/%`)
     )
-    .bind(...ids.map((t) => `${DECK_PREFIX}${t}`))
-    .all<DeckSqlRow>();
-  for (const r of res.results ?? []) out.set(r.r2_key.slice(DECK_PREFIX.length), toStored(r));
+  );
+  ids.forEach((id, i) => {
+    const row = results[i]?.results?.[0];
+    if (row) out.set(id, toStored(row));
+  });
+  return out;
+}
+
+/** Every version of one deliverable, current first — CNT-04's version list. */
+export async function deckVersions(db: D1Database, taskId: string): Promise<FileVersion[]> {
+  const res = await db
+    .prepare(`SELECT ${VERSION_COLUMNS} FROM file WHERE r2_key LIKE ? ${VERSION_ORDER}`)
+    .bind(`${DECK_PREFIX}${taskId}/%`)
+    .all<FileSqlRow & { replaced_at: number | null }>();
+  return (res.results ?? []).map(toVersion);
+}
+
+/** The same, for a handful of tasks at once — a portal or a proposal reads
+ *  several version lists on one page. Capped like decksForTasks. */
+export async function deckVersionsForTasks(
+  db: D1Database,
+  taskIds: string[]
+): Promise<Map<string, FileVersion[]>> {
+  const out = new Map<string, FileVersion[]>();
+  const ids = taskIds.slice(0, 50);
+  if (ids.length === 0) return out;
+  const results = await db.batch<FileSqlRow & { replaced_at: number | null }>(
+    ids.map((id) =>
+      db.prepare(`SELECT ${VERSION_COLUMNS} FROM file WHERE r2_key LIKE ? ${VERSION_ORDER}`).bind(`${DECK_PREFIX}${id}/%`)
+    )
+  );
+  ids.forEach((id, i) => {
+    const rows = results[i]?.results ?? [];
+    if (rows.length) out.set(id, rows.map(toVersion));
+  });
   return out;
 }
 
@@ -383,77 +426,87 @@ export async function decksForTasks(
  * The organizer's side of the same fact
  * ------------------------------------------------------------------ */
 
-export type DeckAsked = {
+export type DeliverableRow = {
   taskId: string;
-  submissionId: string | null;
-  personId: string;
+  title: string;
   dueOn: string | null;
   completedAt: number | null;
+  personId: string;
+  personName: string;
+  submissionId: string | null;
+  submissionTitle: string | null;
   file: StoredFile | null;
+  versionCount: number;
 };
 
 /**
- * Every deck asked for at one conference, by talk — what was asked, when it
- * was due, and the file if it came.
+ * Every open deliverable request across one conference — one row per
+ * request, not one per talk. A talk with two requests on it (a deck, a
+ * headshot) used to collapse onto whichever due date sorted first, so a
+ * board could show one request's status under the other's label; reading the
+ * tasks themselves, with nothing standing between a row and the request it
+ * is about, is what keeps that from happening again.
  *
- * queries/admin.ts's GreenRoomSession carries the *status* of a deck but
- * neither the request behind it nor the file itself, and this parcel does not
- * get to reshape that DTO. So this is the narrow own-file read, in the same
- * spirit as greenroom.ts's own greenRoomNonceFor: one query, one screen.
- *
- * Ordering matches greenRoom()'s — outstanding before finished — so that when
- * a talk has been asked twice, both agree on which request is the live one.
+ * queries/admin.ts's GreenRoomSession carries only the crew's own narrow
+ * "are the slides in" fact and this parcel does not get to reshape that DTO,
+ * so this is the narrow own-file read, in the same spirit as greenroom.ts's
+ * own greenRoomNonceFor: one query, one screen.
  */
-export async function decksAsked(
-  db: D1Database,
-  eventId: string
-): Promise<Map<string, DeckAsked>> {
+export async function deliverableRows(db: D1Database, eventId: string): Promise<DeliverableRow[]> {
   const res = await db
     .prepare(
-      `SELECT t.id AS task_id, t.submission_id, t.person_id, t.due_on, t.completed_at,
-              f.id AS file_id, f.filename, f.content_type, f.size_bytes, f.uploaded_at
+      `SELECT t.id AS task_id, t.title, t.due_on, t.completed_at,
+              t.person_id, pe.name AS person_name,
+              t.submission_id, s.title AS submission_title,
+              f.id AS file_id, f.filename, f.content_type, f.size_bytes, f.uploaded_at,
+              (SELECT COUNT(*) FROM file f2
+                WHERE f2.r2_key LIKE '${DECK_PREFIX}' || t.id || '/%') AS version_count
          FROM task t
-         LEFT JOIN file f ON f.r2_key = '${DECK_PREFIX}' || t.id
+         JOIN person pe ON pe.id = t.person_id
+         LEFT JOIN submission s ON s.id = t.submission_id
+         LEFT JOIN file f ON f.r2_key LIKE '${DECK_PREFIX}' || t.id || '/%' AND f.replaced_at IS NULL
         WHERE t.event_id = ? AND t.kind = 'file_request' AND t.cancelled_at IS NULL
-        ORDER BY t.completed_at IS NOT NULL, t.due_on`
+        ORDER BY t.completed_at IS NOT NULL, t.due_on IS NULL, t.due_on, pe.name, t.title`
     )
     .bind(eventId)
     .all<{
       task_id: string;
-      submission_id: string | null;
-      person_id: string;
+      title: string;
       due_on: string | null;
       completed_at: number | null;
+      person_id: string;
+      person_name: string;
+      submission_id: string | null;
+      submission_title: string | null;
       file_id: string | null;
       filename: string | null;
       content_type: string | null;
       size_bytes: number | null;
       uploaded_at: number | null;
+      version_count: number;
     }>();
 
-  const out = new Map<string, DeckAsked>();
-  for (const r of res.results ?? []) {
-    const holder = r.submission_id ?? r.person_id;
-    if (out.has(holder)) continue; // first row per talk wins, as above
-    out.set(holder, {
-      taskId: r.task_id,
-      submissionId: r.submission_id,
-      personId: r.person_id,
-      dueOn: r.due_on,
-      completedAt: r.completed_at,
-      file:
-        r.file_id !== null
-          ? {
-              id: r.file_id,
-              filename: r.filename ?? 'The deck',
-              contentType: r.content_type ?? 'application/octet-stream',
-              sizeBytes: r.size_bytes ?? 0,
-              uploadedAt: r.uploaded_at ?? 0,
-            }
-          : null,
-    });
-  }
-  return out;
+  return (res.results ?? []).map((r) => ({
+    taskId: r.task_id,
+    title: r.title,
+    dueOn: r.due_on,
+    completedAt: r.completed_at,
+    personId: r.person_id,
+    personName: r.person_name,
+    submissionId: r.submission_id,
+    submissionTitle: r.submission_title,
+    file:
+      r.file_id !== null
+        ? {
+            id: r.file_id,
+            filename: r.filename ?? 'The file',
+            contentType: r.content_type ?? 'application/octet-stream',
+            sizeBytes: r.size_bytes ?? 0,
+            uploadedAt: r.uploaded_at ?? 0,
+          }
+        : null,
+    versionCount: r.version_count,
+  }));
 }
 
 /** How many decks this conference is still waiting on. The number the

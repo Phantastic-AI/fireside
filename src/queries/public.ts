@@ -172,6 +172,10 @@ export type AgendaSession = {
   id: string;
   publicSlug: string | null;
   title: string;
+  /** EMB-09/EMB-01: the one-line description a card carries. Was missing
+   *  from this DTO — added here, additively, alongside the columns the
+   *  session page already selects. */
+  abstract: string | null;
   state: PublicState;
   cancelled: boolean;
   startsAt: number;
@@ -456,7 +460,7 @@ export async function agenda(db: D1Database, eventId: string): Promise<Agenda | 
       .bind(eventId),
     db
       .prepare(
-        `SELECT s.id, s.public_slug, s.title, s.state, s.starts_at, s.requested_min, s.format,
+        `SELECT s.id, s.public_slug, s.title, s.abstract, s.state, s.starts_at, s.requested_min, s.format,
                 s.cancel_note, s.recording_url,
                 r.id AS room_id, r.name AS room_name,
                 t.slug AS track_slug, t.name AS track_name, t.colour AS track_colour
@@ -511,6 +515,7 @@ export async function agenda(db: D1Database, eventId: string): Promise<Agenda | 
       id: row.id,
       publicSlug: row.public_slug,
       title: row.title,
+      abstract: row.abstract,
       state: row.state,
       cancelled: row.state === 'cancelled',
       startsAt: row.starts_at,

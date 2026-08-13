@@ -36,6 +36,7 @@ import {
   saveDeck,
   saveProfile,
   decksForTasks,
+  deckVersionsForTasks,
   filePart,
   tooLargeToRead,
   BIO_MAX,
@@ -47,7 +48,10 @@ import {
   PHOTO_MAX_BYTES,
   type FileOutcome,
   type StoredFile,
+  type FileVersion,
 } from '../../workflows/files';
+import { commentsForTasks, type FileComment } from '../../queries/comments';
+import { postCommentAsSpeaker, COMMENT_MAX } from '../../workflows/comments';
 
 /* ------------------------------------------------------------------ *
  * Words
@@ -216,6 +220,8 @@ const NOTES: Record<string, string> = {
   saved: 'Saved. That is how you appear on the program now.',
   photo: 'That is your photograph now. It goes wherever your name does.',
   deck: 'Your slides are in. The organizers can see them from here on.',
+  commented: 'Added. It is on the thread now, and the organizers can read it.',
+  'no-comment': 'Nothing was written, so nothing was added.',
   'too-big': 'That one is over the size we can take, so nothing changed. The size is written ' +
     'beside the picker.',
   'wrong-kind': 'We cannot take that kind, so nothing changed. The kinds we can take are ' +
@@ -510,12 +516,63 @@ function picker(o: {
   );
 }
 
+/**
+ * CNT-04 — every version, current first, each individually open-able. Only
+ * drawn once there is more than one: a first upload has nothing to compare
+ * itself against yet.
+ */
+function versionList(versions: FileVersion[], tz: string): string {
+  if (versions.length < 2) return '';
+  const n = versions.length;
+  const [current, ...earlier] = versions;
+  if (!current) return '';
+  const earlierText = earlier
+    .map(
+      (v, i) =>
+        `<a class="link" href="/files/${esc(v.id)}">v${n - 1 - i}</a> · ${esc(dShort(v.uploadedAt, tz))}`
+    )
+    .join(', ');
+  return (
+    `<p class="t-sub" style="margin-top:2px">${esc(current.filename)}, ` +
+    `<a class="link" href="/files/${esc(current.id)}">v${n}</a> · current · uploaded ` +
+    `${esc(dShort(current.uploadedAt, tz))}<br>earlier: ${earlierText}</p>`
+  );
+}
+
+/** CNT-05 — the thread underneath one deliverable, and the form that adds to
+ *  it. Every comment carries its author's name and a date; nothing here is
+ *  emailed (SessionBoard itself sends none for a comment either). */
+function commentThread(slug: string, taskId: string, comments: FileComment[], tz: string): string {
+  const rows = comments
+    .map(
+      (c) =>
+        '<div style="padding:6px 0;border-top:1px solid var(--line-soft)">' +
+        `<div><b style="font-size:14px">${esc(c.authorName)}</b> ` +
+        `<span class="sub">${esc(dShort(c.createdAt, tz))}</span></div>` +
+        `<p style="margin:2px 0 0">${esc(c.body)}</p></div>`
+    )
+    .join('');
+  return (
+    '<div style="margin-top:12px">' +
+    '<b style="font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">Comments</b>' +
+    rows +
+    `<form method="post" action="/${esc(slug)}/portal/comment" style="margin-top:8px">` +
+    `<input type="hidden" name="task" value="${esc(taskId)}">` +
+    `<textarea name="body" rows="2" maxlength="${COMMENT_MAX}" ` +
+    'placeholder="Say something about this file" aria-label="Add a comment"></textarea>' +
+    '<button class="btn btn-sm" type="submit" style="margin-top:6px">Add a comment</button></form>' +
+    '</div>'
+  );
+}
+
 function taskRow(
   slug: string,
   t: PortalTask,
   tz: string,
   forTitle: string | null,
-  deck: StoredFile | null
+  deck: StoredFile | null,
+  versions: FileVersion[],
+  comments: FileComment[]
 ): string {
   const key = t.status === 'open' && t.overdue ? 'overdue' : t.status;
   const stateWord = label(`task.${key}` as LabelKey, 'onstage');
@@ -533,11 +590,11 @@ function taskRow(
       ? deck
         ? `<p>It came in on ${esc(dLong(t.completedAt, tz))}: ` +
           `<a class="link" href="/files/${esc(deck.id)}">${esc(deck.filename)}</a> · ` +
-          `${esc(weight(deck.sizeBytes))}</p>`
+          `${esc(weight(deck.sizeBytes))}</p>${versionList(versions, tz)}`
         : `<p>You marked this done on ${esc(dLong(t.completedAt, tz))}.</p>`
       : deck
         ? `<p>We have <a class="link" href="/files/${esc(deck.id)}">${esc(deck.filename)}</a> · ` +
-          `${esc(weight(deck.sizeBytes))}</p>`
+          `${esc(weight(deck.sizeBytes))}</p>${versionList(versions, tz)}`
         : '';
   const dropped =
     t.status === 'cancelled' ? '<p>The committee no longer needs it.</p>' : '';
@@ -569,6 +626,7 @@ function taskRow(
     done +
     dropped +
     action +
+    (wantsAFile ? commentThread(slug, t.id, comments, tz) : '') +
     '</div></details>'
   );
 }
@@ -746,6 +804,8 @@ function portalPage(
   view: PortalView,
   note: string | undefined,
   decks: Map<string, StoredFile>,
+  versions: Map<string, FileVersion[]>,
+  comments: Map<string, FileComment[]>,
   /** Everyone else on each talk, by submission — names only, in program order. */
   others: Map<string, string[]>
 ): string {
@@ -820,7 +880,9 @@ function portalPage(
             t,
             tz,
             manyTalks && t.submissionId ? (titles.get(t.submissionId) ?? null) : null,
-            decks.get(t.id) ?? null
+            decks.get(t.id) ?? null,
+            versions.get(t.id) ?? [],
+            comments.get(t.id) ?? []
           )
         )
         .join('')
@@ -910,8 +972,10 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     const asked = [...view.submissions.flatMap((s) => s.tasks), ...view.tasks]
       .filter((t) => t.kind === 'file_request')
       .map((t) => t.id);
-    const [decks, people] = await Promise.all([
+    const [decks, versions, comments, people] = await Promise.all([
       decksForTasks(c.env.DB, asked),
+      deckVersionsForTasks(c.env.DB, asked),
+      commentsForTasks(c.env.DB, asked),
       peopleOnTalks(c.env.DB, view.submissions.map((s) => s.id)),
     ]);
     // Everyone on each talk but the person reading it: the co-presenters they
@@ -929,7 +993,25 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     // A saved edit arrives under its own flag; its sentence still lives in
     // NOTES with the others, so there is one closed set and not two.
     const note = c.req.query('edited') === '1' ? 'edited' : c.req.query('note');
-    return c.html(portalPage(view, note, decks, others));
+    return c.html(portalPage(view, note, decks, versions, comments, others));
+  });
+
+  // -- CNT-05: a comment on a deliverable ---------------------------------
+  app.post('/:event/portal/comment', async (c) => {
+    const slug = c.req.param('event');
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+    const form = await c.req.parseBody();
+    const taskId = String(form['task'] ?? '');
+    const anchor = taskId ? `#task-${encodeURIComponent(taskId)}` : '';
+    if (!taskId) return c.redirect(`${back(slug, 'moved')}${anchor}`, 303);
+    const outcome = await postCommentAsSpeaker(c.env.DB, principal.personId, taskId, String(form['body'] ?? ''));
+    const code = outcome === 'done' ? 'commented' : outcome === 'empty' ? 'no-comment' : outcome;
+    return c.redirect(`${back(slug, code)}${anchor}`, 303);
   });
 
   app.post('/:event/portal/done', async (c) => {

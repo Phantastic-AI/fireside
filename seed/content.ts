@@ -1823,16 +1823,6 @@ export const CFP_QUESTIONS: {
     position: 1,
   },
   {
-    id: "co-presenter",
-    kind: "short",
-    label: "Co-presenter",
-    hint: "The best of these talks bring the person who ran the business side. Up to three speakers per talk.",
-    required: false,
-    options: null,
-    showIf: null,
-    position: 2,
-  },
-  {
     id: "travelling-from",
     kind: "short",
     label: "Where would you travel from?",
@@ -1840,7 +1830,7 @@ export const CFP_QUESTIONS: {
     required: false,
     options: null,
     showIf: null,
-    position: 3,
+    position: 2,
   },
   {
     id: "av-needs",

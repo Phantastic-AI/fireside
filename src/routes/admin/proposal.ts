@@ -35,6 +35,8 @@ import {
   ScopeError,
   type AdminEvent,
   type Proposal,
+  type ProposalDeliverable,
+  type ProposalDeliverableComment,
   type ProposalMessage,
   type ProposalParticipant,
   type ProposalReview,
@@ -46,6 +48,7 @@ import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { requireDecider, stageDecision, type Decision } from '../../workflows/decide';
 import { createTask, TASK_KINDS } from '../../workflows/tasks';
+import { postCommentAsOrganizer, COMMENT_MAX } from '../../workflows/comments';
 
 /* ------------------------------------------------------------------ *
  * Words
@@ -290,6 +293,10 @@ const OUTCOMES: Record<string, string> = {
   'ask-no-kind': 'Say what kind of ask it is, so they know what to send back.',
   'ask-bad-date': 'That is not a day anyone has. Give the date again and it goes on their list.',
   'ask-trouble': 'The ask did not go through, and nothing changed. Worth trying once more.',
+  // CNT-05 — a reply on a deliverable's thread
+  commented: 'Added. It is on the thread now, and the speaker can read it.',
+  'no-comment': 'Nothing was written, so nothing was added.',
+  'comment-moved': 'That request is not on this proposal any more.',
 };
 
 /** decide.ts speaks in sentences; this maps each back to its code so the same
@@ -538,6 +545,92 @@ function lettersSection(p: Proposal, slug: string, tz: string, inPlay: boolean):
     '<p class="sub" style="margin-bottom:8px">Newest first, in the words that go out. ' +
     `${door}</p>` +
     p.messages.map((m) => messageRow(m, tz)).join('') +
+    '</div>'
+  );
+}
+
+/* ---------- files: CNT-04 versions, CNT-05 comments ---------- */
+
+const KB = 1024;
+const weight = (bytes: number): string =>
+  bytes >= KB * KB
+    ? `${(bytes / (KB * KB)).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / KB))} KB`;
+
+/** Mirrors taskChip() exactly (same four labels, same order of the checks) —
+ *  a deliverable is a task, read through its own narrower DTO. */
+function deliverableChip(d: ProposalDeliverable, todayKey: string): { text: string; cls: string } {
+  if (d.completedAt !== null && d.cancelledAt !== null) {
+    return { text: label('task.done_cancelled', 'backstage'), cls: 'chip plain' };
+  }
+  if (d.completedAt !== null) return { text: label('task.done', 'backstage'), cls: 'chip s-accepted' };
+  if (d.cancelledAt !== null) return { text: label('task.cancelled', 'backstage'), cls: 'chip s-declined' };
+  if (d.dueOn !== null && d.dueOn < todayKey) {
+    return { text: label('task.overdue', 'backstage'), cls: 'chip warn' };
+  }
+  return { text: label('task.open', 'backstage'), cls: 'chip s-undecided' };
+}
+
+/** CNT-04 — every version, current one first, each its own open-able link. */
+function deliverableVersions(d: ProposalDeliverable): string {
+  if (d.versions.length === 0) return '<p class="sub" style="margin:0">Nothing sent in yet.</p>';
+  const n = d.versions.length;
+  const current = d.versions.find((v) => v.current) ?? d.versions[0]!;
+  const earlier = d.versions.filter((v) => v.id !== current.id);
+  const head =
+    `<p style="margin:0">${esc(current.filename)}, ` +
+    `<a class="link" href="/files/${esc(current.id)}">v${n}</a> · current · ${esc(weight(current.sizeBytes))}</p>`;
+  const rest = earlier.length
+    ? `<p class="sub" style="margin-top:2px">earlier: ${earlier
+        .map((v, i) => `<a class="link" href="/files/${esc(v.id)}">v${n - 1 - i}</a>`)
+        .join(', ')}</p>`
+    : '';
+  return head + rest;
+}
+
+function deliverableCommentRow(c: ProposalDeliverableComment, tz: string): string {
+  return (
+    '<div style="padding:6px 0;border-top:1px solid var(--line-soft)">' +
+    `<div><b style="font-size:14px">${esc(c.authorName)}</b> ` +
+    `<span class="sub">${esc(dShort(c.createdAt, tz))}</span></div>` +
+    `<p style="margin:2px 0 0">${esc(c.body)}</p></div>`
+  );
+}
+
+function deliverableBlock(p: Proposal, slug: string, d: ProposalDeliverable, tz: string, todayKey: string): string {
+  const chip = deliverableChip(d, todayKey);
+  const due =
+    d.dueOn !== null
+      ? `<span class="sub">${d.completedAt === null && d.dueOn < todayKey ? 'Was due ' : 'Due '}${esc(isoDayLong(d.dueOn))}</span>`
+      : '';
+  const comments = d.comments.map((c) => deliverableCommentRow(c, tz)).join('');
+  return (
+    `<div id="deliverable-${esc(d.taskId)}" style="padding:14px 0;border-bottom:1px solid var(--line-soft)">` +
+    '<div style="display:flex;gap:9px;align-items:baseline;flex-wrap:wrap">' +
+    `<span style="font-weight:640">${esc(d.title)}</span>` +
+    `<span class="${chip.cls}">${esc(chip.text)}</span>` +
+    due +
+    '</div>' +
+    `<div style="margin-top:8px">${deliverableVersions(d)}</div>` +
+    '<div style="margin-top:10px">' +
+    '<b style="font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)">Comments</b>' +
+    comments +
+    `<form method="post" action="/admin/${esc(slug)}/submissions/${esc(p.id)}/deliverables/${esc(d.taskId)}/comment" style="margin-top:8px">` +
+    `<textarea name="body" rows="2" maxlength="${COMMENT_MAX}" placeholder="Reply on this thread" ` +
+    'aria-label="Reply on this thread"></textarea>' +
+    '<button class="btn btn-sm" type="submit" style="margin-top:6px">Reply</button></form>' +
+    '</div></div>'
+  );
+}
+
+/** Every file request on this proposal — the organizer's own view of what
+ *  CNT-04 and CNT-05 built. Says nothing when nothing has ever been asked
+ *  for here, same discipline as revisionsSection below. */
+function deliverablesSection(p: Proposal, slug: string, tz: string, todayKey: string): string {
+  if (p.deliverables.length === 0) return '';
+  return (
+    `<div class="sec" id="files">${sectionHead('Files')}` +
+    p.deliverables.map((d) => deliverableBlock(p, slug, d, tz, todayKey)).join('') +
     '</div>'
   );
 }
@@ -917,11 +1010,13 @@ function renderProposal(o: {
     outcomeNote(o.outcome) +
     '</div><hr class="rule">';
 
+  const todayKey = todayIso(tz, nowMs);
   const main =
     '<div>' +
     `<div class="abstract">${abstract}</div>` +
     answersSection(p, o.questions) +
     peopleSection(p, slug) +
+    deliverablesSection(p, slug, tz, todayKey) +
     lettersSection(p, slug, tz, inPlay) +
     reviewsSection(p, slug, inPlay) +
     revisionsSection(p, tz) +
@@ -940,7 +1035,7 @@ function renderProposal(o: {
     decideBox(p, slug, tz, nowMs, o.mayDecide, o.armed) +
     // A draft is nobody's to score yet, so the box does not sit there empty.
     (inPlay ? scoreBox(p, slug) : '') +
-    tasksBox(p, tz, todayIso(tz, nowMs), canAskHere) +
+    tasksBox(p, tz, todayKey, canAskHere) +
     (canAskHere && asker ? askBox(p, slug, asker) : '') +
     '</aside>';
 
@@ -1120,6 +1215,41 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
       });
       if (!result.ok) return c.redirect(back(`ask-${result.code}`, '#ask'), 303);
       return c.redirect(back('asked', '#tasks'), 303);
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  // CNT-05 — the organizer's reply on one deliverable's thread.
+  app.post('/admin/:eventSlug/submissions/:id/deliverables/:taskId/comment', async (c) => {
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in', 303);
+
+    const slug = c.req.param('eventSlug');
+    const id = c.req.param('id');
+    const taskId = c.req.param('taskId');
+    const home = `/admin/${encodeURIComponent(slug)}/submissions/${encodeURIComponent(id)}`;
+    const back = (code: string): string =>
+      `${home}?outcome=${encodeURIComponent(code)}#deliverable-${encodeURIComponent(taskId)}`;
+
+    try {
+      const events = await adminEvents(c.env.DB, principal);
+      const ev = events.find((e) => e.slug === slug);
+      if (!ev) return c.html(deniedPage(), 403);
+      if (reviewerOnly(principal, ev.id)) return c.html(deniedPage(), 403);
+      if (!mayAsk(principal, ev.id)) {
+        return c.html(deniedPage('Replying on a deliverable is held by this event’s organizers.'), 403);
+      }
+
+      const form = await c.req.parseBody();
+      const outcome = await postCommentAsOrganizer(c.env.DB, principal, ev.id, taskId, String(form['body'] ?? ''));
+      const code = outcome === 'done' ? 'commented' : outcome === 'empty' ? 'no-comment' : outcome === 'moved' ? 'comment-moved' : 'trouble';
+      return c.redirect(back(code), 303);
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;

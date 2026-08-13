@@ -59,11 +59,11 @@ import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { eventByGreenRoomNonce } from '../../queries/greenroom-token';
 import {
-  decksAsked,
+  deliverableRows,
   stillWaitingCount,
   askAgain,
   askEveryoneWaiting,
-  type DeckAsked,
+  type DeliverableRow,
   type FileOutcome,
 } from '../../workflows/files';
 
@@ -184,13 +184,6 @@ function slidesChip(status: SlidesStatus, dueOn: string | null, todayKey: string
     return `<span class="chip warn">${esc(text)}</span>`;
   }
   return `<span class="chip s-undecided">${esc(label('file.absent', 'backstage'))}</span>`;
-}
-
-/** Only fires for a deck that is absent and not yet overdue — an overdue
- *  one already carries its date inside the chip. */
-function slidesDueDetail(status: SlidesStatus, dueOn: string | null, todayKey: string): string {
-  if (status !== 'absent' || dueOn === null || dueOn < todayKey) return '';
-  return `due ${dayShort(dueOn)}`;
 }
 
 const KB = 1024;
@@ -465,93 +458,100 @@ function publicGreenRoomPage(ev: { name: string }, gr: GreenRoom): string {
 }
 
 /* ------------------------------------------------------------------ *
- * S-18: /admin/:eventSlug/slides
+ * S-18: /admin/:eventSlug/slides — the Deliverables board.
  *
- * greenRoom() answers one day at a time (S-17's own shape); the slides
- * board needs every accepted session across the whole event, so this
- * calls it once per day the event actually has something on. Small,
- * correct, and cheap at the scale one conference runs at — the
- * alternative was a second query this parcel is not scoped to add.
+ * One row per open file-request task, event-wide — not one per session. A
+ * talk that owes both a deck and a headshot used to collapse onto one row,
+ * so the board could show a headshot's status under a slides label and the
+ * banner's own count (every open request) never matched the table's (one row
+ * per talk). Reading workflows/files.ts's deliverableRows() — one row per
+ * request, with the request's own title on it — is what keeps both true at
+ * once: the table IS the set stillWaitingCount() counts, filtered or not.
  * ------------------------------------------------------------------ */
 
-async function allAcceptedSessions(
-  db: D1Database,
-  eventId: string
-): Promise<{ event: GreenRoom; sessions: GreenRoomSession[] } | null> {
-  const probe = await greenRoom(db, eventId);
-  if (!probe) return null;
-  const perDay = await Promise.all(probe.days.map((d) => greenRoom(db, eventId, d)));
-  const sessions = perDay
-    .flatMap((g) => g?.sessions ?? [])
-    .filter((s) => s.state === 'accepted');
-  return { event: probe, sessions };
+type StatusFilter = 'all' | 'incomplete' | 'overdue';
+type Filters = { status: StatusFilter; task: string };
+
+const STATUS_WORD: Record<StatusFilter, string> = {
+  all: 'Every status',
+  incomplete: 'Not in yet',
+  overdue: 'Overdue',
+};
+
+function matchesStatus(r: DeliverableRow, status: StatusFilter, todayKey: string): boolean {
+  if (status === 'all') return true;
+  if (r.file !== null) return false;
+  if (status === 'overdue') return r.dueOn !== null && r.dueOn < todayKey;
+  return true; // incomplete: every open request, overdue or not
 }
 
-type Filters = { day: string; room: string };
-
 /** One row, one act. The filters ride along in the form so that pressing it
- *  puts the organizer back on the same view of the board they were reading. */
-function askAgainForm(slug: string, taskId: string, filters: Filters): string {
+ *  puts the organizer back on the same view of the board they were reading.
+ *  CNT: honest about what the click does before it happens, not only after —
+ *  the button used to say "Ask again" with nothing beside it, which reads
+ *  like a resend. It moves a date and emails nobody; both facts sit right
+ *  above the button now. */
+function askAgainForm(slug: string, r: DeliverableRow, dueOn: string, filters: Filters): string {
   return (
-    `<form method="post" action="/admin/${encodeURIComponent(slug)}/slides/ask-again" style="margin:0">` +
-    `<input type="hidden" name="task" value="${esc(taskId)}">` +
-    (filters.day ? `<input type="hidden" name="day" value="${esc(filters.day)}">` : '') +
-    (filters.room ? `<input type="hidden" name="room" value="${esc(filters.room)}">` : '') +
+    `<span class="t-sub">Would move the due date to ${esc(dayShort(dueOn))}. No email goes out.</span><br>` +
+    `<form method="post" action="/admin/${encodeURIComponent(slug)}/slides/ask-again" style="margin-top:4px">` +
+    `<input type="hidden" name="task" value="${esc(r.taskId)}">` +
+    (filters.status !== 'all' ? `<input type="hidden" name="status" value="${esc(filters.status)}">` : '') +
+    (filters.task ? `<input type="hidden" name="task_filter" value="${esc(filters.task)}">` : '') +
     '<button class="btn btn-sm" type="submit">Ask again</button></form>'
   );
 }
 
-/**
- * The Detail column, which is where this board earns its place: a deck that
- * is in becomes a link to the deck itself, and a deck that is late becomes
- * the one thing an organizer can do about it.
- */
-function slidesDetail(
-  s: GreenRoomSession,
-  asked: DeckAsked | undefined,
-  todayKey: string,
-  slug: string,
-  filters: Filters
-): string {
-  if (asked?.file) {
-    return (
-      `<a class="link" href="/files/${esc(asked.file.id)}">Open the deck</a>` +
-      `<br><span class="t-sub">${esc(asked.file.filename)} · ${esc(weight(asked.file.sizeBytes))}</span>`
-    );
+/** The Status column: reuses the file.* words 02 §6 already gives an
+ *  organizer for "is it in" — the same words the old per-session chip used,
+ *  now read straight off the request instead of off whichever request won a
+ *  race between two on the same talk. */
+function deliverableChip(r: DeliverableRow, todayKey: string): string {
+  if (r.file !== null) {
+    return `<span class="chip s-accepted">${esc(label('file.present', 'backstage'))}</span>`;
   }
-  // Done, but by hand rather than by sending anything — the chip is true and
-  // there is simply nothing here to open.
-  if (s.slides === 'present') return '<span class="t-sub">Marked done by the speaker</span>';
-  if (s.slides === 'absent' && asked && s.slidesDueOn !== null && s.slidesDueOn < todayKey) {
-    return askAgainForm(slug, asked.taskId, filters);
+  const overdue = r.dueOn !== null && r.dueOn < todayKey;
+  if (overdue) {
+    const text = label('file.absent_overdue', 'backstage').replace('{date}', dayShort(r.dueOn!));
+    return `<span class="chip warn">${esc(text)}</span>`;
   }
-  const due = slidesDueDetail(s.slides, s.slidesDueOn, todayKey);
-  return due ? `<span class="t-sub">${esc(due)}</span>` : '';
+  return `<span class="chip s-undecided">${esc(label('file.absent', 'backstage'))}</span>`;
 }
 
-function slidesRow(
-  s: GreenRoomSession,
-  day: string,
-  timezone: string,
-  todayKey: string,
-  asked: DeckAsked | undefined,
-  slug: string,
-  filters: Filters
-): string {
-  const strike = s.cancelled
-    ? ' style="text-decoration:line-through;text-decoration-color:var(--muted-2)"'
-    : '';
-  const names = byline(s.speakers.map((p) => p.name));
-  const detail = slidesDetail(s, asked, todayKey, slug, filters);
+/**
+ * The Detail column, which is where this board earns its place: a deliverable
+ * that is in becomes a link to it (with a version count once there is more
+ * than one to count), and one that is late becomes the one thing an organizer
+ * can do about it.
+ */
+function deliverableDetail(r: DeliverableRow, todayKey: string, slug: string, filters: Filters, dueOn: string): string {
+  if (r.file !== null) {
+    const versions = r.versionCount > 1 ? ` · ${esc(plural(r.versionCount, 'version', 'versions'))}` : '';
+    return (
+      `<a class="link" href="/files/${esc(r.file.id)}">Open the file</a>` +
+      `<br><span class="t-sub">${esc(r.file.filename)} · ${esc(weight(r.file.sizeBytes))}${versions}</span>`
+    );
+  }
+  const overdue = r.dueOn !== null && r.dueOn < todayKey;
+  if (overdue) return askAgainForm(slug, r, dueOn, filters);
+  return r.dueOn !== null ? `<span class="t-sub">due ${esc(dayShort(r.dueOn))}</span>` : '';
+}
+
+function deliverableRow(r: DeliverableRow, slug: string, todayKey: string, filters: Filters, dueOn: string): string {
+  const who = r.submissionTitle
+    ? `<span class="t-name">${esc(r.personName)}</span><br><span class="t-sub">${esc(r.submissionTitle)}</span>`
+    : `<span class="t-name">${esc(r.personName)}</span>`;
+  const what =
+    `${esc(r.title)}` +
+    (r.dueOn !== null
+      ? `<br><span class="t-sub">${r.dueOn < todayKey && r.file === null ? 'Was due ' : 'Due '}${esc(dayShort(r.dueOn))}</span>`
+      : '');
   return (
     '<tr>' +
-    `<td class="num" style="white-space:nowrap"><b>${esc(timeOfDay(s.startsAt, timezone))}</b><br>` +
-    `<span class="t-sub">${esc(dayShort(day))}</span></td>` +
-    `<td style="white-space:nowrap">${esc(s.roomName ?? 'No room set')}</td>` +
-    `<td><span class="t-name"${strike}>${esc(s.title)}</span><br>` +
-    `<span class="t-sub">${names || 'No speaker listed'} · ${esc(formatLabel(s.format))} · ${esc(durationLabel(s.minutes))}</span></td>` +
-    `<td>${slidesChip(s.slides, s.slidesDueOn, todayKey)}</td>` +
-    `<td>${detail}</td>` +
+    `<td>${who}</td>` +
+    `<td>${what}</td>` +
+    `<td>${deliverableChip(r, todayKey)}</td>` +
+    `<td>${deliverableDetail(r, todayKey, slug, filters, dueOn)}</td>` +
     '</tr>'
   );
 }
@@ -562,6 +562,12 @@ function slidesRow(
  * names the number out loud, twice, and only then offers the button. The
  * number the confirm prints travels with the form, and workflows/files.ts
  * guards on it — a board that said twelve can never quietly do fourteen.
+ *
+ * CNT: both passes now say plainly that this changes due dates and emails
+ * nobody. The old confirm buried "nothing goes out from here" at the tail of
+ * a sentence about the date; the two facts get their own sentences now, and
+ * the first pass says as much as the second one does, rather than holding it
+ * back until after the organizer has already committed to clicking through.
  */
 function askEveryoneBlock(
   slug: string,
@@ -572,14 +578,18 @@ function askEveryoneBlock(
   confirming: boolean
 ): string {
   if (waiting < 1) return '';
-  const here = { day: filters.day || null, room: filters.room || null };
+  const here: Record<string, string | null> = {
+    status: filters.status !== 'all' ? filters.status : null,
+    task: filters.task || null,
+  };
 
   if (!confirming) {
     return (
       '<div class="sec attn">' +
       `<div class="n">${esc(num(waiting))}</div>` +
       '<div><div class="lab">Still to come, across the conference.</div>' +
-      '<div class="why">Each of these was asked for and has not arrived.</div></div>' +
+      `<div class="why">Each of these was asked for and has not arrived. Asking again moves its ` +
+      'due date out; it emails nobody.</div></div>' +
       `<a class="btn go" href="${esc(withQuery(basePath, { ...here, ask: 'all' }))}">` +
       'Ask everyone at once →</a></div>'
     );
@@ -588,102 +598,98 @@ function askEveryoneBlock(
   return (
     '<div class="sec attn">' +
     `<div class="n">${esc(num(waiting))}</div>` +
-    `<div><div class="lab">Ask all ${esc(num(waiting))} again</div>` +
-    `<div class="why">This puts ${esc(dayShort(dueOn))} on all ${esc(num(waiting))} of the ` +
-    'requests still outstanding. Each speaker sees the new date in their portal; nothing ' +
-    'goes out from here.</div></div>' +
+    `<div><div class="lab">Move the due date on all ${esc(num(waiting))}</div>` +
+    `<div class="why">Every request still outstanding gets ${esc(dayShort(dueOn))} as its new due ` +
+    `date, and each speaker sees it the next time they open their portal. <b>No email goes out — ` +
+    'nobody is told.</b></div></div>' +
     `<div class="btnrow go"><form method="post" action="/admin/${encodeURIComponent(slug)}/slides/ask-all" style="margin:0">` +
     `<input type="hidden" name="count" value="${esc(String(waiting))}">` +
-    (filters.day ? `<input type="hidden" name="day" value="${esc(filters.day)}">` : '') +
-    (filters.room ? `<input type="hidden" name="room" value="${esc(filters.room)}">` : '') +
-    `<button class="btn btn-primary" type="submit">Ask all ${esc(num(waiting))}</button></form>` +
+    (filters.status !== 'all' ? `<input type="hidden" name="status" value="${esc(filters.status)}">` : '') +
+    (filters.task ? `<input type="hidden" name="task_filter" value="${esc(filters.task)}">` : '') +
+    `<button class="btn btn-primary" type="submit">Move all ${esc(num(waiting))} due dates</button></form>` +
     `<a class="btn" href="${esc(withQuery(basePath, here))}">${esc(label('pane.leave', 'backstage'))}</a>` +
     '</div></div>'
   );
 }
 
-function slidesPage(
+function deliverablesPage(
   principal: Principal,
   ev: AdminEvent,
-  gr: GreenRoom,
-  rows: { s: GreenRoomSession; day: string }[],
+  timezone: string,
+  tzLabel: string | null,
+  all: DeliverableRow[],
+  rows: DeliverableRow[],
   filters: Filters,
-  allDays: string[],
-  allRooms: string[],
-  asked: Map<string, DeckAsked>,
+  taskTitles: string[],
   waiting: number,
   confirming: boolean,
   note: string | undefined
 ): string {
   const slug = ev.slug;
-  const tzLabel = gr.tzLabel ?? gr.timezone;
-  const todayKey = eventDayKey(Date.now(), gr.timezone);
-  const total = rows.length;
-  const inCount = rows.filter((r) => r.s.slides === 'present').length;
+  const todayKey = eventDayKey(Date.now(), timezone);
+  const total = all.length;
+  const inCount = all.filter((r) => r.file !== null).length;
   const pct = total ? Math.round((inCount / total) * 100) : 0;
+  const dueOn = aWeekOut(timezone);
 
   const basePath = `/admin/${encodeURIComponent(slug)}/slides`;
-  const dayChips =
-    `<a class="fchip" href="${esc(withQuery(basePath, { day: null, room: filters.room || null }))}" aria-pressed="${!filters.day}">Every day</a>` +
-    allDays
-      .map(
-        (d) =>
-          `<a class="fchip" href="${esc(withQuery(basePath, { day: d, room: filters.room || null }))}" aria-pressed="${filters.day === d}">${esc(dayShort(d))}</a>`
-      )
-      .join('');
-  const roomChips = allRooms.length
-    ? `<a class="fchip" href="${esc(withQuery(basePath, { day: filters.day || null, room: null }))}" aria-pressed="${!filters.room}">Every room</a>` +
-      allRooms
+  const statusChips = (Object.keys(STATUS_WORD) as StatusFilter[])
+    .map(
+      (s) =>
+        `<a class="fchip" href="${esc(withQuery(basePath, { status: s === 'all' ? null : s, task: filters.task || null }))}" aria-pressed="${filters.status === s}">${esc(STATUS_WORD[s])}</a>`
+    )
+    .join('');
+  const taskChips = taskTitles.length
+    ? `<a class="fchip" href="${esc(withQuery(basePath, { status: filters.status !== 'all' ? filters.status : null, task: null }))}" aria-pressed="${!filters.task}">Every deliverable</a>` +
+      taskTitles
         .map(
-          (r) =>
-            `<a class="fchip" href="${esc(withQuery(basePath, { day: filters.day || null, room: r }))}" aria-pressed="${filters.room === r}">${esc(r)}</a>`
+          (t) =>
+            `<a class="fchip" href="${esc(withQuery(basePath, { status: filters.status !== 'all' ? filters.status : null, task: t }))}" aria-pressed="${filters.task === t}">${esc(t)}</a>`
         )
         .join('')
     : '';
 
   const head =
-    '<div style="padding:26px 0 0"><h1 class="display">Slides</h1>' +
+    '<div style="padding:26px 0 0"><h1 class="display">Deliverables</h1>' +
     '<p class="counts">' +
     (total
       ? `<b>${esc(num(inCount))} of ${esc(num(total))} in</b> (${pct}%)`
-      : '<b>Nothing accepted yet</b>') +
-    `<span class="sep">·</span>${esc(tzLabel)}</p></div>` +
-    `<div class="filters scrollx daybar" style="margin-top:14px">${dayChips}</div>` +
-    (roomChips ? `<div class="filters scrollx daybar">${roomChips}</div>` : '') +
+      : '<b>Nothing asked for yet</b>') +
+    `<span class="sep">·</span>${esc(tzLabel ?? timezone)}</p></div>` +
+    `<div class="filters scrollx daybar" style="margin-top:14px">${statusChips}</div>` +
+    (taskChips ? `<div class="filters scrollx daybar">${taskChips}</div>` : '') +
     noteLine(note) +
     (total && inCount === total
       ? '<div class="sec attn" style="background:var(--go-wash);border-color:#CBE0D1">' +
-        `<div><div class="lab">Every deck is in. ${esc(num(inCount))} of ${esc(num(total))}.</div></div></div>`
+        `<div><div class="lab">Everything asked for is in. ${esc(num(inCount))} of ${esc(num(total))}.</div></div></div>`
       : '') +
-    // The banner above counts what is on the board, which a day or a room
-    // filter can narrow; this counts what the conference is waiting on, and
-    // says so, so the two numbers can differ without either being a lie.
-    askEveryoneBlock(slug, basePath, filters, waiting, aWeekOut(gr.timezone), confirming);
+    // The banner above counts what the current filter shows; this counts every
+    // open request event-wide, and the two are the same set of rows unfiltered
+    // — deliverableRows() is the one source both this and the table read.
+    askEveryoneBlock(slug, basePath, filters, waiting, dueOn, confirming);
 
   let body: string;
   if (total === 0) {
     body =
-      '<div class="sec state-out"><h2>Nothing accepted yet.</h2>' +
-      '<p>Sessions show up here once they are accepted and placed on the agenda.</p>' +
+      '<div class="sec state-out"><h2>Nothing asked for yet.</h2>' +
+      '<p>Ask a speaker for something from their proposal and it turns up here, with a due date.</p>' +
       `<a class="btn btn-primary" href="/admin/${encodeURIComponent(slug)}/submissions">Go to proposals →</a></div>`;
   } else if (rows.length === 0) {
     body =
       '<div class="sec state-out"><h2>Nothing here with those filters.</h2>' +
-      `<a class="btn btn-primary" href="${basePath}">Show every session →</a></div>`;
+      `<a class="btn btn-primary" href="${basePath}">Show every request →</a></div>`;
   } else {
     body =
       '<div class="tablewrap" style="margin-top:16px"><table class="t"><thead><tr>' +
-      '<th>When</th><th>Room</th><th>Session</th><th>Slides</th><th>Detail</th></tr></thead><tbody>' +
-      rows
-        .map((r) => slidesRow(r.s, r.day, gr.timezone, todayKey, asked.get(r.s.id), slug, filters))
-        .join('') +
+      '<th>Speaker</th><th>Deliverable</th><th>Status</th><th>Detail</th></tr></thead><tbody>' +
+      rows.map((r) => deliverableRow(r, slug, todayKey, filters, dueOn)).join('') +
       '</tbody></table></div>' +
-      '<p class="hint" style="margin-top:12px">Asking again moves the date on the request. The ' +
-      'speaker sees the new date in their portal.</p>';
+      '<p class="hint" style="margin-top:12px">Asking again moves the due date on the request and ' +
+      'emails nobody. The speaker sees the new date the next time they open their portal.</p>';
   }
 
   return page({
-    title: `Slides · ${ev.name}`,
+    title: `Deliverables · ${ev.name}`,
     register: 'backstage',
     body: backstageShell({
       eventSlug: slug,
@@ -737,41 +743,33 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
       if (!ev) return c.html(deniedPage(), 403);
       requireScope(principal, ev.id, READ_ROLES);
 
-      const all = await allAcceptedSessions(c.env.DB, ev.id);
-      if (!all) return c.notFound();
+      const all = await deliverableRows(c.env.DB, ev.id);
+      const todayKey = eventDayKey(Date.now(), ev.timezone);
 
-      const withDay = all.sessions.map((s) => ({
-        s,
-        day: eventDayKey(s.startsAt, all.event.timezone),
-      }));
-
-      const dayParam = c.req.query('day') || '';
-      const roomParam = c.req.query('room') || '';
-      const rows = withDay.filter(
-        (r) => (!dayParam || r.day === dayParam) && (!roomParam || r.s.roomName === roomParam)
+      const statusParam = c.req.query('status') || '';
+      const status: StatusFilter =
+        statusParam === 'incomplete' || statusParam === 'overdue' ? statusParam : 'all';
+      const taskParam = c.req.query('task_filter') || '';
+      const rows = all.filter(
+        (r) => matchesStatus(r, status, todayKey) && (!taskParam || r.title === taskParam)
       );
+      const taskTitles = [...new Set(all.map((r) => r.title))].sort();
 
-      const allDays = [...new Set(withDay.map((r) => r.day))].sort();
-      const allRooms = [...new Set(withDay.map((r) => r.s.roomName).filter((x): x is string => !!x))].sort();
-
-      const [asked, waiting] = await Promise.all([
-        decksAsked(c.env.DB, ev.id),
-        stillWaitingCount(c.env.DB, ev.id),
-      ]);
+      const waiting = await stillWaitingCount(c.env.DB, ev.id);
       // The confirm is a place, not a piece of state: an address an organizer
       // can back out of with the browser's own button.
       const confirming = c.req.query('ask') === 'all' && hasScope(principal, ev.id, EDIT_ROLES);
 
       return c.html(
-        slidesPage(
+        deliverablesPage(
           principal,
           ev,
-          all.event,
+          ev.timezone,
+          ev.tzLabel,
+          all,
           rows,
-          { day: dayParam, room: roomParam },
-          allDays,
-          allRooms,
-          asked,
+          { status, task: taskParam },
+          taskTitles,
           waiting,
           confirming,
           c.req.query('note')
@@ -793,8 +791,8 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
 
   const boardPath = (slug: string, form: Record<string, string | File>, note: string): string =>
     withQuery(`/admin/${encodeURIComponent(slug)}/slides`, {
-      day: String(form['day'] ?? '') || null,
-      room: String(form['room'] ?? '') || null,
+      status: String(form['status'] ?? '') || null,
+      task_filter: String(form['task_filter'] ?? '') || null,
       note,
     });
 

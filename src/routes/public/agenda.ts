@@ -23,9 +23,10 @@
 //    things. It gets one quiet way back to the event's own site instead (R-6).
 //
 // Scope notes (see report to the calling agent for the full list):
-//  - AgendaSession carries no abstract, so the one-line description snippet
-//    EMB-09 asks for cannot be rendered on a row. The session page has the
-//    whole abstract and shows it. Flagged rather than faked.
+//  - EMB-09/EMB-01: AgendaSession now carries abstract (added to the query's
+//    SELECT and DTO, additively — queries/public.ts). Each card shows a
+//    one-line snippet; longer abstracts sit behind a native <details>
+//    disclosure ("Show more"), no script required. See abstractSnippet().
 //  - Speaker job titles and organisations come from speakersGallery(), the
 //    public query the speakers page already uses — one more read on this
 //    screen, run alongside the agenda read, and no new SQL anywhere.
@@ -315,16 +316,44 @@ function roleWords(r: Role | undefined): string {
 }
 
 /** One line under the byline: what the one speaker does, or — when a session
- *  has several — the places they have come from, each named once. */
+ *  has several — each co-speaker's own affiliation, named beside them. A
+ *  pooled list of organisations (the shape this used to return) cannot say
+ *  which speaker goes with which employer once two speakers share a card —
+ *  the exact misattribution risk the widget-polish pass named. */
 function roleLine(speakers: SpeakerRef[], roles: RoleIndex): string {
   const first = speakers[0];
   if (speakers.length === 1 && first) return roleWords(roles.get(first.personId));
-  const orgs: string[] = [];
+  const pairs: string[] = [];
   for (const p of speakers) {
     const org = roles.get(p.personId)?.organisation;
-    if (org && !orgs.includes(org)) orgs.push(org);
+    if (org) pairs.push(`${p.name} · ${org}`);
   }
-  return orgs.join(' · ');
+  return pairs.join(', ');
+}
+
+/**
+ * EMB-09/EMB-01: the one-line description a card carries. Char-truncated
+ * rather than CSS-clamped so no rule in onstage.css (not this file's to
+ * touch) has to grow a line-clamp utility for it. Short abstracts render
+ * plain; longer ones sit behind a native <details> disclosure — the "Show
+ * more" rubric asks for, with no script and nothing this parcel had to add
+ * to the no-JS baseline. Reuses the shared `.sub` class for its muted
+ * colour/size rather than inventing a new rule.
+ */
+function abstractSnippet(abstract: string | null): string {
+  const clean = (abstract ?? '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  const LIMIT = 130;
+  const box = 'margin:6px 0 0;max-width:58ch';
+  if (clean.length <= LIMIT) {
+    return `<p class="sub" style="${box}">${esc(clean)}</p>`;
+  }
+  const cut = clean.slice(0, LIMIT).replace(/\s+\S*$/, '');
+  return (
+    `<details class="sub" style="${box}">` +
+    `<summary style="cursor:pointer;color:inherit">${esc(cut)}… <span style="text-decoration:underline">Show more</span></summary>` +
+    `<p style="margin-top:4px">${esc(clean)}</p></details>`
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -496,6 +525,7 @@ function seshCard(
     `<h3>${titleHtml}</h3>` +
     (names.length ? `<div class="sesh-by"><span>${byline(names)}</span></div>` : '') +
     (role ? `<div class="sub" style="margin-top:3px">${esc(role)}</div>` : '') +
+    abstractSnippet(s.abstract) +
     `<div class="sesh-meta">${trackBadge(s.track)}<span>${esc(formatLabel(s.format))} · ${esc(durationLabel(s.minutes))}</span>` +
     (s.cancelled ? `<span class="sub">· ${esc(label('submission.cancelled', 'onstage'))}</span>` : '') +
     '</div></div>';
@@ -757,13 +787,23 @@ function agendaBody(
   // signed in, the server already knows it. Either way the bar is the way out
   // of the program and into the plan.
   const startedWith = stars.kind === 'account' ? stars.starred.size : 0;
+  // A signed-in visitor's own starred list, as a calendar file — the same
+  // route my-picks.ics already answers for a foreign ids= list, wired here
+  // for the account that already knows its own picks (registerIcs,
+  // src/routes/public/ics.ts). Signed-out visitors keep their picks in this
+  // browser only, so there is no id list this page can hand a server-rendered
+  // link without a script this file does not own writing one.
+  const icsScheduleLink =
+    stars.kind === 'account' && startedWith
+      ? `<a class="link" href="/${esc(slug)}/my-schedule.ics">Add my schedule to calendar →</a>`
+      : '';
   const starBar =
     stars.kind === 'none' || !allSessions.length
       ? ''
       : '<div class="starcount">' +
         `<span data-starcount>${esc(
           startedWith ? plural(startedWith, 'session starred', 'sessions starred') : 'Nothing starred yet.'
-        )}</span>` +
+        )}</span>${icsScheduleLink}` +
         `<a class="link" style="margin-left:auto" href="/${esc(slug)}/my-schedule">My schedule →</a></div>`;
 
   // data-stars is the island's whole handshake: the event slug it keys the
@@ -883,8 +923,23 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
       inner = agendaBody(event, ag, f, slug, roles, stars, link);
     }
 
+    // Widget polish: the phone-width star's absolute-positioned tap target
+    // (onstage.css's .starbtn, 44px at top:7/right:7 against .sesh-main's
+    // 58px reserve) sits close enough to the title link above it to catch a
+    // tap meant for the title. onstage.css is owned by another parcel this
+    // task cannot edit, so this is a page-scoped override: same selectors,
+    // rendered inside <body> and so later in the cascade than the linked
+    // stylesheet — no !important needed. Reported for onstage.css to fold in
+    // properly (see report to the calling agent for the exact rule).
+    const starSpacingFix =
+      stars.kind !== 'none' && ag.published
+        ? '<style>@media (max-width:720px){.sesh-main{padding-right:66px}' +
+          '.starbtn{top:10px;right:10px;width:46px;height:46px}}</style>'
+        : '';
+
     const body =
       (embed ? `<div class="stage onstage embed"><main>${inner}</main></div>` : onstageShell(nav, inner, slug)) +
+      starSpacingFix +
       (stars.kind === 'local' && ag.published ? `<script>${String(agendaStarsIsland)}</script>` : '');
 
     // Signed in, the stars on this page are one person's own: never held in a
