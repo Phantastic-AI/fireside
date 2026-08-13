@@ -37,9 +37,13 @@ for `@example.org` addresses the link prints on the page instead of
 emailing, so every journey is walkable without an inbox.
 
 **For your agent:** the same doors speak MCP at
-`https://fireside.phantastic.ai/mcp` — eight tools, JSON-RPC 2.0, no
-session. A proposal submitted by an agent walks through exactly the same
-guarded workflow as one typed by hand.
+`https://fireside.phantastic.ai/mcp` — eight public tools, JSON-RPC 2.0,
+no session. A proposal submitted by an agent walks through exactly the same
+guarded workflow as one typed by hand. Sign in and
+[/agents](https://fireside.phantastic.ai/agents) prints a connect command
+whose token acts as you: a reviewer can hand their queue to Claude and file
+every review over the wire, through the reviewer's own guards. See
+[/agents](https://fireside.phantastic.ai/agents) for the connect strings.
 
 ## What it does
 
@@ -53,12 +57,23 @@ guarded workflow as one typed by hand.
 - **Decide quietly, tell everyone deliberately**: decisions stage letters
   into an outbox; nothing leaves until a person reads the number and sends.
   The number confirmed is the number that goes.
-- Review rounds where a reviewer's scores stay theirs until they submit
-  them, then feed aggregates on the proposal page
+- Review rounds — named, dated, and non-destructive (opening round two never
+  hides round one) — where a reviewer's scores stay theirs until they submit,
+  then feed a **sortable results table** you can export to CSV; blind is a
+  per-round setting
+- The call can open in **waves** — an early call, a main call, a late
+  extension — and every proposal remembers which one it arrived in
 - An agenda builder that surfaces conflicts at the moment of placement —
   a double-booked room or a speaker in two places refuses right there
-- A **cross-conference speaker directory**: every speaker you have worked
-  with, their history, one place
+- A **speaker CRM across conferences**: a directory with filters and saved
+  searches, contact notes, duplicate merge, a sourcing board, CSV import,
+  and one gesture to invite a past speaker to this year's call — with a
+  workflow status (invited → proposed → confirmed → onboarded) that is
+  computed from the truth, never a field that can drift from it
+- **Deliverables that hold their history**: file requests and the readiness
+  board are one system with honest counts; every upload keeps its earlier
+  versions; a comment thread runs between organizer and speaker on each file;
+  and a files library exports the latest of everything as one ZIP
 - Day-of-show surfaces: a phone-first **green room sheet** behind a
   shareable link you can revoke, and a **slides readiness board**
 - Per-conference roles — owner, approver, editor, viewer — so a review
@@ -101,6 +116,13 @@ no build pipeline drama. Every multi-row write is a guarded batch: a
 statement that aborts the whole transaction if the world moved while the
 human was reading.
 
+About **37,000 lines** of it, and the boundary is real, not aspirational:
+routes render and orchestrate, `queries/` owns every read (screens never
+write SQL), `workflows/` owns every write (each one a guarded batch), and
+one label map holds every word the UI says. The pages carry small
+progressive-enhancement islands, so the whole thing works with JavaScript
+switched off.
+
 ## Run your own
 
 ```sh
@@ -112,6 +134,8 @@ npx wrangler d1 execute fireside --remote --file schema/0003_passwords.sql
 npx wrangler d1 execute fireside --remote --file schema/0004_reviewer_role.sql
 npx wrangler d1 execute fireside --remote --file schema/0005_submission_waves.sql
 npx wrangler d1 execute fireside --remote --file schema/0006_file_comments.sql
+npx wrangler d1 execute fireside --remote --file schema/0007_review_depth.sql
+npx wrangler d1 execute fireside --remote --file schema/0008_speaker_crm.sql
 npx wrangler secret put SESSION_SECRET   # any long random string
 npx wrangler deploy
 ```

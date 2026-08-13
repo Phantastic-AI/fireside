@@ -254,10 +254,13 @@
    thesis and nothing else.
    ============================================================ */
 
-/* the hero splits: words left, the organizer's morning right */
-.mkt-hero-grid{display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,.88fr);
-  gap:clamp(30px,4.4vw,64px);align-items:center}
-.mkt-pulse{justify-self:end;max-width:420px}
+/* the hero: one column, said plainly — no card standing in for a product
+   screenshot. Measure held to the same 760px the rest of the page uses for
+   a confident block of text (see .mkt-narrow), so the statement reads as
+   intentional rather than merely wide. */
+.mkt-hero-in{max-width:760px}
+/* .mkt-pr: the label/value row shared by the desk, review, and readiness
+   vignettes further down the page (not hero-specific — kept general). */
 .mkt-pr{display:flex;gap:10px;align-items:baseline;padding:9px 0;
   border-top:1px solid var(--line-soft);font-size:14px;line-height:1.45}
 .mkt-vg-h+.mkt-pr{border-top:0;padding-top:0}
@@ -266,9 +269,6 @@
 .mkt-pr .l.ok{color:var(--go)}
 .mkt-pr .v{color:var(--ink-soft);min-width:0}
 .mkt-pr .link{margin-left:auto;font-size:13.5px;white-space:nowrap}
-.mkt-pulse-watch{margin-top:12px;padding:9px 12px;background:var(--ember-wash);
-  border:1px solid var(--ember-line);border-radius:9px;font-size:13.5px;
-  line-height:1.5;color:#7A3A0E}
 
 /* the runway: the year in six breaths under the hero */
 .mkt-run{display:grid;grid-template-columns:repeat(6,1fr);gap:0 18px;
@@ -331,11 +331,14 @@
    or a printer. Everything below the fold is simply there. */
 @keyframes mkt-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:no-preference){
-  .mkt-hero>.mkt-wrap>*{animation:mkt-up .62s cubic-bezier(.2,.9,.3,1) both}
-  .mkt-hero>.mkt-wrap>*:nth-child(2){animation-delay:.07s}
-  .mkt-hero>.mkt-wrap>*:nth-child(3){animation-delay:.14s}
-  .mkt-hero>.mkt-wrap>*:nth-child(4){animation-delay:.21s}
-  .mkt-hero>.mkt-wrap>*:nth-child(5){animation-delay:.30s}
+  /* the kicker, headline, lede, CTAs, and feature strip step in one after
+     the other; the runway strip below picks the stagger up where it left off */
+  .mkt-hero-in>*{animation:mkt-up .62s cubic-bezier(.2,.9,.3,1) both}
+  .mkt-hero-in>*:nth-child(2){animation-delay:.07s}
+  .mkt-hero-in>*:nth-child(3){animation-delay:.14s}
+  .mkt-hero-in>*:nth-child(4){animation-delay:.21s}
+  .mkt-hero-in>*:nth-child(5){animation-delay:.28s}
+  .mkt-hero>.mkt-wrap>.mkt-run{animation:mkt-up .62s cubic-bezier(.2,.9,.3,1) .34s both}
   .mkt-ev{transition:transform .18s cubic-bezier(.2,.9,.3,1.1),box-shadow .18s}
   .mkt-ev:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift)}
 }
@@ -349,12 +352,13 @@
   .mkt-show.mkt-flip .mkt-show-txt{order:0}
   .mkt-show-art{justify-content:flex-start}
   .mkt-doors{grid-template-columns:1fr}
-  .mkt-hero-grid,.mkt-cols{grid-template-columns:1fr;gap:34px}
-  .mkt-pulse{justify-self:stretch;max-width:none}
+  .mkt-hero-in{max-width:none}
+  .mkt-cols{grid-template-columns:1fr;gap:34px}
   .mkt-cols .mkt-vg{justify-self:start}
   .mkt-run{grid-template-columns:repeat(3,1fr)}
-  /* The pulse rows stack their label over their value on a narrow card, so a
-     long label like "Proposals" never runs into the number beside it. */
+  /* The desk/review/readiness rows stack their label over their value on a
+     narrow card, so a long label like "Proposals" never runs into the
+     number beside it. */
   .mkt-pr{flex-direction:column;gap:2px}
   .mkt-pr .l{width:auto}
   .mkt-pr .link{margin-left:0}

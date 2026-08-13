@@ -122,20 +122,6 @@ const MECHANICS: { h: string; p: string }[] = [
  * Vignettes — the product sketched in its own materials.
  * ------------------------------------------------------------------ */
 
-/** The organizer's morning, in one card. Counts are the seeded world's. */
-function vgPulse(): string {
-  return (
-    '<aside class="mkt-vg mkt-pulse" aria-label="The organizer’s morning at a glance">' +
-    '<div class="mkt-vg-h">Program pulse<span class="r">AI Engineer New York 2026</span></div>' +
-    '<div class="mkt-pr"><span class="l">Proposals</span><span class="v">1,000 in · 328 still undecided</span></div>' +
-    '<div class="mkt-pr"><span class="l">Letters</span><span class="v">610 written · none sent by accident</span></div>' +
-    '<div class="mkt-pr"><span class="l">Program</span><span class="v">57 sessions placed · 54 speakers</span></div>' +
-    '<div class="mkt-pr"><span class="l">Speakers</span><span class="v">Decks and headshots, chased kindly</span></div>' +
-    '<div class="mkt-pulse-watch">● The call is still open — the pile grows while you read this.</div>' +
-    '</aside>'
-  );
-}
-
 /** The editorial desk, as the backstage actually draws it. */
 function vgBoard(): string {
   const rows: { l: string; v: string; a: string; href: string }[] = [
@@ -404,10 +390,16 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
       ? '<a href="/admin">Backstage</a><a href="/sign-out">Sign out</a>'
       : '<a href="/sign-in">Sign in</a>');
 
+  // One column, said plainly. The card that used to sit here — "Program
+  // pulse", a mock dashboard of live proposal and letter counts — read as a
+  // cramped screenshot of nothing, and it published exactly the kind of
+  // backstage funnel number the product elsewhere keeps off public pages
+  // (accepted-so-far, still-undecided). The real proof that this runs is
+  // the "Walk one" section further down, where two conferences are actually
+  // live and clickable. The hero's only job now is the plain statement.
   const hero =
     '<section class="mkt-hero"><div class="mkt-wrap">' +
-    '<div class="mkt-hero-grid">' +
-    '<div>' +
+    '<div class="mkt-hero-in">' +
     '<p class="mkt-kick">Conference program software · for editorial teams</p>' +
     '<h1>Keep your whole conference <em>humming in sync.</em></h1>' +
     '<p class="mkt-lede">Months before the audience arrives, follow the proposals, reviews, placements, ' +
@@ -425,8 +417,6 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     '<li>Free and open source</li><li>Self-hostable, one Worker</li>' +
     '<li>No attendee accounts</li><li>Speaks MCP</li>' +
     '</ul>' +
-    '</div>' +
-    vgPulse() +
     '</div>' +
     `<div class="mkt-run">${RUNWAY.map(
       (s) => `<div class="mkt-run-s"><span>${esc(s.t)}</span><h3>${esc(s.h)}</h3></div>`
