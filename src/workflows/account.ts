@@ -146,7 +146,12 @@ export async function makeAgentToken(secret: string, personId: string): Promise<
 export async function makeMagicLink(
   secret: string,
   origin: string,
-  personId: string
+  personId: string,
+  /** Where to land after the link is followed — a same-origin path the
+   *  caller has already vouched for. The magic route validates it again
+   *  before honouring it, so a tampered address can only ever fall back to
+   *  the standing-based landing, never redirect off-site. */
+  next?: string | null
 ): Promise<string> {
   const token = await signToken(secret, {
     purpose: 'magic',
@@ -154,7 +159,8 @@ export async function makeMagicLink(
     nonce: randomNonce(),
     exp: Date.now() + 2 * 3_600_000,
   });
-  return `${origin}/sign-in/magic?t=${encodeURIComponent(token)}`;
+  const base = `${origin}/sign-in/magic?t=${encodeURIComponent(token)}`;
+  return next ? `${base}&next=${encodeURIComponent(next)}` : base;
 }
 
 /** R-12 deliverability rule: real addresses get real email; the synthetic

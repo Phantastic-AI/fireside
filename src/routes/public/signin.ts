@@ -17,7 +17,12 @@ function noteHtml(note: string): string {
   );
 }
 
-export function signInPage(note?: string): string {
+export function signInPage(note?: string, next?: string | null): string {
+  // A same-origin path to return to, carried through both submit buttons (the
+  // password sign-in and the mailed-link path) so a conference's own link
+  // lands the speaker back in that conference. It has already been validated
+  // in index.ts; escaped here as any attribute value is.
+  const nextField = next ? `<input type="hidden" name="next" value="${esc(next)}">` : '';
   const body =
     '<div class="stage onstage">' +
     `<header class="mast"><div class="wrap mast-in">${brand()}<nav><a href="/">Home</a></nav></div></header>` +
@@ -27,6 +32,7 @@ export function signInPage(note?: string): string {
     (note ? `<p class="hint" style="margin-top:10px">${noteHtml(note)}</p>` : '') +
     '</div>' +
     '<form class="card card-pad sec" method="post" action="/sign-in" style="display:block">' +
+    nextField +
     '<label class="f" for="email"><span class="f-lab">Email</span>' +
     '<input type="email" id="email" name="email" required autocomplete="email" placeholder="you@yourconference.org"></label>' +
     '<label class="f" for="password" style="margin-top:12px"><span class="f-lab">Password</span>' +

@@ -104,7 +104,7 @@ app.get('/', async (c) => {
   const events = await listEvents(c.env.DB);
   return c.html(homePage(!!me, events));
 });
-app.get('/sign-in', (c) => c.html(signInPage()));
+app.get('/sign-in', (c) => c.html(signInPage(undefined, safeNext(c.req.query('next')))));
 app.get('/sign-up', (c) => c.html(signUpPage()));
 
 /** Where signing in lands you: your backstage if you hold any standing, your
@@ -138,11 +138,27 @@ async function afterSignIn(db: D1Database, personId: string): Promise<string> {
   return one ? `/${one.slug}/portal` : '/';
 }
 
-async function requestMagicLink(c: { env: Env; req: { url: string } }, email: string): Promise<string> {
+/** A same-origin relative path, or null. Every post-sign-in redirect passes
+ *  through here so a `next=` can only ever send someone deeper into this site,
+ *  never off it: one leading slash, not "//" or "/\" (protocol-relative), no
+ *  control characters, and nothing longer than a real path. Anything else
+ *  falls back to afterSignIn's standing-based landing. */
+function safeNext(raw: string | null | undefined): string | null {
+  if (!raw || raw.length > 512) return null;
+  if (raw[0] !== '/' || raw[1] === '/' || raw[1] === '\\') return null;
+  if (/[\x00-\x1f]/.test(raw)) return null;
+  return raw;
+}
+
+async function requestMagicLink(
+  c: { env: Env; req: { url: string } },
+  email: string,
+  next?: string | null
+): Promise<string> {
   const person = await findPersonByEmail(c.env.DB, email);
   if (!person?.email) return 'If that address is in the system, a sign-in link is on its way.';
   const origin = new URL(c.req.url).origin;
-  const link = await makeMagicLink(c.env.SESSION_SECRET, origin, person.id);
+  const link = await makeMagicLink(c.env.SESSION_SECRET, origin, person.id, next);
   if (isRealAddress(person.email)) {
     await c.env.EMAIL.send({
       to: person.email,
@@ -160,21 +176,26 @@ app.post('/sign-in', async (c) => {
   const form = await c.req.parseBody();
   const email = String(form['email'] ?? '');
   const password = String(form['password'] ?? '');
-  if (!email) return c.html(signInPage('An email address is needed.'), 400);
+  const next = safeNext(String(form['next'] ?? '') || null);
+  if (!email) return c.html(signInPage('An email address is needed.', next), 400);
   if (!password) {
-    return c.html(signInPage(await requestMagicLink(c, email)));
+    return c.html(signInPage(await requestMagicLink(c, email, next), next));
   }
   const person = await signIn(c.env.DB, email, password);
-  if (!person) return c.html(signInPage('That address and password do not match.'), 401);
+  if (!person) return c.html(signInPage('That address and password do not match.', next), 401);
   c.header('set-cookie', await sessionCookie(c.env.SESSION_SECRET, person.id));
-  return c.redirect(await afterSignIn(c.env.DB, person.id));
+  // Context wins: a conference's own link (a decision letter, a slides
+  // reminder) carries the speaker back to that conference, not to whichever
+  // one their standing would otherwise pick.
+  return c.redirect(next ?? (await afterSignIn(c.env.DB, person.id)));
 });
 
 app.post('/sign-in/link', async (c) => {
   const form = await c.req.parseBody();
   const email = String(form['email'] ?? '');
-  if (!email) return c.html(signInPage('An email address is needed.'), 400);
-  return c.html(signInPage(await requestMagicLink(c, email)));
+  const next = safeNext(String(form['next'] ?? '') || null);
+  if (!email) return c.html(signInPage('An email address is needed.', next), 400);
+  return c.html(signInPage(await requestMagicLink(c, email, next), next));
 });
 
 app.get('/sign-in/magic', async (c) => {
@@ -185,7 +206,8 @@ app.get('/sign-in/magic', async (c) => {
     return c.html(signInPage('That link has expired. Ask for a fresh one below.'), 400);
   }
   c.header('set-cookie', await sessionCookie(c.env.SESSION_SECRET, p.subjectId));
-  return c.redirect(await afterSignIn(c.env.DB, p.subjectId));
+  const next = safeNext(c.req.query('next'));
+  return c.redirect(next ?? (await afterSignIn(c.env.DB, p.subjectId)));
 });
 
 app.post('/sign-up', async (c) => {

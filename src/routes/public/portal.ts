@@ -280,7 +280,7 @@ function signedOutPage(ev: EventHome): string {
     '<p>Every letter we send carries a link straight back in. Open the most recent one, or sign ' +
     'in with the address on your proposal and we will send a fresh one.</p>' +
     '<div class="btnrow">' +
-    `<a class="btn btn-primary btn-lg" href="/sign-in">${esc(label('auth.sign_in', 'onstage'))}</a>` +
+    `<a class="btn btn-primary btn-lg" href="/sign-in?next=${encodeURIComponent(`/${ev.slug}/portal`)}">${esc(label('auth.sign_in', 'onstage'))}</a>` +
     (ev.lifecycle === 'open'
       ? `<a class="btn btn-lg" href="/${esc(ev.slug)}/cfp">Send a proposal</a>`
       : `<a class="btn btn-lg" href="/${esc(ev.slug)}/agenda">See the program</a>`) +
