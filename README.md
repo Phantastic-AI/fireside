@@ -48,6 +48,13 @@ travel without being on the program — sign in as
 her portal becomes Priya's, scoped to what is due (she can send the deck and
 mark a task, never withdraw the talk).
 
+**To walk the blind reviewer** — the reading room and nothing else — sign in
+as **lena.fischer@example.org** (the magic link prints on the page). Her
+queue is only the proposals handed to her, names hidden while she scores,
+her marks staying hers until she sends them; the chair reads the weighted
+aggregate on the results table, and it is the same number the proposal page
+shows.
+
 **For your agent:** the same doors speak MCP at
 `https://fireside.phantastic.ai/mcp` — eight public tools, JSON-RPC 2.0,
 no session. A proposal submitted by an agent walks through exactly the same
