@@ -29,7 +29,7 @@ import { initialsOf } from './public';
  * costs one comment; skipping it would let a shared list print the title of a
  * talk the committee has not announced.
  */
-const VISIBLE_SESSION = `
+export const VISIBLE_SESSION = `
   s.state IN ('accepted','cancelled') AND s.starts_at IS NOT NULL AND e.agenda_published = 1`;
 
 /* ------------------------------------------------------------------ *

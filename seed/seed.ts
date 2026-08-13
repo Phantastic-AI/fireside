@@ -77,6 +77,7 @@ export type SeedData = {
   my_schedule: Row[];
   star: Row[];
   connection: Row[];
+  friend_request: Row[];
   question: Row[];
   answer: Row[];
   // CRM (area 07) tables. Seeded empty — the directory and overview read live
@@ -124,7 +125,7 @@ export function buildSeed(): SeedData {
   const d: SeedData = {
     event: [], person: [], track: [], room: [], submission: [], participation: [],
     review: [], event_role: [], task: [], file: [], file_comment: [], message: [],
-    my_schedule: [], star: [], connection: [], question: [], answer: [],
+    my_schedule: [], star: [], connection: [], friend_request: [], question: [], answer: [],
     roster_entry: [], crm_note: [], crm_tag: [], crm_segment: [], crm_card: [], crm_card_event: [],
   };
 
@@ -670,6 +671,14 @@ export function buildSeed(): SeedData {
     id: 'con-0001', owner_person_id: dani, other_person_id: noor,
     submission_id: ddcPlaced[0]!.id as string, note: 'Asked the good question about queue depth',
     created_at: utc(2025, 11, 6, 15),
+  });
+  // Δ conn demo: Dani asked, Noor accepted, so the friends list has a card
+  // on first sight and each person's own opt-ins are visible on it (Dani
+  // shares her links, Noor shares where she works — the gate visible in one
+  // glance, mixed on purpose).
+  d.friend_request.push({
+    id: 'frq-0001', event_id: DDC, requester_id: dani, recipient_id: noor,
+    requested_at: utc(2025, 11, 6, 15, 20), accepted_at: utc(2025, 11, 6, 16), revoked_at: null,
   });
 
   // -- questions & answers ----------------------------------------------

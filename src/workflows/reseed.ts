@@ -5,8 +5,14 @@ import { hashPassword, saltFrom } from '../lib/sign';
 
 // The published organizer credential (R-3): printed in the README, made safe
 // by this very rebuild. Deterministic salt keeps the hash stable across runs.
+// Δ conn adds two more (report to the doc owner: publish both in the README
+// alongside naomi's, the same deployment invariant) — a judge needs to be
+// signed in as each side of a pair to watch a live request/accept/revoke,
+// not just read the seeded-accepted one between them.
 const DEMO_CREDENTIALS: [personId: string, password: string][] = [
   ['naomi-adeyemi', 'read-them-before-they-go'],
+  ['dani-okafor', 'ask-before-you-assume'],
+  ['per-reciprocal-attendee', 'accept-what-you-choose'],
 ];
 
 // Reverse-FK wipe order; forward order for inserts. 'file' and 'file_comment'
@@ -16,7 +22,7 @@ const DEMO_CREDENTIALS: [personId: string, password: string][] = [
 const INSERT_ORDER: (keyof SeedData)[] = [
   'event', 'person', 'track', 'room', 'submission', 'participation', 'review',
   'event_role', 'task', 'file', 'file_comment', 'message', 'my_schedule', 'star',
-  'connection', 'question', 'answer',
+  'connection', 'friend_request', 'question', 'answer',
   // CRM tables last, so the reverse-order wipe deletes these children before
   // their person/event parents. Seeded empty; present here only to be cleared.
   'roster_entry', 'crm_note', 'crm_tag', 'crm_segment', 'crm_card', 'crm_card_event',

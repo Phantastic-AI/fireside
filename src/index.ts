@@ -8,6 +8,7 @@ import { registerPortal } from './routes/public/portal';
 import { registerAgenda } from './routes/public/agenda';
 import { registerSpeakers } from './routes/public/speakers';
 import { registerSchedule } from './routes/public/schedule';
+import { registerConnect } from './routes/public/connect';
 import { registerEventHome } from './routes/public/event';
 import { registerEditProposal } from './routes/public/edit';
 import { registerIcs } from './routes/public/ics';
@@ -317,6 +318,7 @@ registerIcs(app);
 registerAgenda(app);
 registerSpeakers(app);
 registerSchedule(app);
+registerConnect(app);
 registerAsk(app);
 registerEventHome(app);
 

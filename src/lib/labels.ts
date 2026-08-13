@@ -149,6 +149,29 @@ const LABELS = {
   'social.visibility': { onstage: 'What can people see?' },
   'social.empty': { onstage: "Nobody's said they were here yet." },
 
+  // §1.24 — the exchange: find someone by name, ask, accept · Δ conn. Not in
+  // 02 §6 (a later parcel) — same register split as §1.21, onstage only.
+  'friend.find': { onstage: 'Find someone you met' },
+  'friend.search_button': { onstage: 'Search' },
+  'friend.search_empty': { onstage: 'No one found by that name yet. Check the spelling, or try a different one.' },
+  'friend.request': { onstage: 'Send a request' },
+  'friend.sent': { onstage: 'Request sent' },
+  'friend.cancel': { onstage: 'Cancel request' },
+  'friend.incoming': { onstage: '{name} wants to connect' },
+  'friend.accept': { onstage: 'Accept' },
+  'friend.not_now': { onstage: 'Not now' },
+  'friend.incoming_section': { onstage: 'Asking to connect' },
+  'friend.list': { onstage: 'Your people' },
+  'friend.list_empty': { onstage: 'Nobody yet. Search a name above once you have met them.' },
+  'friend.remove': { onstage: 'Remove' },
+  'friend.schedule': { onstage: 'See their schedule' },
+  'friend.schedule_empty': { onstage: "{name} hasn't starred anything yet." },
+  'friend.done': { onstage: 'Sent. They will see it next time they look.' },
+  'friend.accepted': { onstage: 'They are one of your people now.' },
+  'friend.removed': { onstage: 'Done. Nothing more to see on either side.' },
+  'friend.moved': { onstage: 'That moved while you were looking, so nothing changed.' },
+  'friend.trouble': { onstage: 'That did not save. Try it once more.' },
+
   // §1.22 — Questions, the call's own question editor · Δ13
   'question.section': { backstage: 'Questions' },
   'question.add': { backstage: 'Add a question' },

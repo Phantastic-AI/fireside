@@ -520,6 +520,12 @@ export function registerSchedule(app: Hono<{ Bindings: Env }>): void {
       ? '<div class="wrap" style="padding-top:44px">' +
         head +
         noteLine(c.req.query('note'), Number(c.req.query('n') ?? '0') || 0) +
+        // The ≤2-taps path to the exchange (Δ conn): nav → My schedule →
+        // here. One line, above the list, because someone reaching for it
+        // just met a person and should not have to scroll to keep them.
+        `<p class="hint" style="margin:2px 0 18px"><a class="link" href="/${esc(
+          ev.slug
+        )}/connect">${esc(label('friend.find', 'onstage'))} →</a></p>` +
         `<div class="sec">${serverList(ev.slug, embed, view.mine.starred)}</div>` +
         // An empty list has one next thing, and it is not sharing: the card
         // waits until there is something to share (or until it is already on,
