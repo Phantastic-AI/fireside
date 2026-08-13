@@ -27,7 +27,11 @@ export async function helpersOfSpeaker(
 ): Promise<Helper[]> {
   const res = await db
     .prepare(
-      `SELECT sh.id, sh.helper_person_id AS person_id, p.name, p.email, sh.added_at
+      // The name the speaker typed (sh.helper_name), never the person's own
+      // stored name — so the readback discloses nothing about who the address
+      // may already belong to. Email is the speaker's own input too.
+      `SELECT sh.id, sh.helper_person_id AS person_id,
+              COALESCE(sh.helper_name, 'Someone who helps you') AS name, p.email, sh.added_at
          FROM speaker_helper sh
          JOIN person p ON p.id = sh.helper_person_id
         WHERE sh.event_id = ? AND sh.speaker_person_id = ? AND sh.removed_at IS NULL

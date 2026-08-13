@@ -693,6 +693,7 @@ export function buildSeed(): SeedData {
   d.speaker_helper.push({
     id: 'shp-0001', event_id: AIE, speaker_person_id: 'priya-raghunathan',
     helper_person_id: 'devika-nair', added_at: ANCHOR - 10 * MS.day, removed_at: null,
+    helper_name: 'Devika Nair',
   });
 
   // -- questions & answers ----------------------------------------------

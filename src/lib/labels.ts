@@ -209,8 +209,8 @@ const LABELS = {
   'helper.banner': { onstage: 'Helping {name}' },
   'helper.scope_note': {
     onstage:
-      "You can see what is due here, and send in what {name} needs to send. The talk itself stays " +
-      "{name}'s alone to change.",
+      "You can see where {name}'s talks stand, what is due, and the letters from the committee, and " +
+      "you can send in what {name} needs to send. The talk itself stays {name}'s alone to change.",
   },
 
   // §1.23 — reviewing, the committee's own words · Δ13

@@ -88,22 +88,24 @@ export async function addHelper(
   statements.push(
     db
       .prepare(
-        `UPDATE speaker_helper SET added_at = ?, removed_at = NULL
+        `UPDATE speaker_helper SET added_at = ?, removed_at = NULL, helper_name = ?
           WHERE event_id = ? AND speaker_person_id = ? AND helper_person_id = ? AND removed_at IS NOT NULL`
       )
-      .bind(nowMs, eventId, speakerPersonId, helperPersonId)
+      .bind(nowMs, name, eventId, speakerPersonId, helperPersonId)
   );
   expect.push('any');
 
   statements.push(
     db
       .prepare(
-        `INSERT INTO speaker_helper (id, event_id, speaker_person_id, helper_person_id, added_at)
-         SELECT ?, ?, ?, ?, ?
+        // helper_name is the name the speaker typed, stored here so the list
+        // never reads it back off the person row (see migration 0012).
+        `INSERT INTO speaker_helper (id, event_id, speaker_person_id, helper_person_id, added_at, helper_name)
+         SELECT ?, ?, ?, ?, ?, ?
           WHERE NOT EXISTS (SELECT 1 FROM speaker_helper
                               WHERE event_id = ? AND speaker_person_id = ? AND helper_person_id = ?)`
       )
-      .bind(helperRowId, eventId, speakerPersonId, helperPersonId, nowMs, eventId, speakerPersonId, helperPersonId)
+      .bind(helperRowId, eventId, speakerPersonId, helperPersonId, nowMs, name, eventId, speakerPersonId, helperPersonId)
   );
   expect.push('any');
 
