@@ -455,3 +455,83 @@ export async function portalView(
     messages: messages.filter((m) => m.submissionId === null),
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * The quiet hub — every conference this person actually speaks at
+ * ------------------------------------------------------------------ */
+
+export type SpeakerConference = {
+  slug: string;
+  name: string;
+  accent: string | null;
+  venueName: string | null;
+  startsOn: string;
+  endsOn: string;
+  tzLabel: string | null;
+  proposals: number;
+  onProgram: number;
+  toSend: number;
+};
+
+type SpeakerConferenceRow = {
+  slug: string;
+  name: string;
+  accent: string | null;
+  venue_name: string | null;
+  starts_on: string;
+  ends_on: string;
+  tz_label: string | null;
+  proposals: number;
+  on_program: number;
+  to_send: number;
+};
+
+/**
+ * Every conference where this person has sent something real — a non-draft
+ * submission — most recent first. This is the whole read behind the quiet
+ * "your other conferences" link (routes/public/portal.ts's GET /portal): a
+ * speaker who has only ever spoken at one gets nothing built for them here,
+ * a speaker in several gets one calm row per conference.
+ *
+ * `onProgram` is told-gated exactly as portalView's own state is — an
+ * acceptance nobody has been notified of does not count, here or anywhere
+ * else a speaker can read it (see VISIBLE_STATE_SQL and TOLD above). This
+ * list never repeats what a decided-but-unsent state would say either way,
+ * because it never asks for the real state to begin with.
+ */
+export async function speakerConferences(
+  db: D1Database,
+  personId: string
+): Promise<SpeakerConference[]> {
+  const res = await db
+    .prepare(
+      `SELECT e.slug AS slug, e.name AS name, e.accent AS accent, e.venue_name AS venue_name,
+              e.starts_on AS starts_on, e.ends_on AS ends_on, e.tz_label AS tz_label,
+              COUNT(DISTINCT s.id) AS proposals,
+              SUM(CASE WHEN ${TOLD} AND s.state = 'accepted' THEN 1 ELSE 0 END) AS on_program,
+              (SELECT COUNT(*) FROM task t
+                WHERE t.event_id = e.id AND t.person_id = ?1
+                  AND t.completed_at IS NULL AND t.cancelled_at IS NULL) AS to_send
+         FROM participation pa
+         JOIN submission s ON s.id = pa.submission_id
+         JOIN event e ON e.id = s.event_id
+        WHERE pa.person_id = ?1 AND s.state <> 'draft'
+        GROUP BY e.id
+        ORDER BY e.starts_on DESC`
+    )
+    .bind(personId)
+    .all<SpeakerConferenceRow>();
+
+  return (res.results ?? []).map((r) => ({
+    slug: r.slug,
+    name: r.name,
+    accent: r.accent,
+    venueName: r.venue_name,
+    startsOn: r.starts_on,
+    endsOn: r.ends_on,
+    tzLabel: r.tz_label,
+    proposals: Number(r.proposals),
+    onProgram: Number(r.on_program),
+    toSend: Number(r.to_send),
+  }));
+}

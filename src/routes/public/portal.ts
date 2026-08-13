@@ -20,10 +20,12 @@ import { label, type LabelKey } from '../../lib/labels';
 import { eventBySlug, type EventHome } from '../../queries/public';
 import {
   portalView,
+  speakerConferences,
   type PortalMessage,
   type PortalSubmission,
   type PortalTask,
   type PortalView,
+  type SpeakerConference,
 } from '../../queries/portal';
 import { principalFromCookie } from '../../workflows/account';
 import { completeTask, withdrawProposal, type WriteOutcome } from '../../workflows/portal-actions';
@@ -926,6 +928,11 @@ function portalPage(
   /** This speaker's own helpers — read (and rendered) only in their own
    *  portal; empty and unused in helper-scoped mode. */
   helpers: Helper[],
+  /** True when this speaker stands on 2+ conferences on this Fireside — the
+   *  one thing that earns the quiet "your other conferences" link below.
+   *  Computed only in the own-speaker branch (routes/public/portal.ts's GET
+   *  handler); always false in helper-scoped mode. */
+  hasOtherConferences: boolean,
   /** Set only when the signed-in person is not this portal's own speaker but
    *  someone helping them — routes/public/portal.ts's fallback when
    *  queries/portal.ts's own view comes back null. Every control that would
@@ -949,12 +956,21 @@ function portalPage(
   const scopeNote = helperOf
     ? `<p class="sub" style="margin-top:4px">${fill(label('helper.scope_note', 'onstage'), { name: speakerName })}</p>`
     : '';
+  // Quiet by design: the same size and weight as "Sign out" beside it, on the
+  // one line every portal already has for "who you are and the way out" —
+  // never a banner, never a list, and never shown to a helper (canManage is
+  // false in that mode, and a helper has no "other conferences" of their own
+  // to reach from here).
+  const otherConfsLink =
+    canManage && hasOtherConferences
+      ? ' · <a class="link" href="/portal">your other conferences</a>'
+      : '';
   const head =
     '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
     face(view.profile, 56) +
     `<div><h1 class="display" style="font-size:32px">${heading}</h1>` +
     `<p class="sub">${speakerName} · ${esc(ev.name)} · ` +
-    `<a class="link" href="/sign-out">${esc(label('auth.sign_out', 'onstage'))}</a></p>` +
+    `<a class="link" href="/sign-out">${esc(label('auth.sign_out', 'onstage'))}</a>${otherConfsLink}</p>` +
     scopeNote +
     '</div></div>' +
     noteLine(note);
@@ -1079,6 +1095,55 @@ function portalPage(
 }
 
 /* ------------------------------------------------------------------ *
+ * The quiet hub — every conference this speaker actually stands on
+ *
+ * routes/public/portal.ts's own GET /portal (registered ahead of
+ * registerEventHome's catch-all /:eventSlug — see index.ts). It exists for
+ * exactly one shape of person: a speaker in two or more conferences on this
+ * Fireside, who signed in through one of them and needs a way to reach the
+ * others. It is never the front door — a speaker in one conference is
+ * redirected straight through, and the small "your other conferences" link
+ * that leads here (portalPage's head, below) only ever renders for someone
+ * this page would show more than one row to.
+ * ------------------------------------------------------------------ */
+
+/** One conference, in its own accent, with a told-gated line of standing and
+ *  nothing else — the hub never aggregates across conferences, it only
+ *  points into each one's own scoped portal. */
+function conferenceHubCard(conf: SpeakerConference): string {
+  const bits = [`${conf.proposals} proposal${conf.proposals === 1 ? '' : 's'}`];
+  if (conf.onProgram > 0) bits.push('on the program');
+  if (conf.toSend > 0) bits.push(`${conf.toSend} to send`);
+  return (
+    '<div class="card sec" style="overflow:hidden;max-width:46em">' +
+    conferenceMasthead(conf) +
+    '<div class="card-pad" style="display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap">' +
+    `<p class="sub" style="margin:0">${bits.map((b) => esc(b)).join(' · ')}</p>` +
+    `<a class="btn btn-primary" href="/${esc(conf.slug)}/portal">Open your portal →</a>` +
+    '</div></div>'
+  );
+}
+
+function hubPage(list: SpeakerConference[]): string {
+  const nav = `<a href="/">Home</a><a href="/sign-out">${esc(label('auth.sign_out', 'onstage'))}</a>`;
+  const main = list.length
+    ? '<div class="wrap" style="padding-top:44px">' +
+      '<h1 class="display">Your conferences</h1>' +
+      list.map(conferenceHubCard).join('') +
+      '</div>'
+    : '<div class="wrap" style="padding-top:44px">' +
+      '<h1 class="display">You are not on a program yet.</h1>' +
+      '<p class="sub" style="margin-top:10px">Once you send a proposal somewhere, it will show up ' +
+      'here. <a class="link" href="/">Browse a call for speakers →</a></p>' +
+      '</div>';
+  return page({
+    title: 'Your conferences',
+    register: 'onstage',
+    body: onstageShell(nav, main, null),
+  });
+}
+
+/* ------------------------------------------------------------------ *
  * Routes
  * ------------------------------------------------------------------ */
 
@@ -1104,6 +1169,24 @@ const helperNote = (outcome: HelperOutcome, done: string): string => {
 };
 
 export function registerPortal(app: Hono<{ Bindings: Env }>): void {
+  // The quiet hub itself — a literal path, so it wins over registerEventHome's
+  // /:eventSlug catch-all as long as this file registers before that one
+  // (index.ts does). Never the front door: a speaker with nothing yet, or
+  // standing in exactly one conference, is sent straight on rather than shown
+  // a hub of one row.
+  app.get('/portal', async (c) => {
+    const principal = await principalFromCookie(
+      c.env.DB,
+      c.env.SESSION_SECRET,
+      c.req.header('cookie')
+    );
+    if (!principal) return c.redirect('/sign-in?next=/portal');
+    const list = await speakerConferences(c.env.DB, principal.personId);
+    if (list.length === 1) return c.redirect(`/${list[0]!.slug}/portal`);
+    c.header('cache-control', 'private, no-store');
+    return c.html(hubPage(list));
+  });
+
   app.get('/:event/portal', async (c) => {
     const slug = c.req.param('event');
     const ev = await eventBySlug(c.env.DB, slug);
@@ -1153,13 +1236,18 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     const asked = [...view.submissions.flatMap((s) => s.tasks), ...view.tasks]
       .filter((t) => t.kind === 'file_request')
       .map((t) => t.id);
-    const [decks, versions, comments, people, helpers] = await Promise.all([
+    // The quiet hub's own count — only worth asking in the speaker's own view.
+    // A helper is not the speaker and has no "other conferences" to reach
+    // from here, so the query does not even run for them.
+    const [decks, versions, comments, people, helpers, otherConferences] = await Promise.all([
       decksForTasks(c.env.DB, asked),
       deckVersionsForTasks(c.env.DB, asked),
       commentsForTasks(c.env.DB, asked),
       peopleOnTalks(c.env.DB, view.submissions.map((s) => s.id)),
       helperOf ? Promise.resolve([]) : helpersOfSpeaker(c.env.DB, ev.id, viewerPersonId),
+      helperOf ? Promise.resolve([]) : speakerConferences(c.env.DB, principal.personId),
     ]);
+    const hasOtherConferences = otherConferences.length > 1;
     // Everyone on each talk but the person reading it: the co-presenters they
     // added, and — when they are the co-presenter — whoever sent it.
     const others = new Map<string, string[]>();
@@ -1175,7 +1263,9 @@ export function registerPortal(app: Hono<{ Bindings: Env }>): void {
     // A saved edit arrives under its own flag; its sentence still lives in
     // NOTES with the others, so there is one closed set and not two.
     const note = c.req.query('edited') === '1' ? 'edited' : c.req.query('note');
-    return c.html(portalPage(view, note, decks, versions, comments, others, helpers, helperOf));
+    return c.html(
+      portalPage(view, note, decks, versions, comments, others, helpers, hasOtherConferences, helperOf)
+    );
   });
 
   // -- CNT-05: a comment on a deliverable ---------------------------------
