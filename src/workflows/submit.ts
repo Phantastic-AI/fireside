@@ -21,7 +21,7 @@
 import { checkedBatch, guard, newId, StaleStateError } from '../lib/db';
 import { label } from '../lib/labels';
 import { findPersonByEmail } from './account';
-import type { CfpQuestion } from '../queries/public';
+import { openWindow, windowsOf, type CfpQuestion } from '../queries/public';
 
 /** The abstract goes on the program word for word, so it has a real ceiling. */
 export const ABSTRACT_MAX = 1200;
@@ -553,13 +553,22 @@ export async function submitProposal(
     expect.push(1);
   }
 
+  // Which wave this arrived in — the name of the window open right now, or null
+  // for a single-call event. Read here so the row remembers the call it came
+  // through even after that window has closed.
+  const evWindows = await db
+    .prepare('SELECT submission_windows FROM event WHERE id = ?')
+    .bind(eventId)
+    .first<{ submission_windows: string }>();
+  const wave = openWindow(windowsOf(evWindows?.submission_windows), nowMs)?.name ?? null;
+
   statements.push(
     db
       .prepare(
         `INSERT INTO submission
            (id, event_id, title, abstract, format, track_id, level, requested_min,
-            extra, source, created_at, submitted_at, state)
-         VALUES (?,?,?,?,?,?,?,?,?,'cfp',?,?,'submitted')`
+            extra, source, created_at, submitted_at, state, wave)
+         VALUES (?,?,?,?,?,?,?,?,?,'cfp',?,?,'submitted',?)`
       )
       .bind(
         submissionId,
@@ -572,7 +581,8 @@ export async function submitProposal(
         chosenFormat.minutes,
         JSON.stringify(kept),
         nowMs,
-        nowMs
+        nowMs,
+        wave
       )
   );
   expect.push(1);

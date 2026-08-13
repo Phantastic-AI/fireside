@@ -31,13 +31,61 @@ export type PublicState = 'accepted' | 'cancelled';
  * is open; anything else is closed. "Today" is the event's own today, because
  * a conference ends on a local evening, not at a UTC midnight.
  */
+/** One window a call opens in: a name, and when it opens and closes. A call
+ *  with no windows has one implicit window — cfp_opens_at / cfp_closes_at. */
+export type SubmissionWindow = { name: string; opensAt: number | null; closesAt: number | null };
+
+/** The windows on an event, parsed and cleaned. Empty when the call is the
+ *  single one the product always had; the caller falls back to cfp_*_at. */
+export function windowsOf(raw: string | null | undefined): SubmissionWindow[] {
+  if (!raw) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: SubmissionWindow[] = [];
+  for (const w of parsed) {
+    if (typeof w !== 'object' || w === null) continue;
+    const o = w as Record<string, unknown>;
+    if (typeof o.name !== 'string' || !o.name.trim()) continue;
+    out.push({
+      name: o.name.trim(),
+      opensAt: typeof o.opensAt === 'number' ? o.opensAt : null,
+      closesAt: typeof o.closesAt === 'number' ? o.closesAt : null,
+    });
+  }
+  return out.sort((a, b) => (a.opensAt ?? 0) - (b.opensAt ?? 0));
+}
+
+/** The window taking submissions right now, or null. A window with no opens is
+ *  taken as already open; one with no closes never closes. */
+export function openWindow(windows: SubmissionWindow[], nowMs: number): SubmissionWindow | null {
+  return (
+    windows.find(
+      (w) => (w.opensAt === null || w.opensAt <= nowMs) && (w.closesAt === null || w.closesAt > nowMs)
+    ) ?? null
+  );
+}
+
+/** The next window that has not opened yet, or null. */
+export function nextWindow(windows: SubmissionWindow[], nowMs: number): SubmissionWindow | null {
+  return windows.find((w) => w.opensAt !== null && w.opensAt > nowMs) ?? null;
+}
+
 export function lifecycleOf(
   endsOn: string,
   cfpClosesAt: number | null,
   timezone: string,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
+  windows: SubmissionWindow[] = []
 ): Lifecycle {
   if (endsOn < eventDayKey(nowMs, timezone)) return 'happened';
+  // With windows, the call is open when now falls inside one of them. Without,
+  // it is the single call: open until cfp_closes_at.
+  if (windows.length > 0) return openWindow(windows, nowMs) ? 'open' : 'closed';
   if (cfpClosesAt !== null && cfpClosesAt > nowMs) return 'open';
   return 'closed';
 }
@@ -96,6 +144,8 @@ export type EventCard = {
   cfpClosesAt: number | null;
   agendaPublished: boolean;
   lifecycle: Lifecycle;
+  /** The call's windows, ordered; empty for the single-call default. */
+  windows: SubmissionWindow[];
   counts: EventCounts;
 };
 
@@ -269,6 +319,7 @@ type EventRow = {
   day_end: string;
   block_minutes: number;
   agenda_published: number;
+  submission_windows: string;
   proposals: number;
   accepted: number;
   speakers: number;
@@ -313,7 +364,7 @@ const EVENT_COLUMNS = `
   e.venue_name, e.venue_address, e.accent, e.logo_file_id,
   e.cfp_opens_at, e.cfp_closes_at, e.cfp_intro, e.cfp_success_message,
   e.decide_by, e.max_submissions, e.day_start, e.day_end, e.block_minutes,
-  e.agenda_published`;
+  e.agenda_published, e.submission_windows`;
 
 // One pass over the join: three counts, no correlated subqueries.
 const EVENT_COUNTS = `
@@ -327,6 +378,7 @@ const EVENT_JOIN = `
   LEFT JOIN participation pa ON pa.submission_id = s.id`;
 
 function toCard(r: EventRow, nowMs: number): EventCard {
+  const windows = windowsOf(r.submission_windows);
   return {
     id: r.id,
     slug: r.slug,
@@ -343,7 +395,8 @@ function toCard(r: EventRow, nowMs: number): EventCard {
     cfpOpensAt: r.cfp_opens_at,
     cfpClosesAt: r.cfp_closes_at,
     agendaPublished: r.agenda_published === 1,
-    lifecycle: lifecycleOf(r.ends_on, r.cfp_closes_at, r.timezone, nowMs),
+    lifecycle: lifecycleOf(r.ends_on, r.cfp_closes_at, r.timezone, nowMs, windows),
+    windows,
     counts: { proposals: r.proposals, accepted: r.accepted, speakers: r.speakers },
   };
 }

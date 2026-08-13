@@ -126,6 +126,13 @@ export function buildSeed(): SeedData {
     timezone: 'America/New_York', tz_label: 'All times ET',
     venue_name: 'Pier 57', venue_address: 'Pier 57, New York',
     cfp_opens_at: utc(2026, 7, 21, 12), cfp_closes_at: ET(2026, 8, 20, 23, 59),
+    // Two waves (D-033): an early call that ran in June and closed, and the
+    // main call open now. cfp_opens_at/cfp_closes_at mirror the main window, so
+    // an older reader of those columns still sees the right open call.
+    submission_windows: JSON.stringify([
+      { name: 'Early call', opensAt: utc(2026, 6, 1, 12), closesAt: ET(2026, 7, 15, 23, 59) },
+      { name: 'Main call', opensAt: utc(2026, 7, 21, 12), closesAt: ET(2026, 8, 20, 23, 59) },
+    ]),
     // The organizer's own offer, in the organizer's own voice: what the room
     // is, what a good talk looks like here, what a speaker gets, and the two
     // dates that decide whether it is worth an evening. Every fact in it is
@@ -156,6 +163,7 @@ export function buildSeed(): SeedData {
     timezone: 'America/New_York', tz_label: 'All times ET',
     venue_name: 'The Foundry', venue_address: 'The Foundry, Charlotte',
     cfp_opens_at: utc(2025, 6, 1, 12), cfp_closes_at: ET5(2025, 8, 1, 23, 59),
+    submission_windows: '[]', // a single call, the way it always was
     // Lighter than New York's, and honest about what a volunteer conference
     // can promise: two rooms, one camera that does not make it everywhere.
     cfp_intro:
@@ -357,18 +365,40 @@ export function buildSeed(): SeedData {
   // -- write AIE submission rows ----------------------------------------
   const DECIDED = utc(2026, 8, 11, 2); // the committee sat late on the 10th
   const TOLD_ACCEPTED = utc(2026, 8, 11, 3);
+  // The two AIE submission windows (D-033), for placing a share of the pile in
+  // the early call. Named to match the event's submission_windows exactly.
+  const EARLY_OPEN = utc(2026, 6, 1, 12);
+  const EARLY_CLOSE = ET(2026, 7, 15, 23, 59);
   for (const s of subs) {
     const isDraft = s.state === 'draft';
     const isDecided = ['accepted', 'waitlisted', 'rejected'].includes(s.state);
     const isCancelled = s.hand && s.slugv === CANCELLED_SESSION_SLUG;
     const p = placements.get(s.id);
+    // Which wave, deterministic on the id so the rng sequence is untouched:
+    // roughly one in seven of the submitted pile came in the early call. The
+    // two random draws below are made exactly as before and only remapped into
+    // the early window for those, so created/submitted stay honest to the wave.
+    const idNum = Number(s.id.replace(/\D/g, '')) || 0;
+    const inEarly = !isDraft && idNum % 7 === 3;
+    const wave = isDraft ? null : inEarly ? 'Early call' : 'Main call';
+    const rCreated = rng();
+    const rSubmitted = isDraft ? 0 : rng();
+    const created = inEarly
+      ? EARLY_OPEN + Math.floor(rCreated * 40) * MS.day
+      : ANCHOR - Math.floor(rCreated * 18 + 2) * MS.day;
+    const submitted = isDraft
+      ? null
+      : inEarly
+        ? Math.min(created + MS.day, EARLY_CLOSE - MS.hour)
+        : ANCHOR - Math.floor(rSubmitted * 17 + 1) * MS.day;
     d.submission.push({
       id: s.id, event_id: AIE, title: s.title, abstract: s.abstract || null,
       format: s.format, track_id: `trk-aie-${s.track}`, level: s.level,
       requested_min: s.minutes, extra: '{}',
+      wave,
       source: s.hand ? 'cfp' : 'cfp',
-      created_at: ANCHOR - Math.floor(rng() * 18 + 2) * MS.day,
-      submitted_at: isDraft ? null : ANCHOR - Math.floor(rng() * 17 + 1) * MS.day,
+      created_at: created,
+      submitted_at: submitted,
       resume_nonce: isDraft ? `rn-${s.id}` : null,
       score: s.hand && isDecided ? Math.floor(rng() * 3) + 7 : null,
       score_notes: null,

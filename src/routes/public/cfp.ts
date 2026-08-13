@@ -28,6 +28,8 @@ import {
   eventBySlug,
   cfpQuestions,
   speakersGallery,
+  openWindow,
+  nextWindow,
   type CfpQuestion,
   type EventHome,
   type GallerySpeaker,
@@ -435,9 +437,10 @@ function factRail(ev: EventHome): string {
   const bar = '<span style="opacity:.4">│</span>';
   // The rail is read by somebody deciding whether to spend an evening writing,
   // so the first fact is their own next move with the date on it.
+  const closesAt = callClosesAt(ev, Date.now());
   const state =
-    ev.cfpClosesAt !== null
-      ? `Send yours by ${instantOf(ev.cfpClosesAt, ev.timezone)}`
+    closesAt !== null
+      ? `Send yours by ${instantOf(closesAt, ev.timezone)}`
       : '';
   const bits = [
     state ? `<span>${esc(state)}</span>` : '',
@@ -545,7 +548,22 @@ function cfpPage(o: {
       '</div>'
     : '';
 
-  const closes = ev.cfpClosesAt !== null ? instantOf(ev.cfpClosesAt, ev.timezone) : null;
+  const closesAt = callClosesAt(ev, Date.now());
+  const closes = closesAt !== null ? instantOf(closesAt, ev.timezone) : null;
+  const wave = currentWaveName(ev, Date.now());
+  const nextW = nextWindow(ev.windows, Date.now());
+  // When the call opens in more than one window, the speaker is told which one
+  // they are writing into and when it closes — and, if there is another after
+  // it, that a later call is coming, so a missed date is not a missed year.
+  const waveBanner = wave
+    ? `<p class="hint" style="margin:14px 0 0;padding:10px 14px;background:var(--ember-wash);` +
+      `border:1px solid var(--ember-line);border-radius:8px;color:#7A3A0E">` +
+      `This is the <b>${esc(wave)}</b>${closes ? `, open until ${esc(closes)}` : ''}.` +
+      (nextW && nextW.opensAt !== null
+        ? ` A later call, the ${esc(nextW.name)}, opens ${esc(instantOf(nextW.opensAt, ev.timezone))}.`
+        : '') +
+      '</p>'
+    : '';
 
   // Unhidden by the island, and only when it actually put words back. A
   // browser that never runs it never reads a line about a draft it has not
@@ -662,6 +680,7 @@ function cfpPage(o: {
     (ev.cfpIntro
       ? `<p class="lede serif" style="margin-top:16px;font-size:19px;line-height:1.6">${esc(ev.cfpIntro)}</p>`
       : '') +
+    waveBanner +
     factRail(ev) +
     `<div class="sec" style="max-width:46em">${form}</div>` +
     speakerStrip(ev, o.speakers) +
@@ -677,21 +696,40 @@ function cfpPage(o: {
   });
 }
 
-/** The call, not open. Two different sentences, because they are two different days. */
+/** The call, not open. Three shapes: it has not opened at all; it is between
+ *  waves and the next one is coming; or it is done. */
 function callShutPage(ev: EventHome, opensLater: boolean): string {
+  const now = Date.now();
+  const nextW = nextWindow(ev.windows, now);
+  // The date the last window closed (for the between/after copy), or the single
+  // call's close.
+  const lastClose = ev.windows.length
+    ? ev.windows.reduce<number | null>(
+        (acc, w) => (w.closesAt !== null && w.closesAt <= now && (acc === null || w.closesAt > acc) ? w.closesAt : acc),
+        null
+      )
+    : ev.cfpClosesAt;
   // Dates, and nothing about who is reading them: after the call closes the
   // only thing this page owes a speaker is when it shut and when they hear.
-  const closed = ev.cfpClosesAt !== null
-    ? `Proposals closed on ${instantOf(ev.cfpClosesAt, ev.timezone)}`
+  const closed = lastClose !== null
+    ? `Proposals closed on ${instantOf(lastClose, ev.timezone)}`
     : 'This call is not taking proposals';
-  const opens = ev.cfpOpensAt !== null
-    ? `It opens on ${instantOf(ev.cfpOpensAt, ev.timezone)}`
+  // The next date the call opens: the next window's, or the single call's.
+  const nextOpen = nextW ? nextW.opensAt : ev.cfpOpensAt;
+  const opens = nextOpen !== null
+    ? `${nextW ? `The ${nextW.name} opens` : 'It opens'} on ${instantOf(nextOpen, ev.timezone)}`
     : 'It opens later this year';
   const past = ev.lifecycle === 'happened';
+  // A future window after a call that has already run once is the "between
+  // waves" case: say the last one closed and the next one is coming.
+  const between = !opensLater && !!nextW && lastClose !== null && !past;
 
-  const card = opensLater
-    ? '<div class="state-out"><h2>The call has not opened yet.</h2>' +
-      `<p>${esc(opens)}. Until then, the event page has the dates and the venue.</p>` +
+  const card = opensLater || between
+    ? '<div class="state-out"><h2>' +
+      (between ? 'The next call opens soon.' : 'The call has not opened yet.') +
+      '</h2>' +
+      `<p>${between ? `${esc(closed)}, and ${esc(opens.charAt(0).toLowerCase() + opens.slice(1))}` : esc(opens)}. ` +
+      'Until then, the event page has the dates and the venue.</p>' +
       `<a class="btn btn-primary" href="/${esc(ev.slug)}">See the event →</a></div>`
     : '<div class="state-out"><h2>The call has closed.</h2>' +
       `<p>${esc(closed)}` +
@@ -782,8 +820,37 @@ function readReceipt(cookieHeader: string | undefined): string | null {
 
 /** Open in the ordinary sense: opened, and not yet closed. */
 function callIsOpen(ev: EventHome, nowMs: number): boolean {
+  // With windows, the call is open when now falls inside one of them; the
+  // single-call event keeps the old opens/closes gate.
+  if (ev.windows.length > 0) return openWindow(ev.windows, nowMs) !== null;
   if (ev.cfpClosesAt === null || ev.cfpClosesAt <= nowMs) return false;
   return ev.cfpOpensAt === null || ev.cfpOpensAt <= nowMs;
+}
+
+/** When the call that is open right now closes — the window's own date if there
+ *  is one, else the single call's. Null when nothing bounds it. */
+function callClosesAt(ev: EventHome, nowMs: number): number | null {
+  const w = openWindow(ev.windows, nowMs);
+  if (w) return w.closesAt;
+  return ev.cfpClosesAt;
+}
+
+/** The name of the window taking proposals right now, if the call has more than
+ *  one. A single-window call has no name to show. */
+function currentWaveName(ev: EventHome, nowMs: number): string | null {
+  if (ev.windows.length < 2) return null;
+  return openWindow(ev.windows, nowMs)?.name ?? null;
+}
+
+/** The call has never opened yet — nothing is open, nothing has closed, and a
+ *  window (or the single call's open date) is still ahead. Distinguishes "not
+ *  opened yet" from "between waves" and "closed for good". */
+function notOpenedYet(ev: EventHome, nowMs: number): boolean {
+  if (ev.windows.length > 0) {
+    const anyClosed = ev.windows.some((w) => w.closesAt !== null && w.closesAt <= nowMs);
+    return !anyClosed && openWindow(ev.windows, nowMs) === null && nextWindow(ev.windows, nowMs) !== null;
+  }
+  return ev.cfpOpensAt !== null && ev.cfpOpensAt > nowMs;
 }
 
 export function registerCfp(app: Hono<{ Bindings: Env }>): void {
@@ -792,7 +859,7 @@ export function registerCfp(app: Hono<{ Bindings: Env }>): void {
     if (!ev) return c.notFound();
     const now = Date.now();
     if (!callIsOpen(ev, now)) {
-      return c.html(callShutPage(ev, ev.cfpOpensAt !== null && ev.cfpOpensAt > now));
+      return c.html(callShutPage(ev, notOpenedYet(ev, now)));
     }
 
     const [tracks, questions, speakers, principal] = await Promise.all([
@@ -820,7 +887,7 @@ export function registerCfp(app: Hono<{ Bindings: Env }>): void {
     const now = Date.now();
     if (!callIsOpen(ev, now)) {
       // Nothing was written, and the screen says why in its own words.
-      return c.html(callShutPage(ev, ev.cfpOpensAt !== null && ev.cfpOpensAt > now), 422);
+      return c.html(callShutPage(ev, notOpenedYet(ev, now)), 422);
     }
 
     const body = await c.req.parseBody();
