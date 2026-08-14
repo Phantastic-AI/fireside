@@ -91,9 +91,20 @@ function dayMonthOn(iso: string): string {
 function callStateText(ev: EventHome): string | null {
   if (ev.lifecycle === 'happened') return null;
   if (ev.lifecycle === 'open') {
+    // When the call runs in more than one wave, name the one open right now —
+    // the same fact the CFP page leads with, so a reader knows which window
+    // they are inside without opening the form.
+    let lead = 'You can still submit a talk';
+    if (ev.windows.length >= 2) {
+      const now = Date.now();
+      const open = ev.windows.find(
+        (w) => (w.opensAt === null || w.opensAt <= now) && (w.closesAt === null || w.closesAt > now)
+      );
+      if (open) lead = `The ${open.name.toLowerCase()} is open — you can still submit a talk`;
+    }
     return ev.cfpClosesAt !== null
-      ? `You can still submit a talk until ${dayMonthAt(ev.cfpClosesAt, ev.timezone)}`
-      : 'You can still submit a talk';
+      ? `${lead} until ${dayMonthAt(ev.cfpClosesAt, ev.timezone)}`
+      : lead;
   }
   return ev.decideBy ? `The call is closed — decisions by ${dayMonthOn(ev.decideBy)}` : 'The call is closed';
 }

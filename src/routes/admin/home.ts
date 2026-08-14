@@ -310,7 +310,7 @@ function newEventPage(principal: Principal, error?: string, v: NewEventValues = 
       'The call for speakers',
       `<label style="display:flex;gap:8px;align-items:center;font-size:15px;font-weight:400"><input type="checkbox" name="call_open" value="1"${v['call_open'] ? ' checked' : ''}> Open it now</label>` +
         `<div style="margin-top:10px"><input type="date" name="cfp_closes_on" value="${val('cfp_closes_on')}" ${inputStyle}></div>`,
-      'The date it closes. Speakers can send and edit proposals until then.'
+      'The date it closes. Speakers can send and edit proposals until then. You can split it into waves — an early call, a late extension — later, in settings.'
     ) +
     field('Decisions go out by', `<input type="date" name="decide_by" value="${val('decide_by')}" ${inputStyle}>`, 'Shown to speakers on the form and in their portal.') +
     field('A line for the call page', `<textarea name="cfp_intro" rows="3" maxlength="1200" ${inputStyle}>${val('cfp_intro')}</textarea>`) +

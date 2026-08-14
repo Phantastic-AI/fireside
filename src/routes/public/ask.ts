@@ -302,7 +302,7 @@ function askPage(o: {
     '<div class="wrap" style="padding-top:44px;max-width:46em">' +
     '<h1 class="display" style="font-size:clamp(28px,5vw,40px)">Ask about the program</h1>' +
     '<p class="cc-lead" style="margin-top:10px">' +
-    'One question, in your own words. You get a short answer and a link straight to the rest.' +
+    'One question at a time, please — a short answer, and a link straight to the rest.' +
     '</p>' +
     (thread
       ? `<div class="cc-body" data-ask-thread style="padding:20px 0 4px">${thread}</div>`
