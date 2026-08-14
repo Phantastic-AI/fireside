@@ -91,5 +91,27 @@ if grep -qiE 'name="[^"]*withdraw|>Withdraw<' "$BODY"; then
   red "helper portal offers a withdraw control it must not have"
 else green "helper portal offers no withdraw of the talk"; fi
 
+# 8. Signing in lands you where you belong. The P0 regression: an organizer
+#    who reaches the front page must be taken to the backstage, not stranded on
+#    the marketing page. Plus context-wins: a validated next= is honoured, but
+#    an off-site one can never be (no open redirect).
+loc() { curl -sS -o /dev/null -D - "$@" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}'; }
+ORG_JAR="$(mktemp)"
+check "organizer sign-in lands in the backstage" "/admin" \
+  "$(loc -c "$ORG_JAR" -X POST "$BASE/sign-in" --data-urlencode 'email=naomi@example.org' --data-urlencode 'password=read-them-before-they-go')"
+check "signed-in organizer on / is taken to the backstage" "/admin" \
+  "$(loc -b "$ORG_JAR" "$BASE/")"
+check "an anon visitor stays on the public front page" 200 "$(code "$BASE/")"
+check "sign-in honours a same-origin next=" "/$EVENT/portal" \
+  "$(loc -X POST "$BASE/sign-in" --data-urlencode 'email=dani.okafor@example.org' \
+       --data-urlencode 'password=ask-before-you-assume' --data-urlencode "next=/$EVENT/portal")"
+OFFSITE="$(loc -X POST "$BASE/sign-in" --data-urlencode 'email=dani.okafor@example.org' \
+             --data-urlencode 'password=ask-before-you-assume' --data-urlencode 'next=//evil.example.com/x')"
+case "$OFFSITE" in
+  //*|http:*|https:*) red "open redirect: sign-in next sent off-site ($OFFSITE)";;
+  *) green "sign-in refuses an off-site next (open redirect guarded)";;
+esac
+rm -f "$ORG_JAR"
+
 printf '\n  %d passed, %d failed\n\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
