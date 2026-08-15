@@ -12,23 +12,23 @@ a submitted abstract to a room full of people, and then out into the world.
 
 ## Try it now
 
-The live site is **https://fireside.phantastic.ai** — no password on the
+The live site is **https://onfireside.com** — no password on the
 front door. Two conferences are running: **AI Engineer New York 2026**
 (mid-drama: a thousand proposals in, six hundred and ten decisions made and
 not yet sent) and **DevOps Days Charlotte 2025** (finished, recordings up).
 
 | Way in | Where | Who you are |
 | --- | --- | --- |
-| The call for speakers | [/aie-nyc/cfp](https://fireside.phantastic.ai/aie-nyc/cfp) | A hopeful speaker, no account needed |
-| The agenda | [/aie-nyc/agenda](https://fireside.phantastic.ai/aie-nyc/agenda) | Anyone, on one bar of venue wifi |
-| My schedule | [/aie-nyc/my-schedule](https://fireside.phantastic.ai/aie-nyc/my-schedule) | An attendee — stars work before any sign-in |
-| The backstage | [/admin](https://fireside.phantastic.ai/admin) | **naomi@example.org** / **read-them-before-they-go** |
-| A finished year | [/ddc-clt](https://fireside.phantastic.ai/ddc-clt) | Anyone — recordings on the session pages |
+| The call for speakers | [/aie-nyc/cfp](https://onfireside.com/aie-nyc/cfp) | A hopeful speaker, no account needed |
+| The agenda | [/aie-nyc/agenda](https://onfireside.com/aie-nyc/agenda) | Anyone, on one bar of venue wifi |
+| My schedule | [/aie-nyc/my-schedule](https://onfireside.com/aie-nyc/my-schedule) | An attendee — stars work before any sign-in |
+| The backstage | [/admin](https://onfireside.com/admin) | **naomi@example.org** / **read-them-before-they-go** |
+| A finished year | [/ddc-clt](https://onfireside.com/ddc-clt) | Anyone — recordings on the session pages |
 
 That credential is published on purpose: Naomi is the demonstration
 organizer, and her conference is reset to the same instant of mid-decision
 drama on demand. Sign up fresh at
-[/sign-up](https://fireside.phantastic.ai/sign-up) and you can start a
+[/sign-up](https://onfireside.com/sign-up) and you can start a
 conference of your own — the form at `/admin/new` takes a name, days, rooms
 and tracks, and hands you the keys.
 
@@ -56,13 +56,13 @@ aggregate on the results table, and it is the same number the proposal page
 shows.
 
 **For your agent:** the same doors speak MCP at
-`https://fireside.phantastic.ai/mcp` — eight public tools, JSON-RPC 2.0,
+`https://onfireside.com/mcp` — eight public tools, JSON-RPC 2.0,
 no session. A proposal submitted by an agent walks through exactly the same
 guarded workflow as one typed by hand. Sign in and
-[/agents](https://fireside.phantastic.ai/agents) prints a connect command
+[/agents](https://onfireside.com/agents) prints a connect command
 whose token acts as you: a reviewer can hand their queue to Claude and file
 every review over the wire, through the reviewer's own guards. See
-[/agents](https://fireside.phantastic.ai/agents) for the connect strings.
+[/agents](https://onfireside.com/agents) for the connect strings.
 
 ## What it does
 
@@ -194,6 +194,14 @@ the result. A full seven-area run against the live site:
 Weighted across judged rubric items. The kit does not score Fireside's own
 additions beyond the brief — the role-aware concierge and the attendee layer
 — which are held to the same bar by their own adversarial walkthroughs.
+
+## Colophon
+
+The words on every screen were written, then hardened, with
+[deslop](https://github.com/Phantastic-AI/deslop) — a small rite that turns a
+critic model loose on the copy and lets it judge only what is on the page. Its
+one law: a line may be lyrical, but it may not ask the reader to invent the
+proposition.
 
 ## Status
 
