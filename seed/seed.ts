@@ -79,6 +79,7 @@ export type SeedData = {
   connection: Row[];
   friend_request: Row[];
   speaker_helper: Row[];
+  speaker_follow: Row[];
   question: Row[];
   answer: Row[];
   // CRM (area 07) tables. Seeded empty — the directory and overview read live
@@ -127,6 +128,7 @@ export function buildSeed(): SeedData {
     event: [], person: [], track: [], room: [], submission: [], participation: [],
     review: [], event_role: [], task: [], file: [], file_comment: [], message: [],
     my_schedule: [], star: [], connection: [], friend_request: [], speaker_helper: [],
+    speaker_follow: [],
     question: [], answer: [],
     roster_entry: [], crm_note: [], crm_tag: [], crm_segment: [], crm_card: [], crm_card_event: [],
   };
@@ -693,6 +695,14 @@ export function buildSeed(): SeedData {
   d.friend_request.push({
     id: 'frq-0001', event_id: DDC, requester_id: dani, recipient_id: noor,
     requested_at: utc(2025, 11, 6, 15, 20), accepted_at: utc(2025, 11, 6, 16), revoked_at: null,
+  });
+  // AIE++ seed: Dani follows Priya, a speaker she found at AI Engineer. So the
+  // demo shows the follow state already on (the button reads "Following"), and
+  // when Priya turns up at another opted-in conference, this is the row that
+  // reaches Dani (step 3).
+  d.speaker_follow.push({
+    id: 'flw-0001', follower_person_id: dani, speaker_person_id: 'priya-raghunathan',
+    origin_event_id: AIE, created_at: utc(2026, 8, 2, 10), unfollowed_at: null,
   });
 
   // -- a speaker's helper: Priya's assistant handles her AIE logistics -----

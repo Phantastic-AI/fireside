@@ -22,6 +22,9 @@ import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { esc, page, eventNav, onstageShell } from '../../lib/html';
 import { label } from '../../lib/labels';
+import { principalFromCookie } from '../../workflows/account';
+import { isFollowingSpeaker } from '../../queries/speaker-follow';
+import { followSpeaker, unfollowSpeaker } from '../../workflows/speaker-follow';
 import {
   eventBySlug,
   speakersGallery,
@@ -347,7 +350,7 @@ function elsewhereRow(personId: string, t: ElsewhereTalk): string {
   );
 }
 
-function speakerPersonPage(event: EventHome, sp: SpeakerPage): string {
+function speakerPersonPage(event: EventHome, sp: SpeakerPage, followControl: string): string {
   const nav = eventNav(event.slug, '/speakers', event.lifecycle === 'open');
   const p = sp.person;
   const role = roleParts(p.jobTitle, p.organisation).join(' · ');
@@ -360,6 +363,7 @@ function speakerPersonPage(event: EventHome, sp: SpeakerPage): string {
     '<div style="flex:1;min-width:min(100%,280px)">' +
     `<h1 class="display" style="font-size:clamp(28px,4.4vw,40px)">${esc(p.name)}</h1>` +
     (role ? `<p style="margin-top:6px;font-size:17px;color:var(--ink-soft)">${role}</p>` : '') +
+    (followControl ? `<div style="margin-top:14px">${followControl}</div>` : '') +
     bioBlock(p.bio) +
     '</div></div>';
 
@@ -399,8 +403,54 @@ export function registerSpeakers(app: Hono<{ Bindings: Env }>): void {
   app.get('/:event/speakers/:personId', async (c) => {
     const event = await eventBySlug(c.env.DB, c.req.param('event'));
     if (!event) return c.notFound();
-    const sp = await speakerPage(c.env.DB, event.id, c.req.param('personId'));
+    const personId = c.req.param('personId');
+    const sp = await speakerPage(c.env.DB, event.id, personId);
     if (!sp) return c.notFound();
-    return c.html(speakerPersonPage(event, sp));
+
+    // Following is a real relationship, so it needs an account behind it (a
+    // star can be anonymous in this browser; a follow cannot). Signed out, the
+    // control is a sign-in that returns to this very page, so the follow is
+    // one press away on the way back. Never shown on your own speaker page.
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    const firstName = sp.person.name.split(' ')[0] || sp.person.name;
+    const backHere = `/${event.slug}/speakers/${personId}`;
+    let followControl = '';
+    if (!principal) {
+      followControl =
+        `<a class="btn" href="/sign-in?next=${encodeURIComponent(backHere)}">Follow ${esc(firstName)}</a>`;
+    } else if (principal.personId !== personId) {
+      const following = await isFollowingSpeaker(c.env.DB, principal.personId, personId);
+      followControl = following
+        ? `<form method="post" action="${esc(backHere)}/unfollow" style="display:inline">` +
+          `<button class="btn" type="submit" aria-pressed="true">Following ✓</button></form>`
+        : `<form method="post" action="${esc(backHere)}/follow" style="display:inline">` +
+          `<button class="btn btn-primary" type="submit" aria-pressed="false">Follow ${esc(firstName)}</button></form>`;
+    }
+    return c.html(speakerPersonPage(event, sp, followControl));
+  });
+
+  // Following a speaker: the follower's own private act. Signed out, we send
+  // them to sign in and back to the speaker's page; a stray person id that is
+  // not a speaker here is refused by the workflow's own guard.
+  app.post('/:event/speakers/:personId/follow', async (c) => {
+    const event = await eventBySlug(c.env.DB, c.req.param('event'));
+    if (!event) return c.notFound();
+    const personId = c.req.param('personId');
+    const back = `/${event.slug}/speakers/${personId}`;
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect(`/sign-in?next=${encodeURIComponent(back)}`, 303);
+    await followSpeaker(c.env.DB, principal.personId, personId, event.id);
+    return c.redirect(back, 303);
+  });
+
+  app.post('/:event/speakers/:personId/unfollow', async (c) => {
+    const event = await eventBySlug(c.env.DB, c.req.param('event'));
+    if (!event) return c.notFound();
+    const personId = c.req.param('personId');
+    const back = `/${event.slug}/speakers/${personId}`;
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect(`/sign-in?next=${encodeURIComponent(back)}`, 303);
+    await unfollowSpeaker(c.env.DB, principal.personId, personId);
+    return c.redirect(back, 303);
   });
 }

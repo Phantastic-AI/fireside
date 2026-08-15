@@ -113,5 +113,15 @@ case "$OFFSITE" in
 esac
 rm -f "$ORG_JAR"
 
+# 9. Following a speaker is an account act, and a private one. A stranger
+#    cannot follow (the write needs sign-in), and a speaker's public page never
+#    names who follows them — the follow is the follower's own list.
+SPK_PAGE="$BASE/$EVENT/speakers/priya-raghunathan"
+check "following a speaker refuses a stranger" 303 "$(code -X POST "$SPK_PAGE/follow")"
+curl -sS "$SPK_PAGE" -o "$BODY"
+if grep -qiE 'okafor|noor|attendee@|who follows|followers' "$BODY"; then
+  red "speaker page leaks who follows the speaker"
+else green "speaker page names no followers (the follow stays private)"; fi
+
 printf '\n  %d passed, %d failed\n\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

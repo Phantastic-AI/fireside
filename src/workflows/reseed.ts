@@ -25,7 +25,7 @@ const DEMO_CREDENTIALS: [personId: string, password: string][] = [
 const INSERT_ORDER: (keyof SeedData)[] = [
   'event', 'person', 'track', 'room', 'submission', 'participation', 'review',
   'event_role', 'task', 'file', 'file_comment', 'message', 'my_schedule', 'star',
-  'connection', 'friend_request', 'speaker_helper', 'question', 'answer',
+  'connection', 'friend_request', 'speaker_helper', 'speaker_follow', 'question', 'answer',
   // CRM tables last, so the reverse-order wipe deletes these children before
   // their person/event parents. Seeded empty; present here only to be cleared.
   'roster_entry', 'crm_note', 'crm_tag', 'crm_segment', 'crm_card', 'crm_card_event',
