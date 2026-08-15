@@ -60,6 +60,19 @@ export type Env = {
 
 const app = new Hono<{ Bindings: Env }>();
 
+// The apex onfireside.com is canonical; www redirects to it, permanently, so
+// there is one address for the brand and links never split between two. Runs
+// before anything else, on every method, and leaves every other host — the
+// apex itself, fireside.phantastic.ai, workers.dev — untouched.
+app.use('*', async (c, next) => {
+  const url = new URL(c.req.url);
+  if (url.hostname === 'www.onfireside.com') {
+    url.hostname = 'onfireside.com';
+    return c.redirect(url.toString(), 301);
+  }
+  return next();
+});
+
 app.get('/healthz', (c) => c.json({ ok: true }));
 
 // The favicon, served as a real file at both the modern path and the one

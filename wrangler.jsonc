@@ -5,6 +5,18 @@
   "compatibility_date": "2026-08-01",
   "workers_dev": true,
   "routes": [
+    // onfireside.com is the brand front; the apex is canonical and www
+    // redirects to it in the Worker (see src/index.ts). fireside.phantastic.ai
+    // stays a working alias so no published link, demo login, or OAuth
+    // redirect breaks during the move.
+    {
+      "pattern": "onfireside.com",
+      "custom_domain": true
+    },
+    {
+      "pattern": "www.onfireside.com",
+      "custom_domain": true
+    },
     {
       "pattern": "fireside.phantastic.ai",
       "custom_domain": true
