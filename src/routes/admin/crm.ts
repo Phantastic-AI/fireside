@@ -336,19 +336,32 @@ function directoryPage(
   opts: DirectoryOpts,
   rows: ContactRow[],
   totalAll: number,
+  truncated: boolean,
   note: string,
   events: AdminEvent[]
 ): string {
   const { who, whoInitials } = whoLine(principal);
-  const shown = rows.length === totalAll ? `${num(totalAll)} contacts` : `${num(rows.length)} of ${num(totalAll)} contacts`;
+  const shown =
+    truncated || rows.length !== totalAll
+      ? `${num(rows.length)} of ${num(totalAll)} contacts`
+      : `${num(totalAll)} contacts`;
+  // The default opens capped: a directory of hundreds is unreadable, so the
+  // page shows the first of them and offers the whole list as the alternate,
+  // never the default. Searching or filtering removes the cap on its own.
+  const showAll = truncated
+    ? '<div class="sec" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px">' +
+      `<span class="sub">Showing the first ${num(rows.length)} of ${num(totalAll)}. Search to narrow, or</span>` +
+      '<a class="btn btn-sm" href="/admin/crm?all=1">Show every contact</a></div>'
+    : '';
   const body =
     '<div style="padding:26px 0 0"><h1 class="display">Speaker database</h1>' +
     `<p class="counts"><b>${esc(shown)}</b><span class="sep">·</span>every conference, one list</p></div>` +
     (note ? noteBox(note) : '') +
     filterForm(opts) +
     saveSearchForm(opts) +
+    showAll +
     (rows.length
-      ? directoryTable(rows)
+      ? directoryTable(rows) + showAll
       : '<div class="state-out"><h2>Nobody found.</h2><p>Try a different search, or add somebody by hand below.</p></div>') +
     importCard(events) +
     addContactForm();
@@ -865,13 +878,16 @@ export function registerCrm(app: Hono<{ Bindings: Env }>): void {
         company: c.req.query('company') ?? undefined,
         jobTitle: c.req.query('title') ?? undefined,
         tag: c.req.query('tag') ?? undefined,
+        all: c.req.query('all') === '1',
       };
       const [d, events] = await Promise.all([
         crmDirectory(c.env.DB, principal, opts),
         adminEvents(c.env.DB, principal),
       ]);
       const code = c.req.query('note');
-      return c.html(directoryPage(principal, opts, d.rows, d.totalAll, code ? DIRECTORY_NOTES[code] ?? '' : '', events));
+      return c.html(
+        directoryPage(principal, opts, d.rows, d.totalAll, d.truncated, code ? DIRECTORY_NOTES[code] ?? '' : '', events)
+      );
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;

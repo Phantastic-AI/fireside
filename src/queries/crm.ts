@@ -109,13 +109,29 @@ export type CrmDirectory = {
   jobTitle: string | null;
   tag: string | null;
   rows: ContactRow[];
+  /** True when the directory opened capped and there are more contacts than
+   *  the page shows — the banner offers the full list as the alternate. */
+  truncated: boolean;
   /** Every contact in the org, ignoring search and filters — the dashboard's
    *  own count derives from this and no other query, so the two can never
    *  disagree (the same "one predicate, one pass" rule pile()'s counts keep). */
   totalAll: number;
 };
 
-export type DirectoryOpts = { search?: string; company?: string; jobTitle?: string; tag?: string };
+export type DirectoryOpts = {
+  search?: string;
+  company?: string;
+  jobTitle?: string;
+  tag?: string;
+  /** Show the whole directory rather than the first page of it. The full list
+   *  is the alternate view, never the default — an unfiltered directory of
+   *  hundreds is unreadable, so it opens capped and this asks for all of it. */
+  all?: boolean;
+};
+
+/** The default cap on an unfiltered, un-"all" directory. A search or a filter
+ *  removes the cap (the result set is already bounded by the query). */
+export const DIRECTORY_PAGE = 50;
 
 /** Parse a saved segment's stored query string back into the same shape a
  *  fresh directory search takes — so a dynamic segment is nothing more than
@@ -259,19 +275,28 @@ export async function crmDirectory(
   }
   const where = clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
 
+  // A filtered result is already bounded, so it is shown whole. An unfiltered
+  // directory is capped unless the reader asked for all of it — fetch one more
+  // than the cap so "there is more" can be told from "that is everyone".
+  const filtered = clauses.length > 0;
+  const capped = !filtered && !opts.all;
+  const limitClause = capped ? ` LIMIT ${DIRECTORY_PAGE + 1}` : '';
+
   const [rowRes, totalRes] = await db.batch<Record<string, unknown>>([
     db
       .prepare(
         `SELECT pe.id, pe.name, pe.email, pe.job_title, pe.organisation, pe.speaker_type
          FROM person pe
          WHERE pe.internal_role IS NULL AND pe.merged_into_id IS NULL${where}
-         ORDER BY pe.name`
+         ORDER BY pe.name${limitClause}`
       )
       .bind(...bindings),
     db.prepare(`SELECT COUNT(*) AS n FROM person WHERE internal_role IS NULL AND merged_into_id IS NULL`),
   ]);
 
-  const contacts = rowsOf<ContactSqlRow>(rowRes);
+  const fetched = rowsOf<ContactSqlRow>(rowRes);
+  const truncated = capped && fetched.length > DIRECTORY_PAGE;
+  const contacts = truncated ? fetched.slice(0, DIRECTORY_PAGE) : fetched;
   const ids = contacts.map((c) => c.id);
   const [facts, tags] = await Promise.all([statusFactsFor(db, ids), tagsFor(db, ids)]);
 
@@ -293,7 +318,7 @@ export async function crmDirectory(
   });
 
   const total = rowsOf<{ n: number }>(totalRes)[0]?.n ?? 0;
-  return { search, company, jobTitle, tag, rows, totalAll: total };
+  return { search, company, jobTitle, tag, rows, totalAll: total, truncated };
 }
 
 /* ------------------------------------------------------------------ *
