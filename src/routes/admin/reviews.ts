@@ -119,6 +119,8 @@ import {
   type RoundOutcome,
   type StepAsideOutcome,
 } from '../../workflows/review';
+// @ts-ignore -- plain-JS island shipped as its own source text; see cfp.ts.
+import reviewDeckIsland from '../../islands/review-deck.js';
 
 /* ------------------------------------------------------------------ *
  * Words and numbers
@@ -1789,10 +1791,14 @@ function queuePage(
     '</div>' +
     said;
 
+  // The deck island turns this column of scorecard forms into one card at a
+  // time with autosave; it self-activates only when there are two or more
+  // editable forms, so a chair-only view or an empty queue is left exactly as
+  // the server drew it. Scripts off, the column below is the honest whole.
   return shell(
     principal,
     ev,
-    head + hand + staged + done + team + searchBar(ev, q, v) + list
+    head + hand + staged + done + team + searchBar(ev, q, v) + list + `<script>${reviewDeckIsland}</script>`
   );
 }
 
@@ -2130,6 +2136,17 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
       scoresFrom(form, ev.scorecard),
       note
     );
+    // The deck saves each card in the background as the reviewer scores it, so
+    // its post gets a bare 204 rather than the whole queue back. Every other
+    // caller (scripts off, the Save button) still gets the redirect it expects.
+    if (c.req.header('x-fireside-deck') === '1') {
+      // 'saved'/'noted' staged a mark or a note; 'blank' means there was
+      // nothing to stage, which is not an error. Anything else (locked, gone,
+      // moved) is a real conflict the deck should not paper over.
+      return outcome === 'saved' || outcome === 'noted' || outcome === 'blank'
+        ? c.body(null, 204)
+        : c.body(outcome, 409);
+    }
     return c.redirect(backTo(ev.slug, outcome, view), 303);
   });
 
