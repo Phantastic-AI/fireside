@@ -491,6 +491,31 @@ type Stars =
   /** Signed in: a real write, and the same click takes it off again. */
   | { kind: 'account'; starred: Set<string> };
 
+/** The star, as a labelled control for a session's own page — the engagement
+ *  the agenda card already carries, brought to the talk itself. Same handshake
+ *  the agenda uses: a plain link to my-schedule with scripts off (islands/
+ *  agenda-stars.js takes the click with them on), and a real form post once
+ *  signed in. Never rendered embedded or on a cancelled talk. */
+function sessionStar(stars: Stars, slug: string, id: string): string {
+  if (stars.kind === 'none') return '';
+  const style = 'display:inline-flex;gap:8px;align-items:center';
+  if (stars.kind === 'local') {
+    return (
+      `<a class="btn starbtn" style="${style}" href="/${esc(slug)}/my-schedule" ` +
+      `data-star="${esc(id)}" aria-label="Star this talk">${starSvg(false)}<span>Star this talk</span></a>`
+    );
+  }
+  const on = stars.starred.has(id);
+  return (
+    `<form method="post" action="/${esc(slug)}/my-schedule/star">` +
+    `<input type="hidden" name="session" value="${esc(id)}">` +
+    `<input type="hidden" name="on" value="${on ? '0' : '1'}">` +
+    `<button class="btn starbtn${on ? ' btn-primary' : ''}" style="${style}" type="submit" ` +
+    `aria-pressed="${on}" aria-label="${on ? 'Take this off my schedule' : 'Star this talk'}">` +
+    `${starSvg(on)}<span>${on ? 'On your schedule' : 'Star this talk'}</span></button></form>`
+  );
+}
+
 /* ------------------------------------------------------------------ *
  * Session card — mirrors the prototype's seshCard.
  * ------------------------------------------------------------------ */
@@ -973,6 +998,21 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
     const embed = c.req.query('embed') === '1';
     const nav = eventNav(slug, '/agenda', event.lifecycle === 'open');
 
+    // The star, the same one the agenda carries, brought to the talk's own
+    // page (operator's round-1 note: this page had no way to engage). Built
+    // exactly as the agenda builds it: signed-in is a real write, signed-out
+    // keeps the id in this browser, embedded keeps nothing.
+    const principal = embed
+      ? null
+      : await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    const mine = principal ? await socialView(c.env.DB, event.id, principal.personId) : null;
+    const stars: Stars = embed
+      ? { kind: 'none' }
+      : mine
+        ? { kind: 'account', starred: new Set(mine.mine.starred) }
+        : { kind: 'local' };
+    const starControl = session.cancelled ? '' : sessionStar(stars, slug, session.id);
+
     const strike = session.cancelled ? ' style="text-decoration:line-through;text-decoration-color:var(--muted-2)"' : '';
     const roomLine = joinParts([
       `${weekdayDate(session.day, 'long')}, ${timeRange(session.startsAt, session.minutes, session.timezone)}`,
@@ -1003,7 +1043,7 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
       : '';
 
     const inner =
-      '<div class="wrap" style="padding-top:36px">' +
+      `<div class="wrap"${stars.kind === 'local' ? ` data-stars="${esc(slug)}"` : ''} style="padding-top:36px">` +
       `<p class="sub"><a class="link" href="/${esc(slug)}/agenda">← The agenda</a></p>` +
       '<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:14px">' +
       '<div style="flex:1;min-width:min(100%,320px)">' +
@@ -1016,7 +1056,12 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
       (session.tzLabel ? `<p class="sub">${esc(session.tzLabel)}</p>` : '') +
       icsLink +
       '</div>' +
-      (recordingCta ? `<div class="card card-pad" style="min-width:210px">${recordingCta}</div>` : '') +
+      (starControl || recordingCta
+        ? '<div style="display:flex;flex-direction:column;gap:12px;min-width:200px">' +
+          starControl +
+          (recordingCta ? `<div class="card card-pad">${recordingCta}</div>` : '') +
+          '</div>'
+        : '') +
       '</div>' +
       abstractHtml +
       (speakerBlocks
@@ -1029,7 +1074,8 @@ export function registerAgenda(app: Hono<{ Bindings: Env }>): void {
     // somebody else's page, and it carries no concierge.
     const body = embed
       ? `<div class="stage onstage embed"><main>${inner}</main></div>`
-      : onstageShell(nav, inner, slug, undefined, `s:${sessionSlug}`);
+      : onstageShell(nav, inner, slug, undefined, `s:${sessionSlug}`) +
+        (stars.kind === 'local' ? `<script>${String(agendaStarsIsland)}</script>` : '');
 
     return c.html(
       page({
