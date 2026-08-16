@@ -20,10 +20,10 @@
 # writes nothing — safe to run against production at any time, no reseed needed.
 #
 # Usage:  scripts/invariants.sh [BASE_URL] [EVENT_SLUG]
-# Default: https://fireside.phantastic.ai aie-nyc
+# Default: https://onfireside.com aie-nyc
 set -u
 
-BASE="${1:-https://fireside.phantastic.ai}"
+BASE="${1:-https://onfireside.com}"
 EVENT="${2:-aie-nyc}"
 JAR="$(mktemp)"
 BODY="$(mktemp)"

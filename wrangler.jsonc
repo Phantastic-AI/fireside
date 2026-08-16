@@ -5,10 +5,10 @@
   "compatibility_date": "2026-08-01",
   "workers_dev": true,
   "routes": [
-    // onfireside.com is the brand front; the apex is canonical and www
-    // redirects to it in the Worker (see src/index.ts). fireside.phantastic.ai
-    // stays a working alias so no published link, demo login, or OAuth
-    // redirect breaks during the move.
+    // onfireside.com is the brand front, and the apex is canonical. www and the
+    // old fireside.phantastic.ai both stay attached here only so their requests
+    // reach the Worker, which 301s them to the apex (src/index.ts). One address
+    // for the brand; every old link still lands, just one hop over.
     {
       "pattern": "onfireside.com",
       "custom_domain": true

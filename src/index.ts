@@ -60,13 +60,16 @@ export type Env = {
 
 const app = new Hono<{ Bindings: Env }>();
 
-// The apex onfireside.com is canonical; www redirects to it, permanently, so
-// there is one address for the brand and links never split between two. Runs
-// before anything else, on every method, and leaves every other host — the
-// apex itself, fireside.phantastic.ai, workers.dev — untouched.
+// The apex onfireside.com is canonical. Every other host we answer — www, and
+// the old fireside.phantastic.ai — redirects to it, permanently, so there is
+// one address for the brand and links never split. Runs before anything else,
+// on every method; the apex itself and workers.dev fall through untouched. The
+// old host stays attached to the Worker (wrangler.jsonc) so its requests still
+// reach here to be redirected rather than going nowhere.
+const REDIRECT_HOSTS = new Set(['www.onfireside.com', 'fireside.phantastic.ai']);
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
-  if (url.hostname === 'www.onfireside.com') {
+  if (REDIRECT_HOSTS.has(url.hostname)) {
     url.hostname = 'onfireside.com';
     return c.redirect(url.toString(), 301);
   }
