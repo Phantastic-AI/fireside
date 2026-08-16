@@ -3,6 +3,7 @@ import { homePage } from './routes/public/home';
 import { listEvents } from './queries/public';
 import { FAVICON } from './lib/html';
 import { HERO_JPG_B64 } from './assets/hero-jpg';
+import { safeNext } from './lib/url';
 import { signInPage, signUpPage } from './routes/public/signin';
 import { registerCfp } from './routes/public/cfp';
 import { registerPortal } from './routes/public/portal';
@@ -186,18 +187,6 @@ async function afterSignIn(db: D1Database, personId: string): Promise<string> {
     .all<{ slug: string }>();
   const one = events.results.length === 1 ? events.results[0] : null;
   return one ? `/${one.slug}/portal` : '/';
-}
-
-/** A same-origin relative path, or null. Every post-sign-in redirect passes
- *  through here so a `next=` can only ever send someone deeper into this site,
- *  never off it: one leading slash, not "//" or "/\" (protocol-relative), no
- *  control characters, and nothing longer than a real path. Anything else
- *  falls back to afterSignIn's standing-based landing. */
-function safeNext(raw: string | null | undefined): string | null {
-  if (!raw || raw.length > 512) return null;
-  if (raw[0] !== '/' || raw[1] === '/' || raw[1] === '\\') return null;
-  if (/[\x00-\x1f]/.test(raw)) return null;
-  return raw;
 }
 
 async function requestMagicLink(

@@ -14,5 +14,6 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*", "seed/**/*", "test/**/*"]
+  "//": "test/ runs via tsx (node:test), never compiled into the Worker, so it stays out of this Worker-typed gate; `npm test` validates it by running it.",
+  "include": ["src/**/*", "seed/**/*"]
 }
