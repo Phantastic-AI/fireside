@@ -228,10 +228,32 @@ function speakerStripHtml(ev: EventHome, speakers: GallerySpeaker[]): string {
  * The screen.
  * ------------------------------------------------------------------ */
 
+// The two seeded demonstration conferences, by literal slug. The "start your
+// own" banner shows on THESE and no others — a real customer's conference has
+// a different slug, so it cannot match, and their attendees are never shown an
+// advert on their own event page. An allowlist, not a flag, on purpose: the
+// dangerous failure (a drip on a real conference) is structurally impossible
+// rather than merely unlikely.
+const DEMO_SLUGS = new Set(['aie-nyc', 'ddc-clt']);
+
+/** A slim, dismissible-by-scrolling banner that labels the demo honestly and
+ *  offers the way to sign up — the funnel's one drip inside the product, and
+ *  only ever on a demonstration conference. */
+function demoBanner(slug: string): string {
+  if (!DEMO_SLUGS.has(slug)) return '';
+  return (
+    '<div class="wrap"><div class="demo-ribbon">' +
+    '<span>You&#8217;re walking a live demo of Fireside. It resets on a schedule; the people in it are invented.</span>' +
+    '<a class="btn btn-sm btn-primary" href="/sign-up">Start your own conference →</a>' +
+    '</div></div>'
+  );
+}
+
 function eventHomePage(ev: EventHome, speakers: GallerySpeaker[]): string {
   const nav = eventNav(ev.slug, '', ev.lifecycle === 'open');
   const main =
     conferenceMasthead(ev) +
+    demoBanner(ev.slug) +
     '<div class="wrap">' +
     '<div style="padding:46px 0 0">' +
     `<div class="kicker">${esc(dateRange(ev.startsOn, ev.endsOn))}</div>` +

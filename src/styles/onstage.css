@@ -250,3 +250,11 @@
   .gcard .grole{grid-column:2;grid-row:3;font-size:12.5px;color:var(--muted);line-height:1.45}
   .sesh-when{gap:7px}
 }
+
+/* The demo-only "start your own" ribbon (event.ts demoBanner). Slim, warm, and
+   shown solely on the seeded demonstration conferences — a real customer's
+   event never carries it. */
+.demo-ribbon{display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:space-between;
+  margin:12px 0 0;padding:10px 16px;border:1px solid var(--ember-line);border-radius:10px;
+  background:var(--ember-wash)}
+.demo-ribbon span{font-size:14px;color:var(--ink-soft);line-height:1.4}

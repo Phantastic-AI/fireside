@@ -397,15 +397,19 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
   const hero =
     '<section class="mkt-hero"><div class="mkt-wrap">' +
     '<div class="mkt-hero-in">' +
-    '<p class="mkt-kick">Conference program software · for editorial teams</p>' +
+    '<p class="mkt-kick">Conference organizing software · free and open source</p>' +
     '<h1>Keep your whole conference <em>humming in sync.</em></h1>' +
     '<p class="mkt-lede">Months before the audience arrives, follow the proposals, reviews, placements, ' +
     'and speaker obligations that still need a decision — kept in one place until every one is ' +
     'settled.</p>' +
+    // The primary action is the one we are selling: start your own. Walking a
+    // live conference is the strong second — try before you commit, no account.
+    // Signed in, the primary becomes the way back to your own backstage.
     '<div class="mkt-cta">' +
-    '<a class="btn btn-primary btn-lg" href="#live">Walk a live conference →</a>' +
-    '<a class="btn btn-lg" href="#program">See the program desk</a>' +
-    (signedIn ? '<a class="btn btn-lg" href="/admin">Your backstage</a>' : '') +
+    (signedIn
+      ? '<a class="btn btn-primary btn-lg" href="/admin">Your backstage →</a>'
+      : '<a class="btn btn-primary btn-lg" href="/sign-up">Start your conference →</a>') +
+    '<a class="btn btn-lg" href="#live">Walk a live one first →</a>' +
     '</div>' +
     // Four things that are true of the software and rare together, said plainly
     // (the tight feature strip Aditya liked on untitledconference.com).
@@ -575,7 +579,14 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     '<p class="s">Bring the talks still competing for a place, the speakers who need an answer, ' +
     'and the Friday details that cannot be lost in an inbox. Carry them through the agenda, the ' +
     'green room, and the sessions people return to afterward.</p>' +
-    '<a class="mkt-door" href="#live">Walk your conference through Fireside →</a>' +
+    // The page's second sign-up drip: after all the proof, the conversion, with
+    // the walk-first path still one tap away for the not-yet-convinced.
+    '<div class="mkt-cta" style="justify-content:center">' +
+    (signedIn
+      ? '<a class="btn btn-primary btn-lg" href="/admin">Open your backstage →</a>'
+      : '<a class="btn btn-primary btn-lg" href="/sign-up">Start your conference — free →</a>' +
+        '<a class="btn btn-lg" href="#live">Walk a live one first →</a>') +
+    '</div>' +
     '</div></section>';
 
   const body =
