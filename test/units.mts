@@ -14,6 +14,8 @@ import { label } from '../src/lib/labels';
 import { safeNext } from '../src/lib/url';
 import { reminderBody } from '../src/workflows/files';
 import { ticketIdFromRecipient } from '../src/workflows/reply-email';
+import { commitDecision, capabilitiesOf, type Pending } from '../src/workflows/agent';
+import type { Principal } from '../src/workflows/account';
 
 const scale = (key: string, weight: 1 | 2 | 3 = 2): ScorecardKey => ({
   key,
@@ -151,6 +153,101 @@ test('ticketIdFromRecipient: rejects a non-reply recipient', () => {
   assert.equal(ticketIdFromRecipient('hello@onfireside.com'), null);
   assert.equal(ticketIdFromRecipient('naomi@example.org'), null);
   assert.equal(ticketIdFromRecipient('reply@onfireside.com'), null); // no +id
+});
+
+// --- the agentic-write security boundary: commitDecision (pure state machine) ---
+const basePending = (over: Partial<Pending> = {}): Pending => ({
+  id: 'pa-1',
+  personId: 'per-me',
+  eventId: 'ev-1',
+  surface: 'event',
+  actionType: 'connect_request',
+  tier: 'confirm',
+  countExpected: null,
+  expiresAt: 10_000,
+  status: 'open',
+  ...over,
+});
+
+test('commitDecision: a clean open action by its owner commits', () => {
+  assert.deepEqual(commitDecision(basePending(), 'per-me', true, 5_000, null), { ok: true });
+});
+
+test('commitDecision: only the owner can commit (no cross-user)', () => {
+  assert.deepEqual(commitDecision(basePending(), 'per-someone-else', true, 5_000, null), {
+    ok: false,
+    reason: 'not-yours',
+  });
+});
+
+test('commitDecision: an already-committed action cannot replay', () => {
+  assert.deepEqual(commitDecision(basePending({ status: 'committed' }), 'per-me', true, 5_000, null), {
+    ok: false,
+    reason: 'gone',
+  });
+});
+
+test('commitDecision: a cancelled action is gone', () => {
+  assert.deepEqual(commitDecision(basePending({ status: 'cancelled' }), 'per-me', true, 5_000, null).ok, false);
+});
+
+test('commitDecision: a stale action cannot commit', () => {
+  assert.deepEqual(commitDecision(basePending({ expiresAt: 4_000 }), 'per-me', true, 5_000, null), {
+    ok: false,
+    reason: 'expired',
+  });
+});
+
+test('commitDecision: capability is re-checked live — lost standing refuses', () => {
+  assert.deepEqual(commitDecision(basePending(), 'per-me', false, 5_000, null), { ok: false, reason: 'not-allowed' });
+});
+
+test('commitDecision: a numbered tier needs the exact number re-stated', () => {
+  const p = basePending({ tier: 'confirm-number', countExpected: 610 });
+  assert.deepEqual(commitDecision(p, 'per-me', true, 5_000, 610), { ok: true });
+  assert.deepEqual(commitDecision(p, 'per-me', true, 5_000, 609), { ok: false, reason: 'wrong-number' });
+  assert.deepEqual(commitDecision(p, 'per-me', true, 5_000, null), { ok: false, reason: 'wrong-number' });
+});
+
+// --- capabilitiesOf: capability INTERSECT surface (the dual-role hole) --------
+const prin = (over: Partial<Principal> = {}): Principal => ({
+  personId: 'per-me',
+  name: 'Me',
+  email: null,
+  role: null,
+  eventRoles: {},
+  ...over,
+});
+
+test('capabilitiesOf: a plain attendee gets the low-stakes acts, nothing more', () => {
+  const caps = capabilitiesOf(prin(), 'ev-1', 'event');
+  assert.equal(caps.has('star'), true);
+  assert.equal(caps.has('connect'), true);
+  assert.equal(caps.has('invite'), false);
+  assert.equal(caps.has('review'), false);
+});
+
+test('capabilitiesOf: an organizer gets organizer acts on the backstage', () => {
+  const caps = capabilitiesOf(prin({ role: 'organizer' }), 'ev-1', 'backstage');
+  assert.equal(caps.has('invite'), true);
+  assert.equal(caps.has('decide'), true);
+});
+
+test('capabilitiesOf: a dual-role organizer in the speaker portal gets ONLY speaker acts', () => {
+  // The account is an organizer, but on the portal surface it must not carry
+  // organizer power — the intersection Codex insisted on.
+  const caps = capabilitiesOf(prin({ role: 'organizer' }), 'ev-1', 'portal');
+  assert.equal(caps.has('invite'), false);
+  assert.equal(caps.has('decide'), false);
+  assert.equal(caps.has('star'), true);
+});
+
+test('capabilitiesOf: an attendee on the backstage surface can do nothing', () => {
+  assert.equal(capabilitiesOf(prin(), 'ev-1', 'backstage').size, 0);
+});
+
+test('capabilitiesOf: the global (pre-conference) surface exposes no writes in v1', () => {
+  assert.equal(capabilitiesOf(prin({ role: 'organizer' }), null, 'global').size, 0);
 });
 
 // --- label: the register wall (throws rather than showing the wrong voice) ---
