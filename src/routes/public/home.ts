@@ -373,10 +373,10 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
   // nav destination — it is the hero's invitation and the live section's own
   // heading (Luna's review).
   const nav =
-    '<a href="#program">Program</a>' +
-    '<a href="#team">Team</a>' +
+    '<a href="#program">Organize</a>' +
     '<a href="#attendees">Attendees</a>' +
     '<a href="#mechanics">How it works</a>' +
+    '<a href="/walkthrough">UX walkthrough</a>' +
     (signedIn
       ? '<a href="/admin">Backstage</a><a href="/sign-out">Sign out</a>'
       : '<a href="/sign-in">Sign in</a>');
@@ -393,7 +393,9 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
   const heroShot =
     '<div class="mkt-hero-shot"><img src="/a/hero.jpg" width="1840" height="1150" loading="eager" ' +
     'alt="The proposals desk: a thousand submissions, filter chips that are the counts, ' +
-    'and six hundred and ten decisions made but not yet sent."></div>';
+    'and six hundred and ten decisions made but not yet sent."></div>' +
+    '<p class="mkt-shot-cap">One screen of many. ' +
+    '<a class="link" href="/walkthrough">See the whole product, screen by screen →</a></p>';
   const hero =
     '<section class="mkt-hero"><div class="mkt-wrap">' +
     '<div class="mkt-hero-in">' +

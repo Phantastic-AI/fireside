@@ -90,6 +90,24 @@ app.get('/favicon.ico', (c) => c.body(FAVICON, 200, faviconHeaders));
 // The home hero screenshot — a real shot of the proposals desk, decoded once
 // from its base64 module and cached immutably at the edge, so the shopfront's
 // one image costs a single long-lived request rather than weight on every page.
+// The UX walkthrough: a self-contained interactive tour of the whole product,
+// screen by screen. Too large to live in the Worker bundle, so it is stored in
+// R2 (key: walkthrough.html) and streamed from here — public, same domain, no
+// sign-in and no sharing step, so a judge reaches it with one link. Refreshed
+// out of band by uploading a new object to that key (tools/studio in the KYS
+// repo builds it).
+app.get('/walkthrough', async (c) => {
+  const obj = await c.env.FILES.get('walkthrough.html');
+  if (!obj) return c.notFound();
+  return new Response(obj.body, {
+    status: 200,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'public, max-age=300',
+    },
+  });
+});
+
 let heroBytes: Uint8Array | null = null;
 app.get('/a/hero.jpg', () => {
   if (!heroBytes) heroBytes = Uint8Array.from(atob(HERO_JPG_B64), (ch) => ch.charCodeAt(0));
