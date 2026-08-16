@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { weightedAverage, averageOf, scorecardFor, type ScorecardKey } from '../src/queries/reviews';
 import { label } from '../src/lib/labels';
 import { safeNext } from '../src/lib/url';
+import { reminderBody } from '../src/workflows/files';
 
 const scale = (key: string, weight: 1 | 2 | 3 = 2): ScorecardKey => ({
   key,
@@ -120,6 +121,20 @@ test('safeNext: refuses anything not starting with a single slash', () => {
 test('safeNext: refuses control characters and over-long paths', () => {
   assert.equal(safeNext('/x\nY'), null);
   assert.equal(safeNext('/' + 'a'.repeat(600)), null);
+});
+
+// --- reminderBody: the outbound reminder carries a real scoped portal link ---
+test('reminderBody: one deliverable names it, the date, and the portal link', () => {
+  const b = reminderBody(['Slides'], 'AI Engineer NY', '2026-09-01', 'https://onfireside.com/aie-nyc/portal');
+  assert.match(b, /Slides is still open/);
+  assert.match(b, /https:\/\/onfireside\.com\/aie-nyc\/portal/);
+});
+
+test('reminderBody: several deliverables list each, and still carry the link', () => {
+  const b = reminderBody(['Slides', 'Bio'], 'AIE', '2026-09-01', 'https://onfireside.com/aie-nyc/portal');
+  assert.match(b, /- Slides/);
+  assert.match(b, /- Bio/);
+  assert.match(b, /onfireside\.com\/aie-nyc\/portal/);
 });
 
 // --- label: the register wall (throws rather than showing the wrong voice) ---

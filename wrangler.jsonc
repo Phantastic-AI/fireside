@@ -25,7 +25,10 @@
   "vars": {
     "RESEED_ENABLED": "true",
     "GOOGLE_CLIENT_ID": "92329243256-ieg544bl92lk19u7abi05aifut45be5s.apps.googleusercontent.com",
-    "FROM_EMAIL": "mail@fireside.phantastic.ai"
+    "FROM_EMAIL": "mail@fireside.phantastic.ai",
+    // The canonical public origin, used to build the portal links that ride in
+    // outbound email so a speaker or helper lands back in the right conference.
+    "SITE_ORIGIN": "https://onfireside.com"
   },
   "rules": [
     {

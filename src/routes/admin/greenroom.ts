@@ -822,7 +822,8 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
         taskId,
         aWeekOut(ev.timezone),
         c.env.EMAIL && c.env.FROM_EMAIL ? { binding: c.env.EMAIL, from: c.env.FROM_EMAIL } : null,
-        (p) => c.executionCtx.waitUntil(p)
+        (p) => c.executionCtx.waitUntil(p),
+        c.env.SITE_ORIGIN
       );
       return c.redirect(boardPath(slug, form, said(outcome, 'asked')), 303);
     } catch (e) {
@@ -855,7 +856,8 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
         aWeekOut(ev.timezone),
         counted,
         c.env.EMAIL && c.env.FROM_EMAIL ? { binding: c.env.EMAIL, from: c.env.FROM_EMAIL } : null,
-        (p) => c.executionCtx.waitUntil(p)
+        (p) => c.executionCtx.waitUntil(p),
+        c.env.SITE_ORIGIN
       );
       return c.redirect(boardPath(slug, form, said(outcome, 'asked-all')), 303);
     } catch (e) {

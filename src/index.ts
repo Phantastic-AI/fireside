@@ -54,6 +54,7 @@ export type Env = {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   FROM_EMAIL: string;
+  SITE_ORIGIN: string;
   DB: D1Database;
   FILES: R2Bucket;
   AI: Ai;

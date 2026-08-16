@@ -569,20 +569,17 @@ function reminderSubject(titles: string[]): string {
 }
 
 /** Names the outstanding deliverable(s) and the date they now owe it by — the
- *  exact two facts CNT-08's manual check reads for. */
-function reminderBody(titles: string[], eventName: string, dueOn: string): string {
+ *  exact two facts CNT-08's manual check reads for — and carries the link
+ *  straight to the portal that answers them. A signed-out speaker or helper
+ *  clicking it lands on the portal's sign-in, which returns them right back. */
+export function reminderBody(titles: string[], eventName: string, dueOn: string, portalUrl: string): string {
   const said = dayWord(dueOn);
+  const open = `Open your portal to send it: ${portalUrl}`;
   if (titles.length === 1) {
-    return (
-      `${titles[0]} is still open on your list for ${eventName}, now due ${said}.\n\n` +
-      'Open your portal when you have a moment.'
-    );
+    return `${titles[0]} is still open on your list for ${eventName}, now due ${said}.\n\n${open}`;
   }
   const list = titles.map((t) => `- ${t}`).join('\n');
-  return (
-    `These are still open on your list for ${eventName}, now due ${said}:\n\n${list}\n\n` +
-    'Open your portal when you have a moment.'
-  );
+  return `These are still open on your list for ${eventName}, now due ${said}:\n\n${list}\n\n${open}`;
 }
 
 /** Fire-and-forget, after the row that makes it true is already committed —
@@ -629,12 +626,13 @@ export async function askAgain(
   taskId: string,
   dueOn: string,
   email: { binding: EmailBinding; from: string } | null,
-  waitUntil: (p: Promise<unknown>) => void
+  waitUntil: (p: Promise<unknown>) => void,
+  siteOrigin: string
 ): Promise<FileOutcome> {
   const before = await db
     .prepare(
       `SELECT t.title, pe.id AS person_id, pe.name AS person_name, pe.email AS person_email,
-              ev.name AS event_name
+              ev.name AS event_name, ev.slug AS event_slug
          FROM task t
          JOIN person pe ON pe.id = t.person_id
          JOIN event ev ON ev.id = t.event_id
@@ -648,13 +646,14 @@ export async function askAgain(
       person_name: string;
       person_email: string | null;
       event_name: string;
+      event_slug: string;
     }>();
   if (!before) return 'moved';
 
   const messageId = newId('msg');
   const t = now();
   const subject = reminderSubject([before.title]);
-  const body = reminderBody([before.title], before.event_name, dueOn);
+  const body = reminderBody([before.title], before.event_name, dueOn, `${siteOrigin}/${before.event_slug}/portal`);
 
   try {
     await checkedBatch(
@@ -705,7 +704,8 @@ export async function askEveryoneWaiting(
   dueOn: string,
   expected: number,
   email: { binding: EmailBinding; from: string } | null,
-  waitUntil: (p: Promise<unknown>) => void
+  waitUntil: (p: Promise<unknown>) => void,
+  siteOrigin: string
 ): Promise<FileOutcome> {
   if (expected < 1) return 'moved';
 
@@ -730,15 +730,19 @@ export async function askEveryoneWaiting(
     byPerson.set(r.person_id, entry);
   }
 
-  const event = await db.prepare('SELECT name FROM event WHERE id = ?').bind(eventId).first<{ name: string }>();
+  const event = await db
+    .prepare('SELECT name, slug FROM event WHERE id = ?')
+    .bind(eventId)
+    .first<{ name: string; slug: string }>();
   const eventName = event?.name ?? '';
+  const portalUrl = `${siteOrigin}/${event?.slug ?? ''}/portal`;
   const t = now();
   const messages = [...byPerson.entries()].map(([personId, info]) => ({
     id: newId('msg'),
     personId,
     info,
     subject: reminderSubject(info.titles),
-    body: reminderBody(info.titles, eventName, dueOn),
+    body: reminderBody(info.titles, eventName, dueOn, portalUrl),
   }));
 
   try {
