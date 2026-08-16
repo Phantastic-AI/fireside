@@ -36,6 +36,10 @@ Speakers and reviewers in the demonstration cast sign in with magic links;
 for `@example.org` addresses the link prints on the page instead of
 emailing, so every journey is walkable without an inbox.
 
+Prefer to see the whole thing at a glance? The
+[**UX walkthrough**](https://onfireside.com/walkthrough) is every screen, one
+after another, filtered by who is using it.
+
 **To walk the attendee tribe** — find someone by name, send a request, and
 follow a friend's schedule — sign in as two attendees at once:
 **dani.okafor@example.org** / **ask-before-you-assume** and
@@ -79,7 +83,13 @@ every review over the wire, through the reviewer's own guards. See
 - Review rounds — named, dated, and non-destructive (opening round two never
   hides round one) — where a reviewer's scores stay theirs until they submit,
   then feed a **sortable results table** you can export to CSV; blind is a
-  per-round setting
+  per-round setting. A reviewer works the pile as a **deck of cards**: one
+  proposal at a time, next and back, a count of where they are, and a score
+  that saves itself as they go. The committee's average is one weighted number,
+  said the same on the proposal page and the results table
+- **Each conference in its own colour** — a name-and-dates identity band on
+  every page it owns, so a speaker in three conferences never confuses one for
+  another, or sends a deck to the wrong one
 - The call can open in **waves** — an early call, a main call, a late
   extension — and every proposal remembers which one it arrived in
 - An agenda builder that surfaces conflicts at the moment of placement —
@@ -103,14 +113,25 @@ every review over the wire, through the reviewer's own guards. See
   kept), never lose a word
 - A portal that says plainly where things stand and what is needed next —
   and says nothing about decisions that have not been sent
+- **Reply with your deck** — a reminder's Reply-To lands the attached slides
+  straight on the deliverable, versioned, no app and no sign-in
+- **Hand the logistics to a helper** — the deck, the details — without putting
+  them on the program; their portal becomes yours, scoped to what is due,
+  never able to withdraw the talk
 - Withdraw kindly, with the history intact
 
 **For your audience**
 - A public agenda, session pages, and a speaker gallery — server-rendered,
   no spinner
-- **My schedule**: star talks with no login required; sign in to keep the
-  list on every device, share it, and see who else is going — every contact
-  fact opt-in, revocable in one click
+- **My schedule**: star talks with no login required — from the agenda, a
+  session's own page, or a speaker's — sign in to keep the list on every
+  device, share it, and see who else is going; every contact fact opt-in,
+  revocable in one click
+- **The attendee tribe (AIE++)**: find the people you met by name and connect,
+  and **follow a speaker** so that when someone you follow turns up at another
+  conference, you hear about it — the beginning of a network that carries
+  across events. Double opt-in, and a speaker's page never shows who follows
+  them
 - A schedule that is honest about physics: overlapping stars and tight
   room-to-room turns say so
 - Embeddable agenda and calendar files for the whole program, one session,
