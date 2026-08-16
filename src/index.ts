@@ -110,6 +110,22 @@ app.get('/walkthrough', async (c) => {
   });
 });
 
+// Temporary inbound-email smoke: reseed-key-gated. Sends a tiny message to a
+// reply+<local>@onfireside.com address so we can watch whether Cloudflare
+// routes a sub-addressed reply to the reply@ Worker rule (the one open
+// question in the inbound design). Remove once the smoke is confirmed.
+app.get('/__cp0/email-selftest', async (c) => {
+  if (!c.env.RESEED_KEY || c.req.header('x-reseed') !== c.env.RESEED_KEY) return c.text('no', 403);
+  const local = c.req.query('local') ?? 'selftest';
+  await c.env.EMAIL.send({
+    to: `reply+${local}@onfireside.com`,
+    from: { email: c.env.FROM_EMAIL, name: 'Fireside self-test' },
+    subject: 'inbound smoke',
+    text: 'This is a self-test to confirm reply+ routing reaches the Worker.',
+  });
+  return c.json({ sent_to: `reply+${local}@onfireside.com` });
+});
+
 let heroBytes: Uint8Array | null = null;
 app.get('/a/hero.jpg', () => {
   if (!heroBytes) heroBytes = Uint8Array.from(atob(HERO_JPG_B64), (ch) => ch.charCodeAt(0));
@@ -425,6 +441,9 @@ export default {
   // mail here; everything else this catch-all sees is simply not acknowledged.
   // The raw stream is single-use, so it is buffered once and handed over whole.
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Logged synchronously so any inbound mail is visible in `wrangler tail`
+    // the instant it arrives — the smoke signal that routing reached here.
+    console.log(`inbound email: from=${message.from} to=${message.to} size=${message.rawSize}`);
     // A giant message is refused at the door, before the body is pulled into
     // the isolate — a deck is 15 MB, so 25 leaves room for the MIME envelope.
     if (message.rawSize > 25 * 1024 * 1024) {
