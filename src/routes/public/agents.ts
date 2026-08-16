@@ -21,7 +21,7 @@ import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { makeAgentToken, principalFromCookie, type Principal } from '../../workflows/account';
 
-const ORIGIN = 'https://fireside.phantastic.ai';
+const ORIGIN = 'https://onfireside.com';
 
 const TOOLS: { name: string; line: string }[] = [
   { name: 'list_events', line: 'The conferences running here, and the short names they go by.' },
