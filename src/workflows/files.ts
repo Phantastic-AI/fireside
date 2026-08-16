@@ -117,6 +117,38 @@ function safeName(raw: string, fallback: string): string {
 const trimTo = (s: string, max: number): string => s.trim().slice(0, max);
 const blank = (s: string): string | null => (s.trim() === '' ? null : s.trim());
 
+/** The reply local-part for a task: get-or-create one short ticket per task
+ *  (schema/0014), reused across every reminder. Returns `reply+<id>`, the
+ *  local-part of the Reply-To a speaker or helper answers with the deck. */
+export async function replyLocalPart(
+  db: D1Database,
+  taskId: string,
+  speakerPersonId: string,
+  nowMs: number = now()
+): Promise<string | null> {
+  const existing = await db
+    .prepare('SELECT id FROM reply_ticket WHERE task_id = ?')
+    .bind(taskId)
+    .first<{ id: string }>();
+  if (existing) return `reply+${existing.id}`;
+
+  const id = newId('rt');
+  try {
+    await db
+      .prepare('INSERT INTO reply_ticket (id, task_id, speaker_person_id, created_at) VALUES (?,?,?,?)')
+      .bind(id, taskId, speakerPersonId, nowMs)
+      .run();
+    return `reply+${id}`;
+  } catch {
+    // A race created it first; read theirs.
+    const row = await db
+      .prepare('SELECT id FROM reply_ticket WHERE task_id = ?')
+      .bind(taskId)
+      .first<{ id: string }>();
+    return row ? `reply+${row.id}` : null;
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Reading one file back
  * ------------------------------------------------------------------ */
@@ -593,7 +625,8 @@ function sendReminderEmail(
   to: string | null,
   name: string,
   subject: string,
-  body: string
+  body: string,
+  replyTo?: string
 ): void {
   if (!email || !to || !isRealAddress(to)) return;
   waitUntil(
@@ -602,6 +635,9 @@ function sendReminderEmail(
         await email.binding.send({
           to,
           from: { email: email.from, name: 'Fireside' },
+          // A reply comes back to the deliverable, not to a black hole: reply
+          // with the deck attached and it lands (workflows/reply-email.ts).
+          ...(replyTo ? { replyTo } : {}),
           subject,
           text: `Hello ${name},\n\n${body}\n\n— sent from Fireside.`,
         });
@@ -681,11 +717,18 @@ export async function askAgain(
     return outcomeOf(e, 'askAgain');
   }
 
-  sendReminderEmail(db, email, waitUntil, messageId, before.person_email, before.person_name, subject, body);
+  // One reply address for this task, so a reply with the deck attached lands on
+  // it — the same address to the speaker and to every helper, because the
+  // inbound handler authorises by who is replying, not by the address.
+  const localPart = await replyLocalPart(db, taskId, before.person_id);
+  const replyTo = localPart ? `${localPart}@${new URL(siteOrigin).hostname}` : undefined;
+
+  sendReminderEmail(db, email, waitUntil, messageId, before.person_email, before.person_name, subject, body, replyTo);
   // Whoever helps this speaker is kept in the loop: the same reminder, to each
-  // of their helpers, so an assistant chasing the deck sees it too.
+  // of their helpers, so an assistant chasing the deck sees it too — and can
+  // reply with the deck the same way the speaker can.
   for (const h of await helperContactsFor(db, eventId, before.person_id)) {
-    sendReminderEmail(db, email, waitUntil, messageId, h.email, h.name, subject, body);
+    sendReminderEmail(db, email, waitUntil, messageId, h.email, h.name, subject, body, replyTo);
   }
   return 'done';
 }

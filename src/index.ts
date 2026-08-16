@@ -419,4 +419,27 @@ export default {
       ctx.waitUntil(reseed(env.DB, env.FILES));
     }
   },
+  // Inbound email (bidirectional, the receiving half). A reply to a reminder,
+  // addressed reply+<ticket>@onfireside.com, lands the attached deck on the
+  // deliverable — no app, no sign-in. Cloudflare Email Routing sends matching
+  // mail here; everything else this catch-all sees is simply not acknowledged.
+  // The raw stream is single-use, so it is buffered once and handed over whole.
+  async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    // A giant message is refused at the door, before the body is pulled into
+    // the isolate — a deck is 15 MB, so 25 leaves room for the MIME envelope.
+    if (message.rawSize > 25 * 1024 * 1024) {
+      message.setReject('Message too large.');
+      return;
+    }
+    const raw = await new Response(message.raw).arrayBuffer();
+    const { handleDeckReply } = await import('./workflows/reply-email');
+    ctx.waitUntil(
+      handleDeckReply(env.DB, env.FILES, { to: message.to, from: message.from, raw }).then((outcome) => {
+        // The sender gets nothing back on a miss on purpose: a bounce would
+        // confirm to a stranger which reply addresses are live. The organizer
+        // sees a real submission on the record; a miss is silent.
+        if (outcome !== 'stored') console.log(`inbound reply: ${outcome} (to ${message.to})`);
+      })
+    );
+  },
 };

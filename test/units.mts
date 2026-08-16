@@ -13,6 +13,7 @@ import { weightedAverage, averageOf, scorecardFor, type ScorecardKey } from '../
 import { label } from '../src/lib/labels';
 import { safeNext } from '../src/lib/url';
 import { reminderBody } from '../src/workflows/files';
+import { ticketIdFromRecipient } from '../src/workflows/reply-email';
 
 const scale = (key: string, weight: 1 | 2 | 3 = 2): ScorecardKey => ({
   key,
@@ -135,6 +136,21 @@ test('reminderBody: several deliverables list each, and still carry the link', (
   assert.match(b, /- Slides/);
   assert.match(b, /- Bio/);
   assert.match(b, /onfireside\.com\/aie-nyc\/portal/);
+});
+
+// --- ticketIdFromRecipient: the inbound reply address parser ---
+test('ticketIdFromRecipient: pulls the id from a plain reply+ address', () => {
+  assert.equal(ticketIdFromRecipient('reply+rt-abc234@onfireside.com'), 'rt-abc234');
+});
+
+test('ticketIdFromRecipient: tolerates angle brackets and a display name', () => {
+  assert.equal(ticketIdFromRecipient('Fireside <reply+rt-abc234@onfireside.com>'), 'rt-abc234');
+});
+
+test('ticketIdFromRecipient: rejects a non-reply recipient', () => {
+  assert.equal(ticketIdFromRecipient('hello@onfireside.com'), null);
+  assert.equal(ticketIdFromRecipient('naomi@example.org'), null);
+  assert.equal(ticketIdFromRecipient('reply@onfireside.com'), null); // no +id
 });
 
 // --- label: the register wall (throws rather than showing the wrong voice) ---
