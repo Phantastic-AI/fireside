@@ -24,15 +24,6 @@ import type { EventCard } from '../../queries/public';
  * Content. Kept as data so the shape of the page stays readable.
  * ------------------------------------------------------------------ */
 
-const RUNWAY: { t: string; h: string }[] = [
-  { t: '3 months', h: 'Gather proposals around the theme' },
-  { t: '2 months', h: 'Bring independent reviews together' },
-  { t: '1 month', h: 'Place accepted talks in the lineup' },
-  { t: '2 weeks', h: 'Ready speakers and crews' },
-  { t: 'Today', h: 'Keep rooms, decks, and people connected' },
-  { t: 'After', h: 'Make missed talks easy to find' },
-];
-
 const ROLES: { who: string; h: string; p: string }[] = [
   {
     who: 'Editorial lead',
@@ -396,32 +387,21 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
   // direct ways into the conferences actually running on it. (An earlier hero
   // held a *mock* pulse card of invented counts; this is the real product, of
   // the walk-in demo world, and the operator asked for it on the fold.)
-  const confLinks = events
-    .map((e) => {
-      const past = e.lifecycle === 'happened';
-      return (
-        `<a class="mkt-conf" href="/${esc(e.slug)}">` +
-        `<span class="mkt-conf-tag${past ? ' past' : ''}">${past ? 'Past' : 'Live now'}</span>` +
-        `${esc(e.name)} <span class="mkt-conf-go">→</span></a>`
-      );
-    })
-    .join('');
+  // The hero ends on the product. The way into the live conferences is the
+  // primary CTA (it scrolls to #live, "Walk one"), so no second set of
+  // conference links here — that was the clash.
   const heroShot =
     '<div class="mkt-hero-shot"><img src="/a/hero.jpg" width="1840" height="1150" loading="eager" ' +
     'alt="The proposals desk: a thousand submissions, filter chips that are the counts, ' +
-    'and six hundred and ten decisions made but not yet sent."></div>' +
-    (confLinks
-      ? '<div class="mkt-conf-row"><span class="mkt-conf-lead">Walk a real one</span>' + confLinks + '</div>'
-      : '');
+    'and six hundred and ten decisions made but not yet sent."></div>';
   const hero =
     '<section class="mkt-hero"><div class="mkt-wrap">' +
     '<div class="mkt-hero-in">' +
     '<p class="mkt-kick">Conference program software · for editorial teams</p>' +
     '<h1>Keep your whole conference <em>humming in sync.</em></h1>' +
     '<p class="mkt-lede">Months before the audience arrives, follow the proposals, reviews, placements, ' +
-    'and speaker obligations that still need a decision. By show day, reviewers can finish their ' +
-    'assigned proposals, speakers can check what is due, volunteers can run the next room, and ' +
-    'attendees can use the agenda.</p>' +
+    'and speaker obligations that still need a decision — kept in one place until every one is ' +
+    'settled.</p>' +
     '<div class="mkt-cta">' +
     '<a class="btn btn-primary btn-lg" href="#live">Walk a live conference →</a>' +
     '<a class="btn btn-lg" href="#program">See the program desk</a>' +
@@ -435,9 +415,6 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     '</ul>' +
     '</div>' +
     heroShot +
-    `<div class="mkt-run">${RUNWAY.map(
-      (s) => `<div class="mkt-run-s"><span>${esc(s.t)}</span><h3>${esc(s.h)}</h3></div>`
-    ).join('')}</div>` +
     '</div></section>';
 
   const program =

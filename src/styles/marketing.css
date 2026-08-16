@@ -59,16 +59,6 @@
 .mkt-hero-shot img{display:block;width:100%;height:auto;max-width:1080px;
   border:1px solid var(--line);border-radius:12px;
   box-shadow:0 1px 2px rgba(0,0,0,.05),0 20px 46px -22px rgba(0,0,0,.24)}
-/* direct ways into the conferences actually running on it, right under it */
-.mkt-conf-row{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin-top:20px}
-.mkt-conf-lead{font-size:13px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ember)}
-.mkt-conf{display:inline-flex;gap:9px;align-items:center;padding:8px 15px;
-  border:1px solid var(--line);border-radius:999px;font-weight:560;font-size:15px;
-  color:var(--ink);text-decoration:none;transition:border-color .15s,background .15s}
-.mkt-conf:hover{border-color:var(--ember);background:var(--ember-wash)}
-.mkt-conf-tag{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ember)}
-.mkt-conf-tag.past{color:var(--ink-soft)}
-.mkt-conf-go{color:var(--ink-soft)}
 
 /* the spine: the year, stated once as a mark before it is stated as a section */
 .mkt-spine{display:flex;border-top:1px solid var(--line);margin-top:clamp(34px,4.4vw,58px);
