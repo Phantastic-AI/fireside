@@ -319,6 +319,7 @@ const DIRECTORY_NOTES: Record<string, string> = {
   tagged: 'Tagged.',
   typed: 'Saved.',
   invited: 'Written. Send it from that event’s outbox whenever you are ready.',
+  'not-open': 'That conference’s call is not open, so there is nothing to invite them to yet.',
   pushed: 'Added to that event’s list.',
   merged: 'Merged. One record remains.',
   'merge-not-found': 'One of those records could not be found. Nothing changed.',
@@ -480,8 +481,10 @@ function pushToEventForm(personId: string, events: AdminEvent[]): string {
 }
 
 function inviteForm(personId: string, events: AdminEvent[]): string {
-  const open = events.filter((e) => e.lifecycle === 'open');
-  const pool = open.length ? open : events;
+  // Only conferences whose call is actually open: the invite letter says "the
+  // call is open here", so offering a closed one would make the letter lie.
+  // No open call, no form — you cannot invite someone to a call that is shut.
+  const pool = events.filter((e) => e.lifecycle === 'open');
   if (!pool.length) return '';
   const options = pool.map((e) => `<option value="${esc(e.id)}">${esc(e.name)}</option>`).join('');
   return (
@@ -1295,6 +1298,10 @@ export function registerCrm(app: Hono<{ Bindings: Env }>): void {
       const events = await adminEvents(c.env.DB, principal);
       const event = events.find((e) => e.id === eventId);
       if (!event) return c.redirect(`${home}?note=trouble`, 303);
+      // The letter says "the call is open here", so the server refuses to send
+      // it for a call that is not — the form only offers open ones, and this is
+      // the same rule read again rather than trusted from the form.
+      if (event.lifecycle !== 'open') return c.redirect(`${home}?note=not-open`, 303);
       const origin = new URL(c.req.url).origin;
       const cfpUrl = `${origin}/${event.slug}/cfp`;
       const res = await inviteToSubmit(c.env.DB, principal, { id: event.id, name: event.name }, personId, cfpUrl);
