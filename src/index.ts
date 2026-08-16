@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { homePage } from './routes/public/home';
 import { listEvents } from './queries/public';
 import { FAVICON } from './lib/html';
+import { HERO_JPG_B64 } from './assets/hero-jpg';
 import { signInPage, signUpPage } from './routes/public/signin';
 import { registerCfp } from './routes/public/cfp';
 import { registerPortal } from './routes/public/portal';
@@ -85,6 +86,21 @@ app.get('/healthz', (c) => c.json({ ok: true }));
 const faviconHeaders = { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400' };
 app.get('/favicon.svg', (c) => c.body(FAVICON, 200, faviconHeaders));
 app.get('/favicon.ico', (c) => c.body(FAVICON, 200, faviconHeaders));
+
+// The home hero screenshot — a real shot of the proposals desk, decoded once
+// from its base64 module and cached immutably at the edge, so the shopfront's
+// one image costs a single long-lived request rather than weight on every page.
+let heroBytes: Uint8Array | null = null;
+app.get('/a/hero.jpg', () => {
+  if (!heroBytes) heroBytes = Uint8Array.from(atob(HERO_JPG_B64), (ch) => ch.charCodeAt(0));
+  return new Response(heroBytes, {
+    status: 200,
+    headers: {
+      'content-type': 'image/jpeg',
+      'cache-control': 'public, max-age=31536000, immutable',
+    },
+  });
+});
 
 // The manual reseed door, behind a real secret (RESEED_KEY) — the demo world
 // can be rebuilt on purpose, never by a stranger reading a public repo.

@@ -390,13 +390,29 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
       ? '<a href="/admin">Backstage</a><a href="/sign-out">Sign out</a>'
       : '<a href="/sign-in">Sign in</a>');
 
-  // One column, said plainly. The card that used to sit here — "Program
-  // pulse", a mock dashboard of live proposal and letter counts — read as a
-  // cramped screenshot of nothing, and it published exactly the kind of
-  // backstage funnel number the product elsewhere keeps off public pages
-  // (accepted-so-far, still-undecided). The real proof that this runs is
-  // the "Walk one" section further down, where two conferences are actually
-  // live and clickable. The hero's only job now is the plain statement.
+  // The shopfront leads with the software: the plain statement, then a real
+  // screenshot of the proposals desk (the whole thesis in one frame — a
+  // thousand submissions, and six hundred and ten decided-but-not-sent), then
+  // direct ways into the conferences actually running on it. (An earlier hero
+  // held a *mock* pulse card of invented counts; this is the real product, of
+  // the walk-in demo world, and the operator asked for it on the fold.)
+  const confLinks = events
+    .map((e) => {
+      const past = e.lifecycle === 'happened';
+      return (
+        `<a class="mkt-conf" href="/${esc(e.slug)}">` +
+        `<span class="mkt-conf-tag${past ? ' past' : ''}">${past ? 'Past' : 'Live now'}</span>` +
+        `${esc(e.name)} <span class="mkt-conf-go">→</span></a>`
+      );
+    })
+    .join('');
+  const heroShot =
+    '<div class="mkt-hero-shot"><img src="/a/hero.jpg" width="1840" height="1150" loading="eager" ' +
+    'alt="The proposals desk: a thousand submissions, filter chips that are the counts, ' +
+    'and six hundred and ten decisions made but not yet sent."></div>' +
+    (confLinks
+      ? '<div class="mkt-conf-row"><span class="mkt-conf-lead">Walk a real one</span>' + confLinks + '</div>'
+      : '');
   const hero =
     '<section class="mkt-hero"><div class="mkt-wrap">' +
     '<div class="mkt-hero-in">' +
@@ -418,6 +434,7 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     '<li>No attendee accounts</li><li>Speaks MCP</li>' +
     '</ul>' +
     '</div>' +
+    heroShot +
     `<div class="mkt-run">${RUNWAY.map(
       (s) => `<div class="mkt-run-s"><span>${esc(s.t)}</span><h3>${esc(s.h)}</h3></div>`
     ).join('')}</div>` +
