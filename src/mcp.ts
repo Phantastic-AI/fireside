@@ -29,7 +29,7 @@
 //     proposal; it is the same row, written the same way.
 //   * The signed tools (whoami, pile_summary, my_owed, review_queue,
 //     review_proposal, submit_review, star_session, propose_invite,
-//     commit_pending) hold no authorization logic
+//     propose_decision, commit_pending) hold no authorization logic
 //     of their own either: pile() and requireScope (queries/admin.ts),
 //     reviewEvent and queuePosition (queries/reviews.ts), and portalView
 //     (queries/portal.ts) decide what a standing may see, exactly as they do for
@@ -1470,6 +1470,59 @@ const SIGNED_TOOLS: Record<string, Tool> = {
     },
   },
 
+  // The organizer's core act over MCP: accept / waitlist / decline a proposal.
+  // Confirm-once, staged into the quiet outbox — nothing reaches the speaker
+  // until the outbox is released. propose_decision stages it and returns a
+  // manifest naming the proposal AND the speaker; commit_pending commits it.
+  propose_decision: {
+    title: 'Propose a decision on a proposal',
+    description:
+      'Stage an accept, waitlist, or decline on ONE proposal — the "decided but not told" model: the ' +
+      'decision changes nothing the speaker can see and no letter sends until the organizer releases ' +
+      'the outbox. `decision` is one of accepted, waitlisted, rejected. Returns a pending id and a ' +
+      'one-line manifest naming the proposal and its speaker; call commit_pending with the id to stage ' +
+      'it. Refuses when the proposal is not on this event or you lack approval power there.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...EVENT_ARG,
+        proposal: { type: 'string', description: "The proposal's id, as review_queue or pile_summary give it." },
+        decision: {
+          type: 'string',
+          description: 'One of: accepted, waitlisted, rejected.',
+          enum: ['accepted', 'waitlisted', 'rejected'],
+        },
+      },
+      required: ['event', 'proposal', 'decision'],
+      additionalProperties: false,
+    },
+    async run(env, args, nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const found = await eventOr(env, args, nowMs);
+      if (!found.ok) return refuse(found.says);
+      const proposed = await proposeAction(
+        { DB: env.DB, FILES: env.FILES },
+        principal,
+        { eventId: found.ev.id, surface: 'backstage' },
+        'decide',
+        { submissionId: textArg(args, 'proposal'), decision: textArg(args, 'decision') },
+        nowMs
+      );
+      if (proposed.kind === 'refused') return refuse(DECIDE_REFUSAL[proposed.reason] ?? "I couldn't stage that decision.");
+      if (proposed.kind === 'pending') {
+        return answered({
+          pending_id: proposed.id,
+          manifest: proposed.manifest,
+          says:
+            `Staged, not sent: ${proposed.manifest} Call commit_pending with pending_id "${proposed.id}" to ` +
+            'stage it. It joins the outbox as a decided-but-not-told letter; nothing reaches the speaker until ' +
+            'the outbox is released.',
+        });
+      }
+      return refuse('That decision could not be staged for confirmation.');
+    },
+  },
+
   // The second half of any confirm-tier act: commit exactly the manifest that
   // was staged, by its id. For a by-the-number act the number must be restated —
   // the same "the number confirmed is the number that goes" rule the web outbox
@@ -1504,7 +1557,7 @@ const SIGNED_TOOLS: Record<string, Tool> = {
         pendingId,
         number,
         nowMs,
-        ['invite'] // this tool commits invites only — never some other owned pending
+        ['invite', 'decide'] // commits only the confirm-tier acts proposed over MCP — never some other owned pending
       );
       if (!result.ok) return refuse(COMMIT_REFUSAL[result.reason] ?? "That couldn't be committed.");
       const outcome = result.outcome;
@@ -1532,6 +1585,15 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       );
     },
   },
+};
+
+const DECIDE_REFUSAL: Record<string, string> = {
+  'no-proposal': 'No proposal here goes by that id. review_queue or pile_summary list the ones that do.',
+  'bad-decision': 'A decision is one of: accepted, waitlisted, rejected.',
+  'no-event': NO_SUCH_EVENT,
+  'not-allowed': 'You need approval power on that conference to decide.',
+  'not-here': 'You need approval power on that conference to decide.',
+  'too-many-pending': 'You have several actions waiting on confirmation — commit or drop those first.',
 };
 
 const INVITE_REFUSAL: Record<string, string> = {

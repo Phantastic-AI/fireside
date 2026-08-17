@@ -37,6 +37,7 @@ import type { Principal } from './account';
 import { setStar } from './social';
 import { sendFriendRequest } from './friends';
 import { addManualContact, inviteToSubmit } from './crm';
+import { stageDecision, type Decision } from './decide';
 import { eventBySlug } from '../queries/public';
 
 // The canonical public origin, for links the boundary writes into invite notes.
@@ -338,6 +339,56 @@ export const ACTIONS: Record<string, ActionDef> = {
       // 'done' when everyone the human confirmed was rostered and noted; a
       // partial run says so, so the caller never claims a full sweep it didn't do.
       return invited === recipients.length ? 'done' : invited > 0 ? 'partial' : 'trouble';
+    },
+  },
+
+  // The organizer's core act, by chat/agent: accept / waitlist / decline one
+  // proposal. Confirm-once (the design doc's tier for "stage a decision"): the
+  // model resolves which proposal and which way, the server validates it is on
+  // this event, names the proposal AND the speaker in the manifest, and the
+  // human confirms before it lands. It is the "decided but not told" model — the
+  // decision stages a letter into the outbox and changes nothing the speaker can
+  // see; nothing reaches them until the organizer releases the outbox. So the
+  // confirmed act is reversible and quiet, and stageDecision's own guard refuses
+  // if someone else moved the proposal meanwhile.
+  decide: {
+    capability: 'decide',
+    tier: 'confirm',
+    surfaces: ['backstage'],
+    async validateAndFreeze(env, _p, eventId, raw) {
+      if (!eventId) return { ok: false, reason: 'no-event' };
+      const submissionId = str(raw.submissionId);
+      const decision = str(raw.decision);
+      if (!submissionId) return { ok: false, reason: 'no-proposal' };
+      // The three real dispositions, stated by the model, validated here — never
+      // a fourth the server invents.
+      if (decision !== 'accepted' && decision !== 'waitlisted' && decision !== 'rejected') {
+        return { ok: false, reason: 'bad-decision' };
+      }
+      const row = await env.DB
+        .prepare(
+          `SELECT s.title, pe.name AS speaker FROM submission s
+             JOIN participation pa ON pa.submission_id = s.id AND pa.is_submitter = 1
+             JOIN person pe ON pe.id = pa.person_id
+            WHERE s.id = ? AND s.event_id = ?`
+        )
+        .bind(submissionId, eventId)
+        .first<{ title: string; speaker: string }>();
+      if (!row) return { ok: false, reason: 'no-proposal' };
+      const verb = decision === 'accepted' ? 'Accept' : decision === 'waitlisted' ? 'Waitlist' : 'Decline';
+      return {
+        ok: true,
+        args: { submissionId, decision },
+        subject: row.title,
+        manifest: `${verb} "${row.title}" by ${row.speaker}. Staged only — nothing reaches ${row.speaker} until you release the outbox.`,
+      };
+    },
+    async execute(env, p, eventId, args) {
+      if (!eventId) return 'trouble';
+      const r = await stageDecision(env.DB, p, eventId, str(args.submissionId), args.decision as Decision, null);
+      // stageDecision never throws (it returns {ok:false} on a stale/illegal
+      // move); a failure means the world moved, so say so honestly.
+      return r.ok ? 'done' : 'moved';
     },
   },
 };
