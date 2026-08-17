@@ -235,12 +235,18 @@ const MOST_CHIPS = 6;
  * held to six however much standing somebody has — a wall of chips is a menu,
  * and this is not a menu.
  */
-function chipRow(ev: EventHome, intents: IntentChip[], lead?: string): string {
+function chipRow(ev: EventHome, intents: IntentChip[], lead?: string, act?: string): string {
+  // An action chip comes first and reads as a deed, not a question — the
+  // concierge offering to DO the thing you are looking at, in one tap.
+  const actChip = act
+    ? `<button class="cc-chip cc-chip-act" type="submit" name="q" value="${esc(act)}">${esc(act)}</button>`
+    : '';
   const leadChip = lead
     ? `<button class="cc-chip" type="submit" name="q" value="${esc(lead)}">${esc(lead)}</button>`
     : '';
-  const room = Math.max(1, MOST_CHIPS - intents.length - (lead ? 1 : 0));
+  const room = Math.max(1, MOST_CHIPS - intents.length - (lead ? 1 : 0) - (act ? 1 : 0));
   const chips =
+    actChip +
     leadChip +
     intents
       .map(
@@ -380,7 +386,7 @@ function askPage(o: {
  * somebody was offered is what somebody is, so the chips already read decide
  * the sentence above them.
  */
-function greeting(intents: IntentChip[]): string {
+function greeting(intents: IntentChip[], canAct: boolean): string {
   const has = (code: IntentCode): boolean => intents.some((i) => i.code === code);
   if (has('pile-now')) {
     return 'I can read the pile, the program and the call. Ask, and I will take you to whatever needs you.';
@@ -390,6 +396,11 @@ function greeting(intents: IntentChip[]): string {
   }
   if (has('my-queue')) {
     return 'I know what is left in your reading, and everything the program says. Ask me about either.';
+  }
+  // A signed-in attendee can also tell me to DO things — say so, because a
+  // concierge that only answers hides half of what it is.
+  if (canAct) {
+    return 'I know this conference — and I can act for you. Ask me anything, or just tell me to add a talk to your schedule and I will.';
   }
   return 'I know this conference — the program, the call, and where everything is. Ask me anything about it.';
 }
@@ -404,12 +415,13 @@ function panelFragment(
   ev: EventHome,
   intents: IntentChip[],
   who: string,
-  context?: { lead: string; greeting: string }
+  canAct: boolean,
+  context?: { lead: string; greeting: string; act?: string }
 ): string {
   return (
     `<div class="cc-fs" data-cc-who="${esc(who)}">` +
-    `<p class="cc-lead">${esc(context ? context.greeting : greeting(intents))}</p>` +
-    chipRow(ev, intents, context?.lead) +
+    `<p class="cc-lead">${esc(context ? context.greeting : greeting(intents, canAct))}</p>` +
+    chipRow(ev, intents, context?.lead, context?.act) +
     '</div>'
   );
 }
@@ -483,21 +495,29 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
     if (c.req.query('panel')) {
       const offered = await offeredIntents(c.env.DB, ev, principal);
       c.header('cache-control', 'private, no-store');
+      // Whether this reader can DO things here, not only ask — a signed-in
+      // attendee can star, so the concierge should say so and offer the act.
+      const canAct = !!principal && canActHere(principal, ev.id, 'event');
       // If the bubble opened on a talk's page, it opens with that talk: a chip
-      // to ask about it, and a greeting that names it. Everything else the same.
+      // to ask about it, and — for someone who can act — a one-tap chip to add it
+      // to their schedule, right where they are looking at it.
       const hereQ = String(c.req.query('here') ?? '').trim();
-      let context: { lead: string; greeting: string } | undefined;
+      let context: { lead: string; greeting: string; act?: string } | undefined;
       if (hereQ.startsWith('s:')) {
         const session = await sessionBySlug(c.env.DB, ev.id, hereQ.slice(2));
         if (session) {
+          const starrable = canAct && ev.agendaPublished && session.startsAt != null;
           context = {
             lead: 'What is this talk about?',
-            greeting: `You are looking at “${session.title}”. Ask me about it, or anything else on the program.`,
+            greeting: starrable
+              ? `You are looking at “${session.title}”. I can add it to your schedule, or answer anything about the program.`
+              : `You are looking at “${session.title}”. Ask me about it, or anything else on the program.`,
+            act: starrable ? `Add “${session.title}” to my schedule` : undefined,
           };
         }
       }
       return c.html(
-        panelFragment(ev, offered, await whoMark(principal?.personId ?? null), context)
+        panelFragment(ev, offered, await whoMark(principal?.personId ?? null), canAct, context)
       );
     }
     const [curated, intents] = await Promise.all([

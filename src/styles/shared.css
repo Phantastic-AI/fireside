@@ -278,6 +278,11 @@ table.t tbody tr:hover{background:#FCFAF6}
   padding:8px 13px;font-size:13.5px;cursor:pointer;text-align:left;color:var(--ink-soft);line-height:1.35}
 .cc-chip:hover{border-color:var(--ember);color:var(--ember);background:var(--ember-wash)}
 .cc-chip.wide{width:100%;border-radius:10px}
+/* An action chip — the concierge offering to DO something, not just answer.
+   Filled in the ember so a one-tap act reads apart from the question chips. */
+.cc-chip-act{border-color:transparent;background:var(--ember);color:#fff;font-weight:600}
+.cc-chip-act:hover{border-color:transparent;background:var(--ember-deep,#9a3a1a);color:#fff}
+.cc-chip-act::before{content:"+ ";font-weight:700;opacity:.9}
 .cc-card{display:flex;gap:0;background:var(--card);border:1px solid var(--line);
   border-left:4px solid var(--tc,var(--ember));border-radius:10px;overflow:hidden;margin-bottom:8px}
 .cc-card .m{flex:1;padding:10px 12px;min-width:0}
