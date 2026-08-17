@@ -293,7 +293,7 @@ function signedOutPage(ev: EventHome): string {
   return page({
     title: `Your portal · ${ev.name}`,
     register: 'onstage',
-    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body, ev.slug),
+    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body, ev.slug, undefined, 'portal'),
   });
 }
 
@@ -1090,7 +1090,7 @@ function portalPage(
   return page({
     title,
     register: 'onstage',
-    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body, ev.slug),
+    body: onstageShell(eventNav(ev.slug, '/portal', ev.lifecycle === 'open'), body, ev.slug, undefined, 'portal'),
   });
 }
 

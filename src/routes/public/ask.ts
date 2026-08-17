@@ -45,7 +45,10 @@ import type { Env } from '../../index';
 import { esc, page, onstageShell, eventNav, conferenceMasthead } from '../../lib/html';
 import { label } from '../../lib/labels';
 import { eventBySlug, sessionBySlug, agenda, type EventHome } from '../../queries/public';
-import { conciergeAct, canActHere, type SessionRef, type Undo } from '../../workflows/plan';
+import { conciergeAct, canActHere, type SessionRef, type Referent, type Undo } from '../../workflows/plan';
+import type { Surface } from '../../workflows/agent';
+import { portalView } from '../../queries/portal';
+import { helpingAt } from '../../queries/helpers';
 import { claimAsk, clientIp } from '../../lib/ratelimit';
 import { principalFromCookie } from '../../workflows/account';
 import {
@@ -194,10 +197,39 @@ function starrableSessions(ag: Awaited<ReturnType<typeof agenda>>): SessionRef[]
   const out: SessionRef[] = [];
   for (const day of ag.days) {
     for (const slot of day.slots) {
-      for (const s of slot.sessions) out.push({ id: s.id, title: s.title });
+      for (const s of slot.sessions) out.push({ id: s.id, title: s.title, kind: 'session' });
     }
   }
   return out;
+}
+
+/** The speaker's own tasks and proposals, as the reference list the portal
+ *  concierge resolves against — their tasks (to mark done / put back) and their
+ *  proposals (to withdraw). The boundary re-validates every id, so this list is
+ *  only for the model to pick from. */
+async function portalRefs(db: D1Database, eventId: string, principal: Principal): Promise<Referent[]> {
+  // Whose portal to act on: the person's own — or, if they stand on no talk here
+  // but help someone who does, the speaker they help. This is the exact
+  // substitution the portal page makes (helpingAt), so a helper's bubble resolves
+  // against the same tasks and proposals their page shows.
+  let view = await portalView(db, eventId, principal.personId);
+  if (view && view.submissions.length === 0) {
+    const helping = await helpingAt(db, eventId, principal.personId);
+    const first = helping[0];
+    if (first) {
+      const helped = await portalView(db, eventId, first.speakerPersonId);
+      if (helped) view = helped;
+    }
+  }
+  if (!view) return [];
+  const refs: Referent[] = [];
+  for (const s of view.submissions) refs.push({ id: s.id, title: s.title, kind: 'proposal' });
+  const tasks = [...view.submissions.flatMap((s) => s.tasks), ...view.tasks];
+  for (const t of tasks) {
+    if (t.status === 'cancelled') continue;
+    refs.push({ id: t.id, title: t.title, kind: 'task' });
+  }
+  return refs;
 }
 
 function noteBlock(note: Note, ev: EventHome): string {
@@ -617,16 +649,25 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
     // own. A question that falls through and reaches answerQuestion claims a second
     // — honest per-call accounting. The law-compliant efficiency win is CACHING the
     // route decision, not a brittle pre-filter; deferred, not lost.
-    if (principal && canActHere(principal, ev.id, 'event')) {
+    // The portal bubble asks as a speaker (surface 'portal', its own tasks and
+    // proposals as the reference list); everywhere else is the public event
+    // surface (star a session). The surface decides both what the person may DO
+    // and which list the planner resolves ids against.
+    const here = String(form['here'] ?? '').trim();
+    const surface: Surface = here === 'portal' ? 'portal' : 'event';
+    if (principal && canActHere(principal, ev.id, surface)) {
       const planClaim = await claimAsk(c.env.DB, asker);
       if (!planClaim.ok) return reply(planClaim.who === 'everyone' ? 'busy-today' : 'at-the-cap');
-      const ag = await agenda(c.env.DB, ev.id);
+      const refs =
+        surface === 'portal'
+          ? await portalRefs(c.env.DB, ev.id, principal)
+          : starrableSessions(await agenda(c.env.DB, ev.id));
       const act = await conciergeAct(
         { DB: c.env.DB, FILES: c.env.FILES, AI: c.env.AI },
         principal,
-        { eventId: ev.id, surface: 'event' },
+        { eventId: ev.id, surface },
         question,
-        starrableSessions(ag)
+        refs
       );
       if (act.kind !== 'not-an-action') {
         const say = act.kind === 'staged' ? [act.manifest, act.say] : [act.say];
@@ -644,7 +685,6 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
     // The talk on the page, when the reader asks about it. The bubble sent
     // which page it is on; "what's up with this talk" is read off that one row,
     // no model and nothing spent, before the program-wide path is even tried.
-    const here = String(form['here'] ?? '').trim();
     if (question && here.startsWith('s:') && isAboutThePage(question)) {
       const session = await sessionBySlug(c.env.DB, ev.id, here.slice(2));
       if (session) {
