@@ -54,7 +54,10 @@ export type Tier = 'direct' | 'confirm' | 'confirm-number';
 export function capabilitiesOf(principal: Principal, eventId: string | null, surface: Surface): Set<Capability> {
   const has = new Set<Capability>();
   const eventRole = eventId ? principal.eventRoles[eventId] : undefined;
-  const isOrganizer = principal.role === 'organizer' || eventRole === 'owner' || eventRole === 'approver' || eventRole === 'editor';
+  // A decider (owner/approver, or install-wide organizer) is the only standing
+  // that may invite or decide. An 'editor' can shape the event but not send —
+  // Codex caught editor→decide as a privilege bug; a 'viewer' reads only.
+  const isDecider = principal.role === 'organizer' || eventRole === 'owner' || eventRole === 'approver';
   const isReviewer = principal.role === 'reviewer' || eventRole === 'reviewer';
 
   // The surface decides which of the principal's standings are in play here.
@@ -70,10 +73,10 @@ export function capabilitiesOf(principal: Principal, eventId: string | null, sur
       allow('follow');
       break;
     case 'reviews':
-      if (isReviewer || isOrganizer) allow('review');
+      if (isReviewer || isDecider) allow('review');
       break;
     case 'backstage':
-      if (isOrganizer) {
+      if (isDecider) {
         allow('invite');
         allow('decide');
       }
@@ -126,6 +129,12 @@ export function commitDecision(
   return { ok: true };
 }
 
+/** An audit fingerprint of the exact executed args, NOT a tamper-evidence
+ *  control (Codex): the row's args_json is immutable — nothing in this module
+ *  updates it — so the args a human confirms are the args that run. The digest
+ *  is what the audit records, so two commits of the same action are
+ *  distinguishable, not a signature anyone verifies. If tamper resistance is
+ *  ever needed, this becomes an HMAC bound to the row. */
 async function digest(argsJson: string): Promise<string> {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(argsJson));
   return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -145,9 +154,11 @@ type ActionDef = {
   capability: Capability;
   tier: Tier;
   surfaces: Surface[];
-  /** Resolve and freeze the arguments. This is where a name becomes an id and
-   *  an ambiguous or absent target is refused (never guessed). */
-  canonicalize: (env: Env, p: Principal, eventId: string | null, raw: Record<string, unknown>) => Promise<Canonical>;
+  /** VALIDATE the concrete arguments the model resolved and FREEZE them. Never
+   *  where a name becomes an id (that semantic resolution is the model's job,
+   *  upstream) — only where a concrete id is checked against the world and a
+   *  malformed or absent one is refused so the model can repair or clarify. */
+  validateAndFreeze: (env: Env, p: Principal, eventId: string | null, raw: Record<string, unknown>) => Promise<Canonical>;
   /** Execute the stored, canonical args through the real guarded workflow. */
   execute: (env: Env, p: Principal, eventId: string | null, args: Record<string, unknown>) => Promise<string>;
 };
@@ -160,20 +171,32 @@ export const ACTIONS: Record<string, ActionDef> = {
     capability: 'star',
     tier: 'direct',
     surfaces: ['event', 'portal'],
-    async canonicalize(env, _p, eventId, raw) {
+    async validateAndFreeze(env, _p, eventId, raw) {
       const submissionId = str(raw.submissionId);
       if (!submissionId || !eventId) return { ok: false, reason: 'no-session' };
+      // Polarity is semantic and must be explicit — the server never guesses
+      // star-vs-unstar from a missing or malformed value (Codex). A missing on
+      // is a refusal, so the model asks or repairs.
+      if (typeof raw.on !== 'boolean') return { ok: false, reason: 'no-polarity' };
+      const on = raw.on;
+      // The exact predicate setStar itself enforces, so canonicalisation and
+      // execution never disagree: an accepted-or-cancelled, placed session on a
+      // published agenda. Otherwise "done" would be a lie over a no-op write.
       const row = await env.DB
-        .prepare(`SELECT title FROM submission WHERE id = ? AND event_id = ? AND state = 'accepted'`)
+        .prepare(
+          `SELECT s.title FROM submission s JOIN event e ON e.id = s.event_id
+            WHERE s.id = ? AND s.event_id = ?
+              AND s.state IN ('accepted','cancelled') AND s.starts_at IS NOT NULL
+              AND e.agenda_published = 1`
+        )
         .bind(submissionId, eventId)
         .first<{ title: string }>();
       if (!row) return { ok: false, reason: 'no-session' };
-      const on = raw.on !== false;
       return { ok: true, args: { submissionId, on }, manifest: `${on ? 'Star' : 'Unstar'} "${row.title}".` };
     },
     async execute(env, p, eventId, args) {
       if (!eventId) return 'trouble';
-      return setStar(env.DB, p.personId, eventId, str(args.submissionId), args.on !== false);
+      return setStar(env.DB, p.personId, eventId, str(args.submissionId), args.on === true);
     },
   },
 
@@ -189,7 +212,7 @@ export const ACTIONS: Record<string, ActionDef> = {
     capability: 'connect',
     tier: 'confirm',
     surfaces: ['event', 'portal'],
-    async canonicalize(env, p, eventId, raw) {
+    async validateAndFreeze(env, p, eventId, raw) {
       const recipientId = str(raw.recipientId);
       if (!recipientId || !eventId) return { ok: false, reason: 'no-person' };
       if (recipientId === p.personId) return { ok: false, reason: 'self' };
@@ -219,6 +242,7 @@ export const ACTIONS: Record<string, ActionDef> = {
  * ------------------------------------------------------------------ */
 
 const PENDING_TTL_MS = 15 * 60 * 1000; // a proposal a human ignores for 15 minutes is stale
+const MAX_OPEN_PENDING = 25; // a flood guard: one person's open proposals are bounded
 
 export type ProposeResult =
   | { kind: 'done'; outcome: string } // direct-tier, executed inline
@@ -242,8 +266,19 @@ export async function proposeAction(
     return { kind: 'refused', reason: 'not-allowed' };
   }
 
-  const c = await def.canonicalize(env, principal, where.eventId, raw);
+  const c = await def.validateAndFreeze(env, principal, where.eventId, raw);
   if (!c.ok) return { kind: 'refused', reason: c.reason };
+
+  // A prompt-injected agent must not be able to flood the ledger with pending
+  // manifests (each holds a name/id). One person may hold only so many open
+  // proposals at once; over that, propose refuses until they resolve some.
+  if (def.tier !== 'direct') {
+    const open = await env.DB
+      .prepare(`SELECT COUNT(*) AS n FROM pending_action WHERE person_id = ? AND status = 'open'`)
+      .bind(principal.personId)
+      .first<{ n: number }>();
+    if ((open?.n ?? 0) >= MAX_OPEN_PENDING) return { kind: 'refused', reason: 'too-many-pending' };
+  }
 
   if (def.tier === 'direct') {
     const outcome = await def.execute(env, principal, where.eventId, c.args);
@@ -327,7 +362,14 @@ export async function commitPendingAction(
   if (!decision.ok) return { ok: false, reason: decision.reason };
 
   // Flip to committed once. The guard makes a concurrent double-commit lose:
-  // only the update that finds status='open' changes a row.
+  // only the update that finds status='open' changes a row. This is AT-MOST-ONCE
+  // by design (Codex): the status flips before execute, so a Worker death
+  // between the two leaves the action un-run and every retry reads 'gone'. That
+  // is the SAFE failure direction for a boundary that can send 610 letters —
+  // under-execute, never double-execute — and the human simply sees no result
+  // and re-proposes. Exactly-once (execute+status+audit in one transaction, or
+  // a durable outbox with executing/succeeded/failed states) is the documented
+  // next step, not v1.
   try {
     await checkedBatch(
       env.DB,
