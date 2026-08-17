@@ -239,6 +239,21 @@ Weighted across judged rubric items. The kit does not score Fireside's own
 additions beyond the brief — the role-aware concierge and the attendee layer
 — which are held to the same bar by their own adversarial walkthroughs.
 
+### Re-running the eval
+
+Point the kit at the live site and it runs unattended — the demo world is
+pre-seeded, so there is no setup:
+
+- Set the eval config's target `url` to **`https://onfireside.com`**.
+- Sign-in is the published organizer above — `naomi@example.org` /
+  `read-them-before-they-go`. The other roles have published passwords too (the
+  table under *Try it now*), so a scenario can sign in directly rather than sign
+  up. A fresh persona can also sign up cold at `/sign-up`: accounts are created
+  immediately with a password — no email verification — so nothing blocks on an
+  inbox.
+- Run the kit (`pnpm run eval`). The areas chain in order against the same
+  deployment, the way the kit intends.
+
 ## Colophon
 
 The words on every screen were written, then hardened, with
