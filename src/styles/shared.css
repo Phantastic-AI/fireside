@@ -166,7 +166,7 @@ main{flex:1 0 auto;padding-bottom:64px}
 label.f{display:block;margin-bottom:22px}
 .f-lab{display:flex;align-items:baseline;gap:10px;font-size:14.5px;font-weight:620;margin-bottom:6px}
 .f-lab .opt{font-weight:400;color:var(--muted);font-size:13px}
-input[type=text],input[type=email],input[type=password],input[type=tel],input[type=url],input[type=search],textarea,select{
+input[type=text],input[type=email],input[type=password],input[type=tel],input[type=url],input[type=search],input[type=number],input[type=date],textarea,select{
   width:100%;font:inherit;font-size:15.5px;color:var(--ink);background:var(--card);
   border:1px solid var(--field-line);border-radius:var(--r-sm);padding:10px 12px;
   transition:border-color .12s,box-shadow .12s}
@@ -354,7 +354,7 @@ table.t tbody tr:hover{background:#FCFAF6}
   .fchip{padding:9px 14px;font-size:14px;min-height:40px}
 
   /* --- forms: 16px stops iOS zooming on focus --- */
-  input[type=text],input[type=email],input[type=password],input[type=tel],input[type=url],input[type=search],textarea,select{font-size:16px;padding:12px 13px}
+  input[type=text],input[type=email],input[type=password],input[type=tel],input[type=url],input[type=search],input[type=number],input[type=date],textarea,select{font-size:16px;padding:12px 13px}
   .ghosthint{display:none!important}
   .radio{padding:13px;min-height:48px;align-items:center}
   .btn-lg{width:100%}
