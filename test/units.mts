@@ -15,6 +15,7 @@ import { safeNext } from '../src/lib/url';
 import { reminderBody } from '../src/workflows/files';
 import { ticketIdFromRecipient } from '../src/workflows/reply-email';
 import { commitDecision, capabilitiesOf, type Pending } from '../src/workflows/agent';
+import { catalogFor, parsePlan, canActHere, conciergeAct } from '../src/workflows/plan';
 import type { Principal } from '../src/workflows/account';
 
 const scale = (key: string, weight: 1 | 2 | 3 = 2): ScorecardKey => ({
@@ -248,6 +249,83 @@ test('capabilitiesOf: an attendee on the backstage surface can do nothing', () =
 
 test('capabilitiesOf: the global (pre-conference) surface exposes no writes in v1', () => {
   assert.equal(capabilitiesOf(prin({ role: 'organizer' }), null, 'global').size, 0);
+});
+
+// --- the concierge planner: catalog scoping + the parse contract -------------
+// The planner is untrusted and supple; these pin the DETERMINISTIC edges of it —
+// it is never offered an action the principal cannot take, and a garbled or
+// hostile reply degrades to "just answer the question", never to a silent act.
+test('catalogFor: an action appears only when its capability is held', () => {
+  assert.equal(catalogFor(new Set(['star'])).some((a) => a.type === 'star'), true);
+  assert.equal(catalogFor(new Set()).length, 0);
+  // A capability with no action wired yet contributes nothing — no phantom acts.
+  assert.equal(catalogFor(new Set(['review'])).some((a) => a.type === 'star'), false);
+});
+
+const starCatalog = catalogFor(new Set(['star']));
+
+test('parsePlan: a plain question routes to the read-only path', () => {
+  assert.deepEqual(parsePlan('{"route":"question"}', starCatalog), { route: 'question' });
+});
+
+test('parsePlan: a well-formed act on an offered action passes its args through', () => {
+  const p = parsePlan('{"route":"act","action":"star","args":{"submissionId":"sub-9","on":true},"say":"Starring it."}', starCatalog);
+  assert.deepEqual(p, { route: 'act', action: 'star', args: { submissionId: 'sub-9', on: true }, say: 'Starring it.' });
+});
+
+test('parsePlan: an act naming an action we never offered degrades to a question', () => {
+  // Not a refusal of a hidden power — we simply never claimed to have it.
+  const p = parsePlan('{"route":"act","action":"send_outbox","args":{"count":610},"say":"Sending."}', starCatalog);
+  assert.deepEqual(p, { route: 'question' });
+});
+
+test('parsePlan: a clarify needs a real question back, or it is just a question', () => {
+  assert.deepEqual(parsePlan('{"route":"clarify","say":"Which keynote?"}', starCatalog), {
+    route: 'clarify',
+    say: 'Which keynote?',
+  });
+  assert.deepEqual(parsePlan('{"route":"clarify","say":""}', starCatalog), { route: 'question' });
+});
+
+test('parsePlan: garbage or no JSON at all is a question, never an act', () => {
+  assert.deepEqual(parsePlan('I think you should star it!', starCatalog), { route: 'question' });
+  assert.deepEqual(parsePlan('', starCatalog), { route: 'question' });
+  assert.deepEqual(parsePlan('{not valid json', starCatalog), { route: 'question' });
+});
+
+test('parsePlan: JSON wrapped in prose is still read (small models do this)', () => {
+  const p = parsePlan('Sure! {"route":"act","action":"star","args":{"submissionId":"s1","on":false},"say":"Unstarring."} ok?', starCatalog);
+  assert.deepEqual(p, { route: 'act', action: 'star', args: { submissionId: 's1', on: false }, say: 'Unstarring.' });
+});
+
+// --- conciergeAct routing: failure is NOT a silent question (Codex #4) --------
+// A stub model lets us pin the routing without a live call. capabilitiesOf grants
+// every principal 'star' on the event surface, so the planner is always reached.
+const stubAi = (reply: string) => ({ run: async () => ({ response: reply }) }) as unknown as Parameters<typeof conciergeAct>[0]['AI'];
+const actEnv = (reply: string) => ({ DB: {} as any, FILES: {} as any, AI: stubAi(reply) });
+const where = { eventId: 'ev-1', surface: 'event' as const };
+
+test('canActHere: an attendee can act on the event surface, no one can on global', () => {
+  assert.equal(canActHere(prin(), 'ev-1', 'event'), true);
+  assert.equal(canActHere(prin({ role: 'organizer' }), null, 'global'), false);
+});
+
+test('conciergeAct: an empty model reply is unavailable, never a silent question', async () => {
+  // The Codex #4 fix: a planner that could not answer must not be treated as
+  // "this was a question" and quietly answered — we do not know that.
+  const out = await conciergeAct(actEnv(''), prin(), where, 'unstar the keynote', []);
+  assert.equal(out.kind, 'unavailable');
+});
+
+test('conciergeAct: a confident question falls through to the read path', async () => {
+  const out = await conciergeAct(actEnv('{"route":"question"}'), prin(), where, 'where is the venue?', []);
+  assert.equal(out.kind, 'not-an-action');
+});
+
+test('conciergeAct: an ambiguous action asks back rather than guessing', async () => {
+  const out = await conciergeAct(actEnv('{"route":"clarify","say":"Which keynote?"}'), prin(), where, 'star the keynote', []);
+  assert.equal(out.kind, 'clarify');
+  if (out.kind === 'clarify') assert.match(out.say, /Which keynote/);
 });
 
 // --- label: the register wall (throws rather than showing the wrong voice) ---

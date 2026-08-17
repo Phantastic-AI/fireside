@@ -44,7 +44,8 @@ import type { Hono } from 'hono';
 import type { Env } from '../../index';
 import { esc, page, onstageShell, eventNav, conferenceMasthead } from '../../lib/html';
 import { label } from '../../lib/labels';
-import { eventBySlug, sessionBySlug, type EventHome } from '../../queries/public';
+import { eventBySlug, sessionBySlug, agenda, type EventHome } from '../../queries/public';
+import { conciergeAct, canActHere, type SessionRef, type Undo } from '../../workflows/plan';
 import { claimAsk, clientIp } from '../../lib/ratelimit';
 import { principalFromCookie } from '../../workflows/account';
 import {
@@ -161,6 +162,42 @@ function answerBlock(result: AskResult, ev: EventHome): string {
     `<p class="sub" style="font-size:12.8px;margin-top:12px">${esc(provenance)}</p>` +
     '</div>'
   );
+}
+
+/** What the reader sees after the concierge DOES something (or asks them to
+ *  clarify one). No provenance line — a provenance sentence belongs to a
+ *  read off the program, not to an act the person just asked for. `extra` is
+ *  an optional trailing control, e.g. the one-tap undo form. */
+function actionBlock(say: string[], doors: Door[], extra = ''): string {
+  return '<div class="cc-fs" data-ask-answer>' + sentences(say) + doorRow(doors) + extra + '</div>';
+}
+
+/** The deterministic, model-free undo for a direct action: one button that posts
+ *  the reverse straight to the guarded star endpoint. Not a chat round-trip, so
+ *  a wrong write is undone without any chance of re-injection. */
+function undoForm(slug: string, undo: Undo): string {
+  return (
+    `<form method="post" action="/${esc(encodeURIComponent(slug))}/my-schedule/star" style="margin-top:12px">` +
+    `<input type="hidden" name="session" value="${esc(undo.submissionId)}">` +
+    `<input type="hidden" name="on" value="${undo.on ? '1' : '0'}">` +
+    `<button class="btn" type="submit">${esc(undo.label)}</button>` +
+    '</form>'
+  );
+}
+
+/** The published, placed sessions as {id,title} for the planner to resolve
+ *  names against — never a name-match on the server, only ids the model picks
+ *  from this list. Empty until the agenda is published, which is exactly when
+ *  a star could not land anyway. */
+function starrableSessions(ag: Awaited<ReturnType<typeof agenda>>): SessionRef[] {
+  if (!ag || !ag.published) return [];
+  const out: SessionRef[] = [];
+  for (const day of ag.days) {
+    for (const slot of day.slots) {
+      for (const s of slot.sessions) out.push({ id: s.id, title: s.title });
+    }
+  }
+  return out;
 }
 
 function noteBlock(note: Note, ev: EventHome): string {
@@ -546,6 +583,43 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
 
     const curated = await curatedAnswers(c.env.DB, ev.id);
     const scope = scopeOf(ev.id, principal);
+
+    // ACT FIRST — semantics before determinism (Operator's Law; Codex #1). For a
+    // principal who can DO something here, the planner decides act-vs-question
+    // BEFORE any deterministic shortcut (the this-talk read, a curated hit) can
+    // answer, so a shortcut can never silently eat an action like "star this".
+    // Only a real action / clarify / refusal / transient-miss is handled here; a
+    // confident QUESTION falls straight through to the read path below, unchanged.
+    // An anon or a read-only visitor is never here (canActHere is false) and pays
+    // for no planner call.
+    //
+    // Budget (Codex #6): the planner is a model call, so it claims one unit of its
+    // own. A question that falls through and reaches answerQuestion claims a second
+    // — honest per-call accounting. The law-compliant efficiency win is CACHING the
+    // route decision, not a brittle pre-filter; deferred, not lost.
+    if (principal && canActHere(principal, ev.id, 'event')) {
+      const planClaim = await claimAsk(c.env.DB, asker);
+      if (!planClaim.ok) return reply(planClaim.who === 'everyone' ? 'busy-today' : 'at-the-cap');
+      const ag = await agenda(c.env.DB, ev.id);
+      const act = await conciergeAct(
+        { DB: c.env.DB, FILES: c.env.FILES, AI: c.env.AI },
+        principal,
+        { eventId: ev.id, surface: 'event' },
+        question,
+        starrableSessions(ag)
+      );
+      if (act.kind !== 'not-an-action') {
+        const say = act.kind === 'staged' ? [act.manifest, act.say] : [act.say];
+        // A clarify (a question back) and a staged confirm keep the reader here;
+        // everything else offers the agenda/speakers to walk to.
+        const doors = act.kind === 'clarify' || act.kind === 'staged' ? [] : plainDoors(ev, ev.agendaPublished);
+        const extra = act.kind === 'acted' && act.undo ? undoForm(ev.slug, act.undo) : '';
+        const block = actionBlock(say, doors, extra);
+        c.header('cache-control', 'no-store');
+        if (inPlace) return c.html(block);
+        return await wholePage(curated, youBubble(question) + block);
+      }
+    }
 
     // The talk on the page, when the reader asks about it. The bubble sent
     // which page it is on; "what's up with this talk" is read off that one row,

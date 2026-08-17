@@ -147,7 +147,12 @@ async function digest(argsJson: string): Promise<string> {
 type Env = { DB: D1Database; FILES: R2Bucket };
 
 type Canonical =
-  | { ok: true; args: Record<string, unknown>; manifest: string; count?: number }
+  // `subject` is the server's OWN name for what was acted on (the session's real
+  // title, the person's real name), read from the database during validation.
+  // The caller builds its confirmation from THIS, never from the model's
+  // sentence (Codex): if an injected title steered the model to a different
+  // valid target, the human still sees the true name of what actually happened.
+  | { ok: true; args: Record<string, unknown>; manifest: string; subject: string; count?: number }
   | { ok: false; reason: string };
 
 type ActionDef = {
@@ -192,7 +197,12 @@ export const ACTIONS: Record<string, ActionDef> = {
         .bind(submissionId, eventId)
         .first<{ title: string }>();
       if (!row) return { ok: false, reason: 'no-session' };
-      return { ok: true, args: { submissionId, on }, manifest: `${on ? 'Star' : 'Unstar'} "${row.title}".` };
+      return {
+        ok: true,
+        args: { submissionId, on },
+        subject: row.title,
+        manifest: `${on ? 'Star' : 'Unstar'} "${row.title}".`,
+      };
     },
     async execute(env, p, eventId, args) {
       if (!eventId) return 'trouble';
@@ -228,7 +238,7 @@ export const ACTIONS: Record<string, ActionDef> = {
         .bind(eventId, recipientId)
         .first<{ name: string }>();
       if (!row) return { ok: false, reason: 'nobody' };
-      return { ok: true, args: { recipientId }, manifest: `Send a connection request to ${row.name}?` };
+      return { ok: true, args: { recipientId }, subject: row.name, manifest: `Send a connection request to ${row.name}?` };
     },
     async execute(env, p, eventId, args) {
       if (!eventId) return 'trouble';
@@ -245,7 +255,11 @@ const PENDING_TTL_MS = 15 * 60 * 1000; // a proposal a human ignores for 15 minu
 const MAX_OPEN_PENDING = 25; // a flood guard: one person's open proposals are bounded
 
 export type ProposeResult =
-  | { kind: 'done'; outcome: string } // direct-tier, executed inline
+  // Direct-tier ran inline. 'executed' means the PATH ran — `outcome` is the
+  // workflow's own word ('done'/'moved'/'trouble' for social acts), which says
+  // whether it actually succeeded. The caller must read the outcome, not assume.
+  // `subject` is the server's true name for the target, for an honest sentence.
+  | { kind: 'executed'; outcome: string; subject: string }
   | { kind: 'pending'; id: string; manifest: string; tier: 'confirm' | 'confirm-number'; count: number | null }
   | { kind: 'refused'; reason: string };
 
@@ -260,7 +274,13 @@ export async function proposeAction(
   const def = ACTIONS[actionType];
   if (!def) return { kind: 'refused', reason: 'unknown-action' };
   // Authorization first, and it must hold for this surface (the dispatcher
-  // rejects, never merely omits from a list).
+  // rejects, never merely omits from a list). Note (Codex P3): this checks the
+  // request-time `principal`, not a fresh DB read. For a direct, self-scoped
+  // act like star — which every authenticated principal holds — that is safe.
+  // The confirm-tier COMMIT is where live re-authorization against a re-loaded
+  // principal will matter, once role-revocable actions (invite/decide) ship;
+  // commitPendingAction is the seam for that reload, and it is a v1-scoped gap,
+  // not a v1-star exposure.
   if (!def.surfaces.includes(where.surface)) return { kind: 'refused', reason: 'not-here' };
   if (!capabilitiesOf(principal, where.eventId, where.surface).has(def.capability)) {
     return { kind: 'refused', reason: 'not-allowed' };
@@ -283,7 +303,7 @@ export async function proposeAction(
   if (def.tier === 'direct') {
     const outcome = await def.execute(env, principal, where.eventId, c.args);
     await audit(env, principal.personId, where.eventId, actionType, await digest(JSON.stringify(c.args)), outcome, nowMs);
-    return { kind: 'done', outcome };
+    return { kind: 'executed', outcome, subject: c.subject };
   }
 
   const argsJson = JSON.stringify(c.args);
