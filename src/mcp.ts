@@ -28,7 +28,7 @@
 //     refusals in the same words. A proposal sent from here is not a lesser
 //     proposal; it is the same row, written the same way.
 //   * The signed tools (whoami, pile_summary, my_owed, review_queue,
-//     review_proposal, submit_review, star_session, mark_task_done,
+//     review_proposal, submit_review, step_aside, star_session, mark_task_done,
 //     propose_withdraw, propose_invite, propose_decision, commit_pending) hold
 //     no authorization logic
 //     of their own either: pile() and requireScope (queries/admin.ts),
@@ -105,7 +105,7 @@ import {
 } from './workflows/submit';
 import { principalFromPersonId, type Principal } from './workflows/account';
 import { proposeAction, commitPendingAction } from './workflows/agent';
-import { submitOneReview } from './workflows/review';
+import { submitOneReview, stepAside } from './workflows/review';
 // NOTES is the reviewer form's own outcome sentences (routes/admin/reviews.ts).
 // submit_review reuses them rather than restating, so "you already sent this
 // in" cannot say two different things in two places.
@@ -1337,6 +1337,46 @@ const SIGNED_TOOLS: Record<string, Tool> = {
     },
   },
 
+  // The reviewer's other act (beyond submit_review): recuse from an assigned
+  // proposal. Immediate like submit_review — self-scoped and internal (it drops
+  // your own marks, tells no one), so it needs no confirm surface. Same blind
+  // scoping: queuePosition only resolves the caller's own assigned rows.
+  step_aside: {
+    title: 'Step aside from a proposal you were assigned',
+    description:
+      'Recuse yourself from one assigned proposal — a conflict, or you know the speaker. It comes off ' +
+      'your reading list for this round and any marks you staged on it are dropped. Final for this round. ' +
+      'Give the proposal id as review_queue or review_proposal gives it. Refuses when it is not on your ' +
+      'list or has already been decided.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: "The proposal's id, as review_queue or review_proposal gives it." },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    async run(env, args, _nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const id = textArg(args, 'id');
+      if (!id) return refuse('Name the proposal — its id, as review_queue gives it.');
+      const slug = await eventSlugOfSubmission(env.DB, id);
+      if (!slug) return refuse(NO_SUCH_PROPOSAL);
+      const found = await reviewEventOr(env, principal, slug);
+      if (!found.ok) return refuse(found.says);
+      const ev = found.ev;
+      const spot = await queuePosition(env.DB, principal, ev, id);
+      if (!spot) return refuse(NOT_ASSIGNED);
+      const outcome = await stepAside(env.DB, principal, ev.id, ev.round, spot.submissionId);
+      if (outcome !== 'stepped') return refuse(STEP_SAID[outcome] ?? 'That did not go through. Try once more.');
+      return answered({
+        id: spot.submissionId,
+        stepped_aside: true,
+        says: 'You have stepped aside from that one — it is off your list for this round, and any marks you staged on it were dropped.',
+      });
+    },
+  },
+
   // The first agentic WRITE over MCP (D-037): an external agent, acting AS the
   // person who minted its token, adds a session to that person's own schedule
   // or takes it off. It goes through the very same trusted boundary the
@@ -1684,6 +1724,13 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       );
     },
   },
+};
+
+const STEP_SAID: Record<string, string> = {
+  already: 'That one was already finished this round, so it stays as it is.',
+  gone: 'That one has been decided since — there is nothing to step aside from.',
+  moved: 'It was finished while you were looking. Nothing changed.',
+  trouble: 'That did not go through. Try once more.',
 };
 
 const TASK_REFUSAL: Record<string, string> = {
