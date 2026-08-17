@@ -720,7 +720,11 @@ function cfpPage(o: {
 
 /** The call, not open. Three shapes: it has not opened at all; it is between
  *  waves and the next one is coming; or it is done. */
-function callShutPage(ev: EventHome, opensLater: boolean): string {
+function callShutPage(
+  ev: EventHome,
+  opensLater: boolean,
+  kept?: { title: string; abstract: string }
+): string {
   const now = Date.now();
   const nextW = nextWindow(ev.windows, now);
   // The date the door actually shut: the latest close already in the past,
@@ -762,11 +766,29 @@ function callShutPage(ev: EventHome, opensLater: boolean): string {
         : `<a class="btn btn-primary" href="/${esc(ev.slug)}/speakers">See who is speaking →</a>`) +
       '</div>';
 
+  // T609 — the words that arrived with a submit the close beat: given back on
+  // screen, selectable, with the truth about where they stand. Losing typed
+  // work to a closing date is not an outcome this page is allowed to have.
+  const keptWords =
+    kept && (kept.title.trim() !== '' || kept.abstract.trim() !== '')
+      ? '<div class="card card-pad" style="margin-top:18px">' +
+        '<h2 class="serif" style="font-size:19px;font-weight:600">Your words are safe</h2>' +
+        '<p class="hint" style="margin:6px 0 12px">The call closed before this send landed, so ' +
+        'nothing was submitted — but nothing was lost. Copy them somewhere safe; this browser ' +
+        'keeps the draft too, and it will be waiting if the call opens again.</p>' +
+        (kept.title.trim() ? `<p style="font-weight:620">${esc(kept.title)}</p>` : '') +
+        (kept.abstract.trim()
+          ? `<div class="abstract" style="margin-top:8px;white-space:pre-wrap">${esc(kept.abstract)}</div>`
+          : '') +
+        '</div>'
+      : '';
+
   const body =
     '<div class="wrap" style="padding-top:48px">' +
     '<div class="kicker">Call for speakers</div>' +
     `<h1 class="display" style="margin:12px 0 22px">${esc(ev.name)}</h1>` +
     card +
+    keptWords +
     '</div>';
 
   return page({
@@ -912,12 +934,18 @@ export function registerCfp(app: Hono<{ Bindings: Env }>): void {
     const ev = await eventBySlug(c.env.DB, c.req.param('event'));
     if (!ev) return c.notFound();
     const now = Date.now();
-    if (!callIsOpen(ev, now)) {
-      // Nothing was written, and the screen says why in its own words.
-      return c.html(callShutPage(ev, notOpenedYet(ev, now)), 422);
-    }
-
     const body = await c.req.parseBody();
+    if (!callIsOpen(ev, now)) {
+      // Nothing was written — but nothing typed is lost either (T609): the
+      // page that says the call closed carries every word back, on screen,
+      // where it can be copied. The browser's own draft keeps it too.
+      const keptTitle = typeof body['title'] === 'string' ? body['title'] : '';
+      const keptAbstract = typeof body['abstract'] === 'string' ? body['abstract'] : '';
+      return c.html(
+        callShutPage(ev, notOpenedYet(ev, now), { title: keptTitle, abstract: keptAbstract }),
+        422
+      );
+    }
     const text = (k: string): string => {
       const v = body[k];
       return typeof v === 'string' ? v : '';

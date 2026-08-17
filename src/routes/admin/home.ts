@@ -452,7 +452,12 @@ function doorCard(
   );
 }
 
-function programPage(principal: Principal, ev: AdminEvent, counts: PileCounts): string {
+function programPage(
+  principal: Principal,
+  ev: AdminEvent,
+  counts: PileCounts,
+  speakerNotes: { text: string; asked_at: number }[] = []
+): string {
   const slug = encodeURIComponent(ev.slug);
   const decideByLine = ev.decideBy
     ? `<p class="sub" style="margin-top:6px">Decide by ${esc(dayMonth(ev.decideBy))}.</p>`
@@ -511,6 +516,19 @@ function programPage(principal: Principal, ev: AdminEvent, counts: PileCounts): 
     `${esc(callStateText(ev))}${ev.tzLabel ? ` · ${esc(ev.tzLabel)}` : ''}</p>` +
     '</div>' +
     attnBand(ev, counts) +
+    (speakerNotes.length > 0
+      ? '<div class="sec"><div class="card card-pad">' +
+        '<h3 class="serif" style="font-size:18px;font-weight:600">From the speakers</h3>' +
+        '<p class="sub" style="margin:2px 0 8px">Change requests sent from settled talks.</p>' +
+        speakerNotes
+          .map(
+            (n) =>
+              `<p style="margin:8px 0 0;border-top:1px solid var(--line-soft);padding-top:8px">${esc(n.text)} ` +
+              `<span class="sub">· ${esc(dayMonthAt(n.asked_at, ev.timezone))}</span></p>`
+          )
+          .join('') +
+        '</div></div>'
+      : '') +
     `<div class="sec"><div class="card card-pad">${countsBand(counts)}${decideByLine}</div></div>` +
     `<div class="sec" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:16px">${doors}</div>`;
 
@@ -618,7 +636,16 @@ export function registerAdminHome(app: Hono<{ Bindings: Env }>): void {
       // and for the 'reviewer' standing it is the only room there is.
       if (LANDS_IN_REVIEWS.has(ev.standing)) return c.redirect(`/admin/${ev.slug}/reviews`);
       const { counts } = await pile(c.env.DB, principal, ev.id, 'all', { limit: 0 });
-      return c.html(programPage(principal, ev, counts));
+      // T609 — notes speakers sent from their settled talks, newest first.
+      const notesRes = await c.env.DB
+        .prepare(
+          `SELECT text, asked_at FROM question
+            WHERE event_id = ?1 AND scope = 'speaker' AND answered = 0
+            ORDER BY asked_at DESC LIMIT 5`
+        )
+        .bind(ev.id)
+        .all<{ text: string; asked_at: number }>();
+      return c.html(programPage(principal, ev, counts, notesRes.results ?? []));
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(), 403);
       throw e;

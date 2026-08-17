@@ -52,6 +52,7 @@ import {
   type CoRole,
 } from '../../workflows/submit';
 import { editProposal, trueStanding } from '../../workflows/edit';
+import { newId } from '../../lib/db';
 // The island is hand-written browser JS, deliberately outside the TypeScript
 // program (tsconfig has no allowJs, and types.d.ts declares only '*.css').
 // @ts-ignore -- plain-JS island; the call's form and this talk run the same one.
@@ -438,7 +439,13 @@ function signedOutPage(ev: EventHome): string {
 }
 
 /** A refusal with a reason and a door. Never a bare no. */
-function shutPage(ev: EventHome, head: string, why: string, door = 'See where it stands →'): string {
+function shutPage(
+  ev: EventHome,
+  head: string,
+  why: string,
+  door = 'See where it stands →',
+  extra = ''
+): string {
   const body =
     '<div class="wrap" style="padding-top:44px">' +
     `<h1 class="display">${esc(ev.name)}</h1>` +
@@ -448,7 +455,9 @@ function shutPage(ev: EventHome, head: string, why: string, door = 'See where it
     '<div class="btnrow">' +
     `<a class="btn btn-primary btn-lg" href="/${esc(ev.slug)}/portal">${esc(door)}</a>` +
     `<a class="btn btn-lg" href="/${esc(ev.slug)}/agenda">See the program</a>` +
-    '</div></div></div>';
+    '</div>' +
+    extra +
+    '</div></div>';
 
   return page({
     title: `Your proposal · ${ev.name}`,
@@ -472,20 +481,49 @@ function callShutPage(ev: EventHome): string {
 
 /** Past changing, in the speaker's own vocabulary. Every state named here has
  *  already been told — the read is told-gated — so naming it leaks nothing. */
-function settledPage(ev: EventHome, s: PortalSubmission): string {
+/** T609 — the door a settled talk still has: not the words (those are the
+ *  committee's now) but a note straight to the organizers asking for a
+ *  change. It lands on their conference dashboard. */
+function changeRequestForm(ev: EventHome, s: PortalSubmission, sent: boolean): string {
+  if (sent) {
+    return (
+      '<div class="card card-pad" style="margin-top:16px"><p><b>Your note is with the ' +
+      'organizers.</b></p><p class="hint" style="margin-top:4px">It shows on their desk with ' +
+      'this talk named. Changes to a settled talk are theirs to make.</p></div>'
+    );
+  }
+  return (
+    '<div class="card card-pad" style="margin-top:16px">' +
+    '<h2 class="serif" style="font-size:18px;font-weight:600">Need something changed?</h2>' +
+    '<p class="hint" style="margin:6px 0 10px">A settled talk&#39;s words are changed by the ' +
+    'organizers, so ask them here — a new co-speaker, a corrected title, anything.</p>' +
+    `<form method="post" action="/${esc(ev.slug)}/cfp/edit/${esc(s.id)}/note">` +
+    '<textarea name="note" rows="3" maxlength="500" style="width:100%" ' +
+    'placeholder="What needs changing, in a sentence or two"></textarea>' +
+    '<div class="btnrow" style="margin-top:10px">' +
+    '<button class="btn btn-primary" type="submit">Send it to the organizers</button></div>' +
+    '</form></div>'
+  );
+}
+
+function settledPage(ev: EventHome, s: PortalSubmission, noteSent = false): string {
   switch (s.state) {
     case 'accepted':
       return shutPage(
         ev,
         'You are on the program.',
         'A talk keeps the words it was accepted with, so this talk is settled. Everything still to ' +
-          'come — the time, the room, what the organizers need from you — is in your portal.'
+          'come — the time, the room, what the organizers need from you — is in your portal.',
+        undefined,
+        changeRequestForm(ev, s, noteSent)
       );
     case 'waitlisted':
       return shutPage(
         ev,
         `${label('submission.waitlisted', 'onstage')}.`,
-        'The committee is holding this talk exactly as it is, so the words stay put while they decide.'
+        'The committee is holding this talk exactly as it is, so the words stay put while they decide.',
+        undefined,
+        changeRequestForm(ev, s, noteSent)
       );
     case 'rejected':
       return shutPage(
@@ -759,7 +797,9 @@ export function registerEditProposal(app: Hono<{ Bindings: Env }>): void {
     if (standing.kind === 'signed-out') return c.html(signedOutPage(ev), 401);
     if (standing.kind === 'not-yours') return c.html(notYoursPage(ev), 404);
     if (standing.kind === 'call-shut') return c.html(callShutPage(ev), 403);
-    if (standing.kind === 'settled') return c.html(settledPage(ev, standing.s), 403);
+    if (standing.kind === 'settled') {
+      return c.html(settledPage(ev, standing.s, c.req.query('sent') === '1'), 403);
+    }
     if (standing.kind === 'in-hand') return c.html(inHandPage(ev), 403);
 
     const [tracks, questions, people] = await Promise.all([
@@ -776,6 +816,45 @@ export function registerEditProposal(app: Hono<{ Bindings: Env }>): void {
     return c.html(
       editPage({ ev, s: standing.s, tracks, questions, values: valuesOf(standing.s, co) })
     );
+  });
+
+  // T609 — the settled talk's one write: a change request, straight to the
+  // organizers' desk. The words themselves stay the committee's.
+  app.post('/:event/cfp/edit/:submissionId/note', async (c) => {
+    const ev = await eventBySlug(c.env.DB, c.req.param('event'));
+    if (!ev) return c.notFound();
+    const standing = await standingOf(
+      c.env,
+      c.req.header('cookie'),
+      ev,
+      c.req.param('submissionId'),
+      Date.now()
+    );
+    c.header('cache-control', 'private, no-store');
+    if (standing.kind === 'signed-out') return c.html(signedOutPage(ev), 401);
+    if (standing.kind === 'not-yours') return c.html(notYoursPage(ev), 404);
+    if (standing.kind !== 'settled') {
+      // A talk still changeable changes itself; the note door is the settled
+      // talk's alone.
+      return c.redirect(`/${encodeURIComponent(ev.slug)}/cfp/edit/${encodeURIComponent(c.req.param('submissionId'))}`, 303);
+    }
+    const form = await c.req.parseBody();
+    const note = (typeof form['note'] === 'string' ? form['note'] : '').trim().slice(0, 500);
+    const back = `/${encodeURIComponent(ev.slug)}/cfp/edit/${encodeURIComponent(standing.s.id)}`;
+    if (!note) return c.redirect(back, 303);
+    await c.env.DB
+      .prepare(
+        `INSERT INTO question (id, event_id, scope, text, answered, asked_at)
+         VALUES (?, ?, 'speaker', ?, 0, ?)`
+      )
+      .bind(
+        newId('qq'),
+        ev.id,
+        `Change request on “${standing.s.title}”: ${note}`,
+        Date.now()
+      )
+      .run();
+    return c.redirect(`${back}?sent=1`, 303);
   });
 
   app.post('/:event/cfp/edit/:submissionId', async (c) => {
