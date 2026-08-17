@@ -33,7 +33,15 @@ const INSERT_ORDER: (keyof SeedData)[] = [
   // their person/event parents. Seeded empty; present here only to be cleared.
   'roster_entry', 'crm_note', 'crm_tag', 'crm_segment', 'crm_card', 'crm_card_event',
 ];
-const WIPE_EXTRA = ['embedding', 'matrix_cache', 'neighbor', 'theme_cache', 'revision', 'ai_budget', '_guard'];
+// Leaf tables wiped but never seeded — they reference the core tables, so they
+// must be cleared BEFORE person/event or their foreign keys block the delete.
+// pending_action + agent_audit (schema 0015) reference person/event; a star or
+// invite proposal left one behind, and the rebuild hit FOREIGN KEY constraint
+// failed until they joined this list.
+const WIPE_EXTRA = [
+  'pending_action', 'agent_audit',
+  'embedding', 'matrix_cache', 'neighbor', 'theme_cache', 'revision', 'ai_budget', '_guard',
+];
 
 /* ------------------------------------------------------------------ *
  * CNT-04/CNT-13/CNT-14 — the demo world's decks are real files, not just a
