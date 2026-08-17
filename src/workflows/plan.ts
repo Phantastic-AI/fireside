@@ -133,7 +133,7 @@ function extractJson(text: string): string | null {
 
 const SYSTEM = [
   'You are the concierge for a conference. The person talking to you can either ASK a question about the program or tell you to DO something for them.',
-  'You are given the ACTIONS you are allowed to take and the SESSIONS on the agenda. Decide what the person wants and reply with ONE JSON object, nothing else.',
+  'You are given the ACTIONS you are allowed to take and one or more reference lists to pick concrete ids from — SESSIONS on the agenda, YOUR TASKS (deliverables owed), and YOUR PROPOSALS (talks submitted), whichever are present. Decide what the person wants and reply with ONE JSON object, nothing else.',
   '',
   'The JSON is exactly one of:',
   '  {"route":"question"}  — they are asking something, not telling you to do anything. Someone else answers; you just route it.',
