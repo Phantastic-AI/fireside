@@ -883,6 +883,13 @@ function criterionCard(k: ScorecardKey, i: number, last: number, silent: boolean
       optional: true,
       hint: `One per line. Only used by ${CRITERION_KIND_WORD.select.toLowerCase()}.`,
     }) +
+    field({
+      name: `${n}:max`,
+      labelText: 'Out of',
+      value: String(k.max),
+      optional: true,
+      hint: 'The top mark for a number line, 2 to 10. Only used by a mark out of N.',
+    }) +
     `<label class="f" style="margin-bottom:0"><span class="f-lab">How much it counts` +
     '<span class="opt">a heavy line counts three times as much as a light one</span></span>' +
     `${weightSelect(`${n}:weight`, k.weight)}</label>` +
@@ -911,6 +918,14 @@ function addCriterionCard(): string {
       rows: 3,
       optional: true,
       hint: `One per line. Only used by ${CRITERION_KIND_WORD.select.toLowerCase()}.`,
+    }) +
+    field({
+      name: 'new:max',
+      labelText: 'Out of',
+      value: '',
+      placeholder: '5',
+      optional: true,
+      hint: 'The top mark for a number line, 2 to 10.',
     }) +
     `<label class="f" style="margin-bottom:0"><span class="f-lab">How much it counts</span>` +
     `${weightSelect('new:weight', 2)}</label>` +
@@ -1374,6 +1389,7 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
           kind: text(`c:${i}:kind`),
           options: text(`c:${i}:options`).split('\n'),
           weight: text(`c:${i}:weight`),
+          max: text(`c:${i}:max`),
         });
       }
 
@@ -1397,6 +1413,7 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
         kind: text('new:kind'),
         options: text('new:options').split('\n'),
         weight: text('new:weight') || '2',
+        max: text('new:max'),
       });
 
       const round = Math.floor(Number(text('round')) || 0);

@@ -421,3 +421,20 @@ test('dedupeTitles: two tasks with one name read once, with a count', () => {
   assert.deepEqual(dedupeTitles(['Send your slides', 'Send your slides']), ['Send your slides ×2']);
   assert.deepEqual(dedupeTitles(['A', 'B']), ['A', 'B']);
 });
+
+// ---- T607: chosen scales stay commensurable -------------------------------
+test('weightedAverage: an 8 out of 10 counts exactly as a 4 out of 5', () => {
+  const card = scorecardFor(
+    JSON.stringify({
+      '1': [
+        { key: 'fit', label: 'Fit', max: 5 },
+        { key: 'depth', label: 'Depth', max: 10 },
+      ],
+    }),
+    1
+  );
+  assert.equal(weightedAverage(card, { fit: 4, depth: 8 }), 4); // both are 4-of-5
+  // and a uniform out-of-five card is untouched by the normalization
+  const plain = scorecardFor(JSON.stringify({ '1': [{ key: 'fit', label: 'Fit', max: 5 }] }), 1);
+  assert.equal(weightedAverage(plain, { fit: 3 }), 3);
+});

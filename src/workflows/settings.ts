@@ -332,6 +332,8 @@ export type CriterionDraft = {
   kind: string;
   options: string[];
   weight: string;
+  /** The top mark for a number line, as typed. Blank reads as 5. */
+  max: string;
 };
 
 type StoredCriterion = {
@@ -420,12 +422,18 @@ export async function saveScorecard(
     }
     taken.add(key);
 
+    // T607 — the scale is the committee's to choose: 2 to 10, out-of-range
+    // reads as the 5 it always was. Renaming the top mark never moves a mark
+    // already given; it changes what future marks are out of.
+    const maxNumber = Math.floor(Number(trimmed(d.max)));
+    const max = Number.isFinite(maxNumber) && maxNumber >= 2 && maxNumber <= 10 ? maxNumber : 5;
+
     built.push({
       key,
       label: words,
       kind,
       weight,
-      ...(kind === 'scale' ? { max: 5 } : {}),
+      ...(kind === 'scale' ? { max } : {}),
       ...(kind === 'select' ? { options } : {}),
     });
   }

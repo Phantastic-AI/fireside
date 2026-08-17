@@ -511,7 +511,13 @@ export function weightedAverage(card: ScorecardKey[], scores: Scores): number | 
     if (k.kind !== 'scale') continue;
     const v = scores[k.key];
     if (typeof v !== 'number') continue;
-    top += k.weight * v;
+    // T607 — scales are the committee's to choose, so marks are made
+    // commensurable before they are averaged: every mark is read against its
+    // own line's maximum and said on the five-point yardstick. A card whose
+    // lines are all out of five is untouched by this arithmetic (v·5/5 = v);
+    // an 8 out of 10 counts exactly as a 4 out of 5 beside it.
+    const max = k.max > 0 ? k.max : 5;
+    top += k.weight * ((v * 5) / max);
     bottom += k.weight;
   }
   return bottom === 0 ? null : top / bottom;
