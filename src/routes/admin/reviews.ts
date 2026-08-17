@@ -109,6 +109,8 @@ import {
   openNextRound,
   reopenRound,
   saveRoundConfig,
+} from '../../workflows/review';
+import {
   nudgeReviewer,
   MOST_EACH,
   HANDOUT_CAP,
@@ -122,6 +124,13 @@ import {
   type ReopenOutcome,
   type StepAsideOutcome,
 } from '../../workflows/review';
+import {
+  firstReadsFor,
+  firstReadAverage,
+  runFirstReads,
+  FIRST_READ_BATCH,
+  type FirstRead,
+} from '../../workflows/first-read';
 // @ts-ignore -- plain-JS island shipped as its own source text; see cfp.ts.
 import reviewDeckIsland from '../../islands/review-deck.js';
 
@@ -1481,7 +1490,12 @@ function sortResults(rows: ResultsRow[], sort: ResultsSort): ResultsRow[] {
   return [...scored, ...unscored];
 }
 
-function resultsRow(ev: ReviewEvent, r: ResultsRow): string {
+function resultsRow(
+  ev: ReviewEvent,
+  r: ResultsRow,
+  fr: FirstRead | undefined,
+  card: readonly ScorecardKey[]
+): string {
   const track = r.track
     ? `<div style="margin-top:4px"><span class="tk" style="${esc(trackStyle(r.track.colour))}">` +
       `${esc(r.track.name)}</span></div>`
@@ -1492,6 +1506,14 @@ function resultsRow(ev: ReviewEvent, r: ResultsRow): string {
       : `<span class="score">${r.aggregate.toFixed(1)}</span> ` +
         `<span class="sub">${r.weighted ? 'weighted average' : 'average'} · ` +
         `${esc(count(r.reviewCount, 'review', 'reviews'))}</span>`;
+  // The machine's column says whose number it is, and a human override says
+  // whose hand moved it — neither ever joins the committee's average.
+  const ai = !fr
+    ? '<span class="sub">—</span>'
+    : fr.overrideScore !== null
+      ? `<span class="score">${fr.overrideScore.toFixed(1)}</span> <span class="sub">human override</span>` +
+        `<div class="sub">AI said ${firstReadAverage(fr, card)?.toFixed(1) ?? '—'}</div>`
+      : `<span class="score">${firstReadAverage(fr, card)?.toFixed(1) ?? '—'}</span> <span class="sub">AI</span>`;
   return (
     '<tr>' +
     `<td><a class="link" href="/admin/${encodeURIComponent(ev.slug)}/submissions/` +
@@ -1499,6 +1521,7 @@ function resultsRow(ev: ReviewEvent, r: ResultsRow): string {
     `<td>${esc(word(FORMAT_KEY[r.format]) || r.format)}</td>` +
     `<td><span class="chip ${esc(STATE_CHIP[r.state])}">${esc(label(STATE_LABEL[r.state], 'backstage'))}</span></td>` +
     `<td>${score}</td>` +
+    `<td>${ai}</td>` +
     `<td>${r.recommendation ? esc(r.recommendation) : '<span class="sub">—</span>'}</td>` +
     '</tr>'
   );
@@ -1508,7 +1531,9 @@ function resultsPage(
   principal: Principal,
   ev: ReviewEvent,
   results: { rows: ResultsRow[]; more: boolean },
-  sort: ResultsSort
+  sort: ResultsSort,
+  firstReads: Map<string, FirstRead>,
+  frSaid: string | null
 ): string {
   const crumb = `<a href="${esc(queueUrl(ev.slug))}">Reviews</a> › <span>results</span>`;
   const ordered = sortResults(results.rows, sort);
@@ -1545,24 +1570,50 @@ function resultsPage(
     `<a class="btn btn-sm" href="${esc(csvHref)}">Download as CSV →</a>` +
     '</div>';
 
+  // T606 — the AI first read: pressed on purpose, capped per press, and its
+  // numbers live in their own labeled column, never the committee's.
+  const card = scorecardFor(ev.scorecardsRaw, ev.round);
+  const readCount = results.rows.filter((r) => firstReads.has(r.submissionId)).length;
+  const firstReadBar =
+    '<div class="notebox" style="margin-top:14px">' +
+    `<b>The AI first read</b>` +
+    `<p class="sub" style="margin:4px 0 8px">A first-pass score and a written reason on each ` +
+    `submitted proposal, distinct from the committee's own reviews and never averaged into ` +
+    `them. ${esc(`${num(readCount)} of ${num(results.rows.length)} read this round.`)}` +
+    (frSaid ? `</p><p style="margin:4px 0 8px">${esc(frSaid)}` : '') +
+    '</p>' +
+    `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/first-read" style="margin:0">` +
+    `<button class="btn btn-sm" type="submit">Run the AI first read (${num(FIRST_READ_BATCH)} at a time)</button>` +
+    '</form></div>';
+
   const table =
     '<div class="tablewrap" style="margin-top:14px"><table class="t"><thead><tr>' +
-    '<th>Submission</th><th>Format</th><th>Status</th><th>Score</th><th>Recommendation</th>' +
+    '<th>Submission</th><th>Format</th><th>Status</th><th>Score</th><th>AI first read</th><th>Recommendation</th>' +
     '</tr></thead><tbody>' +
-    ordered.map((r) => resultsRow(ev, r)).join('') +
+    ordered.map((r) => resultsRow(ev, r, firstReads.get(r.submissionId), card)).join('') +
     '</tbody></table></div>';
 
-  return shell(principal, ev, head + sortBar + table, crumb);
+  return shell(principal, ev, head + sortBar + firstReadBar + table, crumb);
 }
 
 function csvField(v: string): string {
   return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 
-function resultsCsv(ev: ReviewEvent, results: { rows: ResultsRow[] }, sort: ResultsSort): string {
-  const header = ['title', 'track', 'format', 'status', 'aggregate_score', 'reviews', 'recommendation'];
+function resultsCsv(
+  ev: ReviewEvent,
+  results: { rows: ResultsRow[] },
+  sort: ResultsSort,
+  firstReads: Map<string, FirstRead>
+): string {
+  const card = scorecardFor(ev.scorecardsRaw, ev.round);
+  const header = [
+    'title', 'track', 'format', 'status', 'aggregate_score', 'reviews', 'recommendation',
+    'ai_first_read', 'ai_override',
+  ];
   const lines = [header.map(csvField).join(',')];
   for (const r of sortResults(results.rows, sort)) {
+    const fr = firstReads.get(r.submissionId);
     lines.push(
       [
         r.title,
@@ -1572,6 +1623,10 @@ function resultsCsv(ev: ReviewEvent, results: { rows: ResultsRow[] }, sort: Resu
         r.aggregate === null ? '' : r.aggregate.toFixed(2),
         String(r.reviewCount),
         r.recommendation ?? '',
+        fr ? (firstReadAverage(fr, card)?.toFixed(2) ?? '') : '',
+        fr?.overrideScore !== null && fr?.overrideScore !== undefined
+          ? fr.overrideScore.toFixed(2)
+          : '',
       ]
         .map(csvField)
         .join(',')
@@ -2152,10 +2207,49 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     c.header('cache-control', 'private, no-store');
     const sort: ResultsSort = c.req.query('sort') === 'asc' ? 'asc' : 'desc';
     try {
-      const results = await reviewResults(c.env.DB, principal, ev);
-      return c.html(resultsPage(principal, ev, results, sort));
+      const [results, firstReads] = await Promise.all([
+        reviewResults(c.env.DB, principal, ev),
+        firstReadsFor(c.env.DB, ev.id, ev.round),
+      ]);
+      const frRaw = c.req.query('fr');
+      const frSaid =
+        typeof frRaw === 'string' && /^\d+\.\d+\.\d+$/.test(frRaw)
+          ? (() => {
+              const [read = '0', failed = '0', more = '0'] = frRaw.split('.');
+              return (
+                `${count(Number(read), 'proposal', 'proposals')} read.` +
+                (Number(failed) > 0 ? ` ${count(Number(failed), 'read', 'reads')} did not go through — press again to retry.` : '') +
+                (more === '1' ? ' More remain — press again for the next batch.' : '')
+              );
+            })()
+          : null;
+      return c.html(resultsPage(principal, ev, results, sort, firstReads, frSaid));
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+  });
+
+  // T606 — one press of the first reader: bounded, idempotent, decider-gated
+  // in the workflow itself.
+  app.post('/admin/:eventSlug/reviews/first-read', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const opened = await enter(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'), slug);
+    if (opened instanceof Response) return opened;
+    const { principal, ev } = opened;
+    try {
+      const out = await runFirstReads(c.env.DB, c.env.AI, principal, ev.id, ev.round);
+      return c.redirect(
+        resultsUrl(ev.slug, { fr: `${out.read}.${out.failed}.${out.remaining}` }),
+        303
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) {
+        return new Response(deniedPage('The first read is the committee&#39;s to run.'), {
+          status: 403,
+          headers: HTML,
+        });
+      }
       throw e;
     }
   });
@@ -2176,11 +2270,14 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     }
     const sort: ResultsSort = c.req.query('sort') === 'asc' ? 'asc' : 'desc';
     try {
-      const results = await reviewResults(c.env.DB, principal, ev);
+      const [results, firstReads] = await Promise.all([
+        reviewResults(c.env.DB, principal, ev),
+        firstReadsFor(c.env.DB, ev.id, ev.round),
+      ]);
       c.header('content-type', 'text/csv; charset=utf-8');
       c.header('content-disposition', `attachment; filename="${ev.slug}-review-results.csv"`);
       c.header('cache-control', 'private, no-store');
-      return c.body(resultsCsv(ev, results, sort));
+      return c.body(resultsCsv(ev, results, sort, firstReads));
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;

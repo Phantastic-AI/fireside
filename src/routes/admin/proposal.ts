@@ -52,6 +52,7 @@ import { createTask, TASK_KINDS } from '../../workflows/tasks';
 import { postCommentAsOrganizer, COMMENT_MAX } from '../../workflows/comments';
 import { FORMATS, LEVELS, tracksOfEvent, type TrackOption } from '../../workflows/submit';
 import { editSubmissionWords } from '../../workflows/people-admin';
+import { firstReadsFor, overrideFirstRead, type FirstRead } from '../../workflows/first-read';
 
 /* ------------------------------------------------------------------ *
  * Words
@@ -479,6 +480,56 @@ function reviewRow(r: ProposalReview, labelOf: (round: number, key: string) => s
     '</div>' +
     (scores ? `<div style="margin-top:5px;font-variant-numeric:tabular-nums">${scores}</div>` : '') +
     (r.note ? `<div class="notebox" style="margin-top:8px"><p style="margin:0">${esc(r.note)}</p></div>` : '') +
+    '</div>'
+  );
+}
+
+/* ---------- the AI first read (T606) ---------- */
+
+/** The machine's read, in its own card: scores per criterion, the written
+ *  reason, and the human override beside it — never inside the committee's
+ *  average, and it says so on its face. */
+function firstReadSection(
+  p: Proposal,
+  slug: string,
+  o: { fr: FirstRead | undefined; card: readonly ScorecardKey[]; round: number },
+  mayDecide: boolean,
+  tz: string
+): string {
+  if (!o.fr) return '';
+  const fr = o.fr;
+  const scoreLine = o.card
+    .filter((k) => k.kind === 'scale' && typeof fr.scores[k.key] === 'number')
+    .map((k) => `${esc(k.label)}: <b>${fr.scores[k.key]}</b>/${k.max}`)
+    .join(' · ');
+  const overrideForm = mayDecide
+    ? `<form method="post" action="/admin/${esc(slug)}/submissions/${esc(p.id)}/first-read"` +
+      ' style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">' +
+      `<input type="hidden" name="round" value="${o.round}">` +
+      '<label class="f" style="margin:0"><span class="f-lab">Your own triage number</span>' +
+      `<input type="text" name="score" inputmode="decimal" style="max-width:7em"` +
+      ` value="${fr.overrideScore !== null ? esc(String(fr.overrideScore)) : ''}"></label>` +
+      '<button class="btn btn-sm" type="submit">Save</button>' +
+      (fr.overrideScore !== null
+        ? '<button class="btn btn-sm btn-quiet" type="submit" name="clear" value="1">Clear it</button>'
+        : '') +
+      '</form>'
+    : '';
+  const overridden =
+    fr.overrideScore !== null
+      ? `<p style="margin:8px 0 0"><b>${esc(String(fr.overrideScore))}</b> ` +
+        `<span class="sub">human override · set ${esc(dLong(fr.overrideAt ?? fr.createdAt, tz))}` +
+        ' · the machine’s read stays below it</span></p>'
+      : '';
+  return (
+    `<div class="sec" id="firstread">${sectionHead('The AI first read')}` +
+    '<p class="sub" style="margin:2px 0 8px">A first-pass read, made only when the committee ' +
+    'presses for one. It never joins the committee’s average.</p>' +
+    overridden +
+    (scoreLine ? `<p style="margin:8px 0 0">${scoreLine}</p>` : '') +
+    `<div class="abstract" style="font-size:16px;margin-top:8px">${paras(fr.rationale)}</div>` +
+    `<p class="sub" style="margin-top:6px">Read ${esc(dLong(fr.createdAt, tz))} · round ${o.round}</p>` +
+    overrideForm +
     '</div>'
   );
 }
@@ -1105,6 +1156,7 @@ function renderProposal(o: {
   nowMs: number;
   headshots: Map<string, string>;
   tracks: readonly TrackOption[];
+  firstRead: { fr: FirstRead | undefined; card: readonly ScorecardKey[]; round: number };
 }): string {
   const { ev, p, nowMs } = o;
   const tz = ev.timezone;
@@ -1177,6 +1229,7 @@ function renderProposal(o: {
     deliverablesSection(p, slug, tz, todayKey) +
     lettersSection(p, slug, tz, inPlay) +
     reviewsSection(p, slug, inPlay) +
+    firstReadSection(p, slug, o.firstRead, o.mayDecide, tz) +
     revisionsSection(p, tz) +
     publicDoor +
     `<p style="margin-top:14px"><a class="link" href="/admin/${esc(slug)}/submissions">← Back to the ` +
@@ -1247,6 +1300,16 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
       ]);
       if (!p) return c.html(missingPage(ev, principal), 404);
       const headshots = await headshotsForParticipants(c.env.DB, p.participation.map((x) => x.personId));
+      // T606 — the machine's read of this one, if the committee asked for it.
+      const cardRow = await c.env.DB
+        .prepare('SELECT round_scorecards FROM event WHERE id = ?')
+        .bind(ev.id)
+        .first<{ round_scorecards: string }>();
+      const firstRead = {
+        fr: (await firstReadsFor(c.env.DB, ev.id, ev.currentRound)).get(p.id),
+        card: scorecardFor(cardRow?.round_scorecards ?? '{}', ev.currentRound),
+        round: ev.currentRound,
+      };
 
       // One committee's private reading of one person's proposal.
       c.header('cache-control', 'private, no-store');
@@ -1263,6 +1326,7 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
           nowMs: Date.now(),
           headshots,
           tracks,
+          firstRead,
         })
       );
     } catch (e) {
@@ -1338,6 +1402,41 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
   // Correcting the title or the abstract from the committee's own side —
   // previously this existed nowhere in the admin. The write is workflows/
   // people-admin.ts's editSubmissionWords; this only carries its sentences.
+  // T606 — the human's number beside the machine's. Saving with a number sets
+  // the override; the Clear button (or a blank box) lifts it. The machine's
+  // own read is never touched by either.
+  app.post('/admin/:eventSlug/submissions/:id/first-read', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const id = c.req.param('id');
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+    const events = await adminEvents(c.env.DB, principal);
+    const ev = events.find((e) => e.slug === slug);
+    if (!ev) return c.html(deniedPage(), 403);
+    const form = await c.req.parseBody();
+    const round = Number.parseInt(typeof form['round'] === 'string' ? form['round'] : '', 10);
+    const rawScore = typeof form['score'] === 'string' ? form['score'].trim() : '';
+    const clearing = form['clear'] === '1' || rawScore === '';
+    const score = clearing ? null : Number(rawScore);
+    if (!clearing && !Number.isFinite(score)) {
+      return c.redirect(`/admin/${encodeURIComponent(slug)}/submissions/${encodeURIComponent(id)}#firstread`, 303);
+    }
+    try {
+      await overrideFirstRead(
+        c.env.DB,
+        principal,
+        ev.id,
+        id,
+        Number.isInteger(round) ? round : ev.currentRound,
+        score
+      );
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+    return c.redirect(`/admin/${encodeURIComponent(slug)}/submissions/${encodeURIComponent(id)}#firstread`, 303);
+  });
+
   app.post('/admin/:eventSlug/submissions/:id/edit', async (c) => {
     const principal = await principalFromCookie(
       c.env.DB,
