@@ -701,14 +701,14 @@ function cfpPage(o: {
 function callShutPage(ev: EventHome, opensLater: boolean): string {
   const now = Date.now();
   const nextW = nextWindow(ev.windows, now);
-  // The date the last window closed (for the between/after copy), or the single
-  // call's close.
-  const lastClose = ev.windows.length
-    ? ev.windows.reduce<number | null>(
-        (acc, w) => (w.closesAt !== null && w.closesAt <= now && (acc === null || w.closesAt > acc) ? w.closesAt : acc),
-        null
-      )
-    : ev.cfpClosesAt;
+  // The date the door actually shut: the latest close already in the past,
+  // whether it came from a window or from cfp_closes_at. cfp_closes_at is a
+  // close in its own right, so a call shut by pulling that date back still names
+  // the day it closed rather than dropping to the dateless line.
+  const pastCloses = [...ev.windows.map((w) => w.closesAt), ev.cfpClosesAt].filter(
+    (t): t is number => t !== null && t <= now
+  );
+  const lastClose = pastCloses.length ? Math.max(...pastCloses) : null;
   // Dates, and nothing about who is reading them: after the call closes the
   // only thing this page owes a speaker is when it shut and when they hear.
   const closed = lastClose !== null
@@ -820,10 +820,15 @@ function readReceipt(cookieHeader: string | undefined): string | null {
 
 /** Open in the ordinary sense: opened, and not yet closed. */
 function callIsOpen(ev: EventHome, nowMs: number): boolean {
-  // With windows, the call is open when now falls inside one of them; the
-  // single-call event keeps the old opens/closes gate.
-  if (ev.windows.length > 0) return openWindow(ev.windows, nowMs) !== null;
+  // cfp_closes_at is the hard close, in every shape of call. The send path
+  // (workflows/submit.ts) refuses the moment it passes — windows or none — so
+  // the page that draws the form has to honour the same gate. Without this, a
+  // call shut by pulling that date back while a window still reads open hands a
+  // speaker a whole form the send will throw away.
   if (ev.cfpClosesAt === null || ev.cfpClosesAt <= nowMs) return false;
+  // Past that gate: with windows, open when now falls inside one of them; the
+  // single-call event keeps the old opens gate.
+  if (ev.windows.length > 0) return openWindow(ev.windows, nowMs) !== null;
   return ev.cfpOpensAt === null || ev.cfpOpensAt <= nowMs;
 }
 

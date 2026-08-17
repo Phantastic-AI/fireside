@@ -83,8 +83,13 @@ export function lifecycleOf(
   windows: SubmissionWindow[] = []
 ): Lifecycle {
   if (endsOn < eventDayKey(nowMs, timezone)) return 'happened';
-  // With windows, the call is open when now falls inside one of them. Without,
-  // it is the single call: open until cfp_closes_at.
+  // cfp_closes_at is a hard outer close in every shape of call — the same gate
+  // the public CFP page (callIsOpen) and the submit path enforce. Past it, the
+  // call is closed even if a window still reads open, so an event card can never
+  // say "open" for a call the door has shut on.
+  if (cfpClosesAt !== null && cfpClosesAt <= nowMs) return 'closed';
+  // Past that: with windows, open when now falls inside one of them; without,
+  // the single call is open until cfp_closes_at.
   if (windows.length > 0) return openWindow(windows, nowMs) ? 'open' : 'closed';
   if (cfpClosesAt !== null && cfpClosesAt > nowMs) return 'open';
   return 'closed';
