@@ -16,6 +16,9 @@ const DEMO_CREDENTIALS: [personId: string, password: string][] = [
   // Priya's helper — so a judge can sign in as the assistant and see the
   // scoped portal (upload the deck, mark a task; never withdraw the talk).
   ['devika-nair', 'the-deck-is-handled'],
+  // The reviewer — so a judge can sign in and work the blind review queue, the
+  // sixth representative role. Publish alongside the others in the README.
+  ['lena-fischer', 'score-what-you-read'],
 ];
 
 // Reverse-FK wipe order; forward order for inserts. 'file' and 'file_comment'

@@ -53,7 +53,7 @@ her portal becomes Priya's, scoped to what is due (she can send the deck and
 mark a task, never withdraw the talk).
 
 **To walk the blind reviewer** — the reading room and nothing else — sign in
-as **lena.fischer@example.org** (the magic link prints on the page). Her
+as **lena.fischer@example.org** / **score-what-you-read**. Her
 queue is only the proposals handed to her, names hidden while she scores,
 her marks staying hers until she sends them; the chair reads the weighted
 aggregate on the results table, and it is the same number the proposal page
