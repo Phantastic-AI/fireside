@@ -85,6 +85,16 @@
 .bulkbar{position:sticky;bottom:0;background:var(--card);border-top:2px solid var(--ember);
   padding:12px 14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;z-index:20;
   box-shadow:0 -6px 20px rgba(34,30,23,.07)}
+/* The .bulkbar pins to the viewport bottom, so on a scrolled list it sits over
+   the last rows' per-proposal Accept buttons (the eval had to scroll past it
+   three times). The pile <form data-pile> is the bar's containing block; room
+   beneath it keeps the bar pinned long enough for every row to scroll clear of
+   it — same intent, and same raw-px idiom, as shared.css's
+   body:has(#concierge){padding-bottom} clearance. ~100px covers the bar where
+   it wraps to two rows at desktop width (2×~34px rows + 12/12 padding + 2px
+   border-top). Scoped with :has so it never adds a trailing gap when the bar is
+   absent (reviewer view, canDecide=false). */
+form[data-pile]:has(.bulkbar){padding-bottom:100px}
 .kbdhints{margin-left:auto;font-size:13px;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 
 /* ---------- proposal detail ---------- */
@@ -211,6 +221,10 @@ table.grid td.timecell{border-left:0;color:var(--muted);font-variant-numeric:tab
   .msg .mk{width:auto}
   .bulkbar{margin:0 -16px;padding:12px 16px}
   .kbdhints{display:none}
+  /* the phone .bulkbar wraps taller — kbdhints is gone, but the buttons, the
+     full-width textarea, and the "outbox" line each take their own row (~3
+     rows) — so the last proposal needs more room to clear it here */
+  form[data-pile]:has(.bulkbar){padding-bottom:150px}
 
   /* --- green room: the slot time is the anchor and it stays on screen --- */
   .gr-slot{margin-bottom:26px}

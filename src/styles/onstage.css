@@ -63,6 +63,12 @@
 .starbtn[aria-pressed=true] svg{transform:scale(1.14)}
 .starcount{position:sticky;bottom:0;background:var(--paper);border-top:1px solid var(--line);
   padding:13px 0;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:14.5px;z-index:20}
+/* .starcount pins to the viewport bottom; the .wrap that carries it is the
+   bar's containing block, so it needs room beneath for the last session card to
+   scroll clear instead of sitting under the bar (obscuring its abstract/track
+   line). ~60px covers the one-line bar (13/13 padding + 1px border + ~20px
+   line). Scoped with :has so only agenda .wraps that render the bar get it. */
+.wrap:has(.starcount){padding-bottom:60px}
 
 /* ---------- the one live fact (fresh-eyes review, "make it feel live") ----------
    A quiet masthead line, not a card — see liveState() in routes/public/agenda.ts.
@@ -180,6 +186,9 @@
   /* --- anything sticky at the bottom clears the chrome bar --- */
   .starcount{gap:10px;padding:11px 0}
   .starcount .sub{width:100%;margin-left:0!important}
+  /* the bar can wrap to two lines on a phone (count + calendar link + "My
+     schedule") — a touch more clearance so the last card still clears it */
+  .wrap:has(.starcount){padding-bottom:80px}
 
   /* --- filter chip rows (day/track/format/room, and the room switcher's
      own): shared.css's .filters.scrollx already makes the row scroll at
