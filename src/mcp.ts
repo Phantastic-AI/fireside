@@ -28,7 +28,8 @@
 //     refusals in the same words. A proposal sent from here is not a lesser
 //     proposal; it is the same row, written the same way.
 //   * The signed tools (whoami, pile_summary, my_owed, review_queue,
-//     review_proposal, submit_review, star_session) hold no authorization logic
+//     review_proposal, submit_review, star_session, propose_invite,
+//     commit_pending) hold no authorization logic
 //     of their own either: pile() and requireScope (queries/admin.ts),
 //     reviewEvent and queuePosition (queries/reviews.ts), and portalView
 //     (queries/portal.ts) decide what a standing may see, exactly as they do for
@@ -102,7 +103,7 @@ import {
   type TrackOption,
 } from './workflows/submit';
 import { principalFromPersonId, type Principal } from './workflows/account';
-import { proposeAction } from './workflows/agent';
+import { proposeAction, commitPendingAction } from './workflows/agent';
 import { submitOneReview } from './workflows/review';
 // NOTES is the reviewer form's own outcome sentences (routes/admin/reviews.ts).
 // submit_review reuses them rather than restating, so "you already sent this
@@ -336,8 +337,8 @@ type Tool = {
   description: string;
   inputSchema: JsonSchema;
   // `principal` is null on the public tier and on any call whose bearer token
-  // did not verify. The eight public tools below never look at it; the seven
-  // signed ones (see SIGNED_TOOLS) are the only entries that read it.
+  // did not verify. The eight public tools below never look at it; the signed
+  // ones (see SIGNED_TOOLS) are the only entries that read it.
   run: (env: Env, args: Args, nowMs: number, principal: Principal | null) => Promise<ToolOutcome>;
 };
 
@@ -1400,6 +1401,142 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       return refuse('That one needs confirming in the app.');
     },
   },
+
+  // The organizer's flagship over MCP (D-037): invite a batch of people to
+  // submit to an open call — the "invite my Gmail contacts" gedanken. This is a
+  // confirm-with-number act, so it is TWO calls, never one: propose_invite
+  // stages the exact recipients and hands back a manifest + a pending id + the
+  // count; the agent shows the person that manifest; then commit_pending sends
+  // it with the count restated. So a prompt-injected abstract can neither add a
+  // recipient nor change the number a human approved — the boundary froze both.
+  propose_invite: {
+    title: 'Propose inviting people to submit',
+    description:
+      "Stage an invite to a batch of people to submit to this event's OPEN call — you resolve who " +
+      '(from your own contacts, wherever) and pass a name and email for each. Nothing is written to ' +
+      "anyone yet: this returns a pending id, the exact list as a one-line manifest, and the count. " +
+      'Show that to the organizer, then call commit_pending with the id and the number to actually ' +
+      'stage the invites. Refuses in a sentence when the call is not open or you are not its organizer.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...EVENT_ARG,
+        contacts: {
+          type: 'array',
+          description: 'The people to invite. Each is an object with a name and an email.',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: "The person's name." },
+              email: { type: 'string', description: "The person's email address." },
+            },
+            required: ['name', 'email'],
+          },
+        },
+      },
+      required: ['event', 'contacts'],
+      additionalProperties: false,
+    },
+    async run(env, args, nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const found = await eventOr(env, args, nowMs);
+      if (!found.ok) return refuse(found.says);
+      const contacts = Array.isArray(args['contacts']) ? args['contacts'] : [];
+      const proposed = await proposeAction(
+        { DB: env.DB, FILES: env.FILES },
+        principal,
+        { eventId: found.ev.id, surface: 'backstage' },
+        'invite',
+        { contacts },
+        nowMs
+      );
+      if (proposed.kind === 'refused') {
+        return refuse(INVITE_REFUSAL[proposed.reason] ?? "I couldn't stage that invite.");
+      }
+      if (proposed.kind === 'pending') {
+        return answered({
+          pending_id: proposed.id,
+          manifest: proposed.manifest,
+          count: proposed.count,
+          says:
+            `Staged, not sent: ${proposed.manifest} Show this to the organizer, then call commit_pending ` +
+            `with pending_id "${proposed.id}" and number ${proposed.count} to write the invites. Nothing ` +
+            'goes out until they release the event outbox.',
+        });
+      }
+      // 'executed' would mean a direct tier, which invite is not — never claim a
+      // send that did not follow the confirm.
+      return refuse('That invite could not be staged for confirmation.');
+    },
+  },
+
+  // The second half of any confirm-tier act: commit exactly the manifest that
+  // was staged, by its id. For a by-the-number act the number must be restated —
+  // the same "the number confirmed is the number that goes" rule the web outbox
+  // enforces. The boundary re-authorizes live and executes the STORED arguments,
+  // never anything sent here, so this call cannot change who or how many.
+  commit_pending: {
+    title: 'Commit a staged action',
+    description:
+      'Send a staged action — an invite from propose_invite, say — by its pending id. If it was staged ' +
+      'with a count, give that exact number as `number`; a wrong or missing number is refused, nothing ' +
+      'is written. Refuses in a sentence when the id is not yours, was already sent, or has expired.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pending_id: { type: 'string', description: 'The pending id propose_invite (or another proposer) returned.' },
+        number: {
+          type: 'number',
+          description: 'For a by-the-number action, the exact count from the proposal. Omit only for a plain confirm.',
+        },
+      },
+      required: ['pending_id'],
+      additionalProperties: false,
+    },
+    async run(env, args, nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const pendingId = textArg(args, 'pending_id');
+      if (!pendingId) return refuse('Name the staged action — its pending id, as propose_invite gives it.');
+      const number = numberArg(args, 'number') ?? null;
+      const result = await commitPendingAction(
+        { DB: env.DB, FILES: env.FILES },
+        principal,
+        pendingId,
+        number,
+        nowMs
+      );
+      if (!result.ok) return refuse(COMMIT_REFUSAL[result.reason] ?? "That couldn't be committed.");
+      const outcome = result.outcome;
+      const says =
+        outcome === 'done'
+          ? 'Done — the invites are written and waiting in the event outbox. Nothing sends until you release it.'
+          : outcome === 'partial'
+            ? 'Some of them were written, not all — a few could not be added. The rest are waiting in the outbox.'
+            : outcome === 'moved'
+              ? 'The world shifted while committing — nothing was written. Propose it again.'
+              : 'That did not go through, and nothing was written.';
+      return answered({ committed: outcome === 'done' || outcome === 'partial', outcome, says });
+    },
+  },
+};
+
+const INVITE_REFUSAL: Record<string, string> = {
+  'no-recipients': 'Give me at least one person to invite — a name and an email for each.',
+  'too-many': 'That is too many for a single invite (100 at most). Split it, or use the outbox for a campaign.',
+  'not-open': "That conference's call is not open, so there is nothing to invite anyone to yet.",
+  'no-event': NO_SUCH_EVENT,
+  'not-allowed': 'You are not an organizer of that conference.',
+  'not-here': 'You are not an organizer of that conference.',
+  'too-many-pending': 'You have several actions waiting on confirmation — commit or drop those first.',
+};
+
+const COMMIT_REFUSAL: Record<string, string> = {
+  'not-yours': 'That staged action is not yours to confirm.',
+  gone: 'That one is no longer open — it was already committed, dropped, or never staged.',
+  expired: 'That staged action sat too long and expired. Propose it again.',
+  'not-allowed': 'You are no longer allowed to do that.',
+  'wrong-number': 'That number does not match what was staged. Read the count in the proposal and send exactly that.',
+  'unknown-action': "I don't recognise that staged action.",
 };
 
 const STAR_REFUSAL: Record<string, string> = {

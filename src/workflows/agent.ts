@@ -36,6 +36,16 @@ import { checkedBatch, newId, now } from '../lib/db';
 import type { Principal } from './account';
 import { setStar } from './social';
 import { sendFriendRequest } from './friends';
+import { addManualContact, inviteToSubmit } from './crm';
+import { eventBySlug } from '../queries/public';
+
+// The canonical public origin, for links the boundary writes into invite notes.
+// A constant here (not a request-time value) because the boundary has no
+// request — the same origin the rest of the worker publishes under.
+const ORIGIN = 'https://onfireside.com';
+// The most people one confirmed invite may reach. Above this it is a campaign,
+// not an invite, and belongs in the outbox tooling, not a single agent act.
+const INVITE_MAX = 100;
 
 /* ------------------------------------------------------------------ *
  * Capabilities: what a principal may do, intersected with the surface
@@ -245,7 +255,105 @@ export const ACTIONS: Record<string, ActionDef> = {
       return sendFriendRequest(env.DB, eventId, p.personId, str(args.recipientId));
     },
   },
+
+  // The organizer's flagship agentic act (D-037, the sniff-test headline): invite
+  // a batch of people to submit to an open call. The external agent resolves the
+  // recipients — reading the organizer's own Gmail, say — and passes concrete
+  // name+email pairs; the server VALIDATES each, refuses a call that is not open,
+  // freezes the exact list, and shows a manifest carrying the count. Bulk, so the
+  // confirm is by-the-number: the human approves N specific people, and a
+  // prompt-injected abstract can neither add a recipient nor change the count
+  // that was approved. The write only ROSTERS each person and QUEUES a note to
+  // the event's outbox — nothing is emailed until the organizer releases the
+  // outbox — so the confirmed act's blast radius is a draft, not a send.
+  invite: {
+    capability: 'invite',
+    tier: 'confirm-number',
+    surfaces: ['backstage'],
+    async validateAndFreeze(env, _p, eventId, raw) {
+      if (!eventId) return { ok: false, reason: 'no-event' };
+      const contacts = normalizeContacts(raw.contacts);
+      if (!contacts.length) return { ok: false, reason: 'no-recipients' };
+      if (contacts.length > INVITE_MAX) return { ok: false, reason: 'too-many' };
+      const ev = await env.DB
+        .prepare('SELECT slug, name FROM event WHERE id = ?')
+        .bind(eventId)
+        .first<{ slug: string; name: string }>();
+      if (!ev) return { ok: false, reason: 'no-event' };
+      // Only an OPEN call takes proposals; inviting to a closed one is a note
+      // nobody can act on. Lifecycle is computed, so ask the query that owns it.
+      const home = await eventBySlug(env.DB, ev.slug);
+      if (!home || home.lifecycle !== 'open') return { ok: false, reason: 'not-open' };
+      const names = contacts.map((c) => c.name);
+      const shown = names.slice(0, 5).join(', ') + (names.length > 5 ? `, and ${names.length - 5} more` : '');
+      return {
+        ok: true,
+        args: { contacts },
+        subject: `${contacts.length} to ${ev.name}`,
+        manifest: `Invite ${contacts.length} ${contacts.length === 1 ? 'person' : 'people'} to submit to ${ev.name}: ${shown}.`,
+        count: contacts.length,
+      };
+    },
+    async execute(env, p, eventId, args) {
+      if (!eventId) return 'trouble';
+      const contacts = Array.isArray(args.contacts) ? (args.contacts as { name: string; email: string }[]) : [];
+      const ev = await env.DB
+        .prepare('SELECT slug, name FROM event WHERE id = ?')
+        .bind(eventId)
+        .first<{ slug: string; name: string }>();
+      if (!ev) return 'trouble';
+      const cfpUrl = `${ORIGIN}/${ev.slug}/cfp`;
+      let invited = 0;
+      for (const c of contacts) {
+        const personId = await findOrCreatePerson(env.DB, p, c);
+        if (!personId) continue;
+        const r = await inviteToSubmit(env.DB, p, { id: eventId, name: ev.name }, personId, cfpUrl);
+        if (r.ok) invited++;
+      }
+      // 'done' when everyone the human confirmed was rostered and noted; a
+      // partial run says so, so the caller never claims a full sweep it didn't do.
+      return invited === contacts.length ? 'done' : invited > 0 ? 'partial' : 'trouble';
+    },
+  },
 };
+
+/** The recipients an agent passed, made safe to freeze: a trimmed name and a
+ *  lowercased address with an @, de-duplicated by address. Pure — the model
+ *  resolved WHO (from Gmail, wherever); this only checks the shape and refuses
+ *  the malformed, so a garbage entry never reaches a person row. */
+export function normalizeContacts(raw: unknown): { name: string; email: string }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { name: string; email: string }[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    const name = typeof rec.name === 'string' ? rec.name.trim() : '';
+    const email = typeof rec.email === 'string' ? rec.email.trim().toLowerCase() : '';
+    if (!name || !email.includes('@')) continue;
+    if (seen.has(email)) continue;
+    seen.add(email);
+    out.push({ name, email });
+  }
+  return out;
+}
+
+/** Turn one resolved contact into a person id, creating the prospect if new and
+ *  finding the existing row when the address is already known. Null only when
+ *  neither works, so the invite skips exactly that one and rosters the rest. */
+async function findOrCreatePerson(
+  db: D1Database,
+  p: Principal,
+  c: { name: string; email: string }
+): Promise<string | null> {
+  const created = await addManualContact(db, p, { name: c.name, email: c.email });
+  if (created.ok) return created.personId;
+  if (created.code === 'taken') {
+    const existing = await db.prepare('SELECT id FROM person WHERE email = ?').bind(c.email).first<{ id: string }>();
+    return existing?.id ?? null;
+  }
+  return null;
+}
 
 /* ------------------------------------------------------------------ *
  * Propose and commit — the DB shells around the pure decisions above

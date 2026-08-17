@@ -14,7 +14,7 @@ import { label } from '../src/lib/labels';
 import { safeNext } from '../src/lib/url';
 import { reminderBody } from '../src/workflows/files';
 import { ticketIdFromRecipient } from '../src/workflows/reply-email';
-import { commitDecision, capabilitiesOf, type Pending } from '../src/workflows/agent';
+import { commitDecision, capabilitiesOf, normalizeContacts, type Pending } from '../src/workflows/agent';
 import { catalogFor, parsePlan, canActHere, conciergeAct } from '../src/workflows/plan';
 import type { Principal } from '../src/workflows/account';
 
@@ -296,6 +296,37 @@ test('parsePlan: garbage or no JSON at all is a question, never an act', () => {
 test('parsePlan: JSON wrapped in prose is still read (small models do this)', () => {
   const p = parsePlan('Sure! {"route":"act","action":"star","args":{"submissionId":"s1","on":false},"say":"Unstarring."} ok?', starCatalog);
   assert.deepEqual(p, { route: 'act', action: 'star', args: { submissionId: 's1', on: false }, say: 'Unstarring.' });
+});
+
+// --- normalizeContacts: the invite recipient list, made safe to freeze --------
+// The model resolves WHO (from Gmail, wherever); this only checks shape and
+// refuses the malformed, so a garbage entry never becomes a person row.
+test('normalizeContacts: trims names, lowercases emails, keeps the good ones', () => {
+  const out = normalizeContacts([{ name: '  Ada Lovelace ', email: 'Ada@Example.ORG' }]);
+  assert.deepEqual(out, [{ name: 'Ada Lovelace', email: 'ada@example.org' }]);
+});
+
+test('normalizeContacts: drops entries with no name or no @-address', () => {
+  const out = normalizeContacts([
+    { name: '', email: 'x@y.org' },
+    { name: 'No Email', email: 'not-an-address' },
+    { name: 'Bram', email: 'bram@example.org' },
+  ]);
+  assert.deepEqual(out, [{ name: 'Bram', email: 'bram@example.org' }]);
+});
+
+test('normalizeContacts: de-duplicates by address, first name wins', () => {
+  const out = normalizeContacts([
+    { name: 'Ada', email: 'ada@example.org' },
+    { name: 'Ada L.', email: 'ada@example.org' },
+  ]);
+  assert.equal(out.length, 1);
+});
+
+test('normalizeContacts: anything that is not an array of objects is empty', () => {
+  assert.deepEqual(normalizeContacts('nope'), []);
+  assert.deepEqual(normalizeContacts([1, 'two', null]), []);
+  assert.deepEqual(normalizeContacts(undefined), []);
 });
 
 // --- conciergeAct routing: failure is NOT a silent question (Codex #4) --------
