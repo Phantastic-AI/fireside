@@ -40,6 +40,29 @@ Prefer to see the whole thing at a glance? The
 [**UX walkthrough**](https://onfireside.com/walkthrough) is every screen, one
 after another, filtered by who is using it.
 
+### Sign in as each role
+
+No inbox needed — these demo passwords are published on purpose. **Sign out
+between role swaps** (the menu, top right).
+
+| Role | Sign in as | Go here | Do this |
+| --- | --- | --- | --- |
+| **Organizer** | `naomi@example.org` / `read-them-before-they-go` | `/admin` → [`/admin/aie-nyc/green-room`](https://onfireside.com/admin/aie-nyc/green-room) | Work the accept/waitlist/decline pile; then the outbox (610 letters) and the speaker CRM |
+| **Reviewer** | `lena.fischer@example.org` / `score-what-you-read` | [`/admin/aie-nyc/reviews`](https://onfireside.com/admin/aie-nyc/reviews) | The blind reading room — score assigned proposals, names hidden |
+| **Speaker** | `dani.okafor@example.org` / `ask-before-you-assume` | [`/aie-nyc/portal`](https://onfireside.com/aie-nyc/portal) | See proposals and what's owed, upload a deck, mark a task |
+| **Speaker's helper** | `devika.nair@example.org` / `the-deck-is-handled` | [`/aie-nyc/portal`](https://onfireside.com/aie-nyc/portal) | The same portal, scoped to Priya — send the deck, but never withdraw the talk |
+| **Attendee** | `noor.attendee@example.org` / `accept-what-you-choose` | [`/aie-nyc/agenda`](https://onfireside.com/aie-nyc/agenda) + [`/aie-nyc/my-schedule`](https://onfireside.com/aie-nyc/my-schedule) | Star sessions, connect with someone, follow a schedule |
+| **Visitor** (anon) | *no login* | [`/aie-nyc`](https://onfireside.com/aie-nyc) · [`/aie-nyc/cfp`](https://onfireside.com/aie-nyc/cfp) · [`/ddc-clt`](https://onfireside.com/ddc-clt) | Browse, submit a talk to the open call, see a finished year with recordings |
+
+**Try the concierge — it does things, not just answers.** Signed in as any
+attendee or speaker, open the concierge bubble on an event page and *tell* it
+what to do: *"add the load test talk to my schedule"*, then *"take it back
+off"*. It resolves what you meant, does it for real, shows the true title, and
+gives you a one-tap undo — and a plain question still just gets answered. The
+same star/unstar write is available to an external agent over
+[MCP](https://onfireside.com/agents) (the `star_session` tool), alongside the
+reads, `submit_proposal`, and `submit_review`.
+
 **To walk the attendee tribe** — find someone by name, send a request, and
 follow a friend's schedule — sign in as two attendees at once:
 **dani.okafor@example.org** / **ask-before-you-assume** and

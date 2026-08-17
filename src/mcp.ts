@@ -28,21 +28,23 @@
 //     refusals in the same words. A proposal sent from here is not a lesser
 //     proposal; it is the same row, written the same way.
 //   * The signed tools (whoami, pile_summary, my_owed, review_queue,
-//     review_proposal, submit_review) hold no authorization logic of their
-//     own either: pile() and requireScope (queries/admin.ts), reviewEvent and
-//     queuePosition (queries/reviews.ts), and portalView (queries/portal.ts)
-//     decide what a standing may see, exactly as they do for the backstage
-//     screens and the reviewer's own room. submit_review's write is
-//     workflows/review.ts's upsertReview and submitReviews — the same two
-//     calls the reviewer's own form makes, in the same order, with the same
-//     refusal sentences, reused rather than restated.
+//     review_proposal, submit_review, star_session) hold no authorization logic
+//     of their own either: pile() and requireScope (queries/admin.ts),
+//     reviewEvent and queuePosition (queries/reviews.ts), and portalView
+//     (queries/portal.ts) decide what a standing may see, exactly as they do for
+//     the backstage screens and the reviewer's own room. submit_review's write
+//     is workflows/review.ts's upsertReview and submitReviews — the same two
+//     calls the reviewer's own form makes. star_session's write is the agentic
+//     boundary itself (workflows/agent.ts proposeAction → setStar), the same
+//     path the in-product concierge takes, so an external agent and the chat
+//     bubble reach the one guarded workflow through the one validated door.
 //   * Bearer handling: 'Authorization: Bearer <token>' on POST /mcp, purpose
 //     'agent', minted by makeAgentToken (workflows/account.ts) at /agents and
 //     good for fourteen days. No header at all is exactly today's public
 //     tier — nothing below changes for a caller that never sends one. A
 //     header that fails to verify is read as no header, never as a fault: it
 //     neither raises a protocol error nor unlocks anything. tools/list shows
-//     the signed six only once a valid token is on the call, so an anonymous
+//     the signed tools only once a valid token is on the call, so an anonymous
 //     client never learns a tool exists that it cannot use.
 //
 // Words: every state word still comes from lib/labels.ts. Formats, levels,
@@ -100,6 +102,7 @@ import {
   type TrackOption,
 } from './workflows/submit';
 import { principalFromPersonId, type Principal } from './workflows/account';
+import { proposeAction } from './workflows/agent';
 import { submitOneReview } from './workflows/review';
 // NOTES is the reviewer form's own outcome sentences (routes/admin/reviews.ts).
 // submit_review reuses them rather than restating, so "you already sent this
@@ -333,7 +336,7 @@ type Tool = {
   description: string;
   inputSchema: JsonSchema;
   // `principal` is null on the public tier and on any call whose bearer token
-  // did not verify. The eight public tools below never look at it; the six
+  // did not verify. The eight public tools below never look at it; the seven
   // signed ones (see SIGNED_TOOLS) are the only entries that read it.
   run: (env: Env, args: Args, nowMs: number, principal: Principal | null) => Promise<ToolOutcome>;
 };
@@ -1331,6 +1334,80 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       });
     },
   },
+
+  // The first agentic WRITE over MCP (D-037): an external agent, acting AS the
+  // person who minted its token, adds a session to that person's own schedule
+  // or takes it off. It goes through the very same trusted boundary the
+  // in-product concierge uses — proposeAction validates the id against this
+  // event's published agenda, checks the star capability live, and executes the
+  // one guarded workflow. A direct, reversible, self-scoped act, so it runs
+  // inline with no confirm; higher-stakes acts (connect, decide) stay first-
+  // party until the prepare-only MCP path is built.
+  star_session: {
+    title: 'Star or unstar a session',
+    description:
+      "Add one session on this event's published agenda to your own schedule (star it), or take it " +
+      'back off (unstar it) — your list alone, undoable by the same call. Give the session id the ' +
+      'agenda or session tools hand you, and `on`: true to star (the default), false to unstar. ' +
+      'Refuses in a sentence when the session is not on this event, or not yet on a published agenda.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...EVENT_ARG,
+        session: { type: 'string', description: "The session's id, as the agenda or session tools give it." },
+        on: { type: 'boolean', description: 'true to star (default), false to unstar.' },
+      },
+      required: ['event', 'session'],
+      additionalProperties: false,
+    },
+    async run(env, args, nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const found = await eventOr(env, args, nowMs);
+      if (!found.ok) return refuse(found.says);
+      const submissionId = textArg(args, 'session');
+      if (!submissionId) return refuse('Name the session you mean — its id, as the agenda gives it.');
+      // Polarity is an explicit typed arg here (unlike the natural-language
+      // concierge, which must resolve it from words): the tool is "star", so a
+      // missing `on` means star. `false` unstars.
+      const on = typeof args['on'] === 'boolean' ? (args['on'] as boolean) : true;
+
+      const proposed = await proposeAction(
+        { DB: env.DB, FILES: env.FILES },
+        principal,
+        { eventId: found.ev.id, surface: 'event' },
+        'star',
+        { submissionId, on },
+        nowMs
+      );
+      if (proposed.kind === 'refused') {
+        return refuse(STAR_REFUSAL[proposed.reason] ?? "I couldn't do that just now. Nothing changed.");
+      }
+      // Direct tier: the path ran, but the workflow's own word says if it took.
+      if (proposed.kind === 'executed') {
+        if (proposed.outcome === 'moved') {
+          return refuse('The agenda shifted while I was doing that — nothing changed. Try again.');
+        }
+        if (proposed.outcome !== 'done') return refuse("I couldn't do that just now. Nothing changed.");
+        return answered({
+          session: submissionId,
+          starred: on,
+          says: on
+            ? `"${proposed.subject}" is on your schedule now.`
+            : `Took "${proposed.subject}" off your schedule.`,
+        });
+      }
+      // A direct act never stages; if it somehow did, say so rather than lie.
+      return refuse('That one needs confirming in the app.');
+    },
+  },
+};
+
+const STAR_REFUSAL: Record<string, string> = {
+  'no-session':
+    "That session is not on this event's published agenda, so it cannot be starred. Ask the agenda tool for the ones that can.",
+  'not-allowed': 'You cannot do that here.',
+  'not-here': 'You cannot do that here.',
+  'too-many-pending': 'You have several actions waiting on confirmation — clear those first, then ask again.',
 };
 
 const ALL_TOOLS: Record<string, Tool> = { ...PUBLIC_TOOLS, ...SIGNED_TOOLS };
