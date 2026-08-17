@@ -649,7 +649,9 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
     const pressed = String(form['i'] ?? '').trim();
     const intent = pressed ? intentOf(pressed) : null;
     if (pressed && !intent) return reply('blank');
-    if (!intent && !question) return reply('blank');
+    // A commit-only POST (the Confirm button) carries no question or chip — let
+    // it through to the commit handler below rather than treating it as empty.
+    if (!intent && !question && !String(form['commit'] ?? '').trim()) return reply('blank');
 
     const principal = await principalFromCookie(
       c.env.DB,
