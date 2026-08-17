@@ -59,6 +59,13 @@ import { reviewerOnly } from '../../queries/settings';
 import { principalFromCookie, type Principal } from '../../workflows/account';
 import { eventByGreenRoomNonce } from '../../queries/greenroom-token';
 import {
+  arrivalsFor,
+  checkinLinks,
+  mintCheckinLink,
+  revokeCheckinLink,
+  type CheckinLinkRow,
+} from '../public/checkin';
+import {
   deliverableRows,
   stillWaitingCount,
   askAgain,
@@ -267,7 +274,9 @@ async function greenRoomNonceFor(db: D1Database, eventId: string): Promise<strin
  * logged-in door and its token door.
  * ------------------------------------------------------------------ */
 
-function sessionCard(s: GreenRoomSession, todayKey: string): string {
+type Arrival = { at: string; who: string };
+
+function sessionCard(s: GreenRoomSession, todayKey: string, arrival?: Arrival): string {
   const strike = s.cancelled
     ? ' style="text-decoration:line-through;text-decoration-color:var(--muted-2)"'
     : '';
@@ -275,6 +284,10 @@ function sessionCard(s: GreenRoomSession, todayKey: string): string {
   const nameLine = byline(names) || 'No speaker listed';
   const cancelledNote = s.cancelled
     ? `<p class="sub" style="margin:-4px 0 10px">${esc(label('submission.cancelled', 'backstage'))}</p>`
+    : '';
+  // T611 — which hands marked them in, and when. Absent until somebody does.
+  const arrivedNote = arrival
+    ? `<p class="sub" style="margin:-2px 0 8px">✓ arrived ${esc(arrival.at)} · ${esc(arrival.who)}</p>`
     : '';
   const telRows = s.speakers
     .filter((sp) => sp.phone && sp.phone.trim() !== '')
@@ -288,6 +301,7 @@ function sessionCard(s: GreenRoomSession, todayKey: string): string {
     '<div class="gr-card"><div class="gr-body">' +
     `<div class="gr-name">${nameLine}</div>` +
     cancelledNote +
+    arrivedNote +
     telRows +
     `<div class="gr-talk"${strike}>${esc(s.title)}</div>` +
     `<div class="gr-meta">${esc(formatLabel(s.format))} · ${esc(durationLabel(s.minutes))}</div>` +
@@ -299,7 +313,12 @@ function sessionCard(s: GreenRoomSession, todayKey: string): string {
 /** Groups consecutive sessions by (time, room) into one .gr-when block —
  *  mirrors screenGreenRoom's own grouping exactly. The very first slot on
  *  the page carries "Up first", a mobile-only chip (backstage.css). */
-function sessionCards(sessions: GreenRoomSession[], timezone: string, todayKey: string): string {
+function sessionCards(
+  sessions: GreenRoomSession[],
+  timezone: string,
+  todayKey: string,
+  arrivals: Map<string, Arrival> = new Map()
+): string {
   let html = '';
   let lastKey = '';
   let first = true;
@@ -316,7 +335,7 @@ function sessionCards(sessions: GreenRoomSession[], timezone: string, todayKey: 
       lastKey = key;
       first = false;
     }
-    html += sessionCard(s, todayKey);
+    html += sessionCard(s, todayKey, arrivals.get(s.id));
   }
   return html ? `${html}</div>` : '';
 }
@@ -376,11 +395,41 @@ function shareRow(slug: string, nonce: string | null): string {
   );
 }
 
+function checkinSection(slug: string, links: CheckinLinkRow[]): string {
+  const rows = links
+    .map((l) => {
+      const state = l.revokedAt
+        ? '<span class="sub">revoked</span>'
+        : `<a class="link" href="/ci/${esc(l.nonce)}">/ci/${esc(l.nonce.slice(0, 10))}…</a>`;
+      const off = l.revokedAt
+        ? ''
+        : `<form method="post" action="/admin/${encodeURIComponent(slug)}/green-room/checkin/revoke" style="display:inline">` +
+          `<input type="hidden" name="id" value="${esc(l.id)}">` +
+          '<button class="btn btn-sm btn-quiet" type="submit">Revoke</button></form>';
+      return `<p style="margin:6px 0 0"><b>${esc(l.name)}</b> · ${state} ${off}</p>`;
+    })
+    .join('');
+  return (
+    '<div class="sec standing">' +
+    '<p style="margin:0"><b>Check-in links</b> — a named link per volunteer. Whoever holds it can ' +
+    'mark today&#39;s speakers arrived, and every mark carries the link&#39;s name and the time. ' +
+    'Nothing else opens with it.</p>' +
+    rows +
+    `<form method="post" action="/admin/${encodeURIComponent(slug)}/green-room/checkin" ` +
+    'style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">' +
+    '<input type="text" name="name" maxlength="60" placeholder="Sam, front door" aria-label="Who holds it">' +
+    '<button class="btn btn-sm" type="submit">Mint a link</button></form>' +
+    '</div>'
+  );
+}
+
 function adminGreenRoomPage(
   principal: Principal,
   ev: AdminEvent,
   gr: GreenRoom,
-  nonce: string | null
+  nonce: string | null,
+  links: CheckinLinkRow[],
+  arrivals: Map<string, { at: string; who: string }>
 ): string {
   const slug = ev.slug;
   const tzLabel = gr.tzLabel ?? gr.timezone;
@@ -400,9 +449,10 @@ function adminGreenRoomPage(
     '</div>';
 
   const share = hasScope(principal, ev.id, EDIT_ROLES) ? shareRow(slug, nonce) : '';
+  const checkin = hasScope(principal, ev.id, EDIT_ROLES) ? checkinSection(slug, links) : '';
 
   const body = gr.sessions.length
-    ? `<div class="sec" style="max-width:640px">${sessionCards(gr.sessions, gr.timezone, todayKey)}</div>`
+    ? `<div class="sec" style="max-width:640px">${sessionCards(gr.sessions, gr.timezone, todayKey, arrivals)}</div>`
     : '<div class="sec state-out">' +
       `<h2>Nothing scheduled on ${esc(dayLong(gr.day))} yet.</h2>` +
       '<p>Talks appear here the moment they get a time and a room.</p>' +
@@ -418,7 +468,8 @@ function adminGreenRoomPage(
       who: `${principal.name} · ${cap(ev.standing)}`,
       whoInitials: initialsOf(principal.name),
       tzLabel: ev.tzLabel ?? ev.timezone,
-      body: head + share + body,
+      body: head + share +
+    checkin + body,
     }),
   });
 }
@@ -429,7 +480,11 @@ function adminGreenRoomPage(
  * as the admin door, no day switcher, no other link on the page at all.
  * ------------------------------------------------------------------ */
 
-function publicGreenRoomPage(ev: { name: string }, gr: GreenRoom): string {
+function publicGreenRoomPage(
+  ev: { name: string },
+  gr: GreenRoom,
+  arrivals: Map<string, { at: string; who: string }> = new Map()
+): string {
   const tzLabel = gr.tzLabel ?? gr.timezone;
   const todayKey = eventDayKey(Date.now(), gr.timezone);
 
@@ -446,7 +501,7 @@ function publicGreenRoomPage(ev: { name: string }, gr: GreenRoom): string {
     '</div>';
 
   const body = gr.sessions.length
-    ? `<div class="sec" style="max-width:640px">${sessionCards(gr.sessions, gr.timezone, todayKey)}</div>`
+    ? `<div class="sec" style="max-width:640px">${sessionCards(gr.sessions, gr.timezone, todayKey, arrivals)}</div>`
     : '<div class="sec state-out"><h2>Nothing scheduled yet.</h2>' +
       '<p>Check back closer to the day.</p></div>';
 
@@ -728,8 +783,12 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
       const nonce = hasScope(principal, ev.id, EDIT_ROLES)
         ? await greenRoomNonceFor(c.env.DB, ev.id)
         : null;
+      const [links, arrivals] = await Promise.all([
+        checkinLinks(c.env.DB, ev.id),
+        arrivalsFor(c.env.DB, ev.id, gr.timezone),
+      ]);
 
-      return c.html(adminGreenRoomPage(principal, ev, gr, nonce));
+      return c.html(adminGreenRoomPage(principal, ev, gr, nonce, links, arrivals));
     } catch (e) {
       if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
       throw e;
@@ -866,6 +925,26 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
     }
   });
 
+  app.post('/admin/:eventSlug/green-room/checkin', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in');
+    const ev = await eventFor(c.env.DB, principal, c.req.param('eventSlug'));
+    if (!ev || !hasScope(principal, ev.id, EDIT_ROLES)) return c.html(deniedPage(), 403);
+    const form = await c.req.parseBody();
+    await mintCheckinLink(c.env.DB, ev.id, typeof form['name'] === 'string' ? form['name'] : '');
+    return c.redirect(`/admin/${encodeURIComponent(ev.slug)}/green-room`, 303);
+  });
+
+  app.post('/admin/:eventSlug/green-room/checkin/revoke', async (c) => {
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in');
+    const ev = await eventFor(c.env.DB, principal, c.req.param('eventSlug'));
+    if (!ev || !hasScope(principal, ev.id, EDIT_ROLES)) return c.html(deniedPage(), 403);
+    const form = await c.req.parseBody();
+    await revokeCheckinLink(c.env.DB, ev.id, typeof form['id'] === 'string' ? form['id'] : '');
+    return c.redirect(`/admin/${encodeURIComponent(ev.slug)}/green-room`, 303);
+  });
+
   app.get('/gr/:nonce', async (c) => {
     const nonce = c.req.param('nonce');
     const ev = await eventByGreenRoomNonce(c.env.DB, nonce);
@@ -874,7 +953,8 @@ export function registerGreenRoomAdmin(app: Hono<{ Bindings: Env }>): void {
     const day = c.req.query('day') || undefined;
     const gr = await greenRoom(c.env.DB, ev.id, day);
     if (!gr) return c.notFound();
+    const arrivals = await arrivalsFor(c.env.DB, ev.id, gr.timezone);
 
-    return c.html(publicGreenRoomPage(ev, gr));
+    return c.html(publicGreenRoomPage(ev, gr, arrivals));
   });
 }

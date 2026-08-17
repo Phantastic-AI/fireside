@@ -72,6 +72,8 @@ function eventTreeDeletes(db: D1Database, eventId: string): D1PreparedStatement[
     E('DELETE FROM embedding WHERE event_id = ?1'),
     E(`DELETE FROM neighbor WHERE submission_id IN (${SSUB})`),
     E(`DELETE FROM first_read WHERE submission_id IN (${SSUB})`),
+    E(`DELETE FROM checkin WHERE submission_id IN (${SSUB})`),
+    E('DELETE FROM checkin_link WHERE event_id = ?1'),
     E('DELETE FROM matrix_cache WHERE event_id = ?1'),
     E('DELETE FROM theme_cache WHERE event_id = ?1'),
     E(`DELETE FROM revision WHERE owner_kind = 'submission' AND owner_id IN (${SSUB})`),
