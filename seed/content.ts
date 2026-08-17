@@ -695,6 +695,33 @@ export const CAST: CastPerson[] = [
     pronouns: "he/him",
     internalRole: null,
   },
+  // Two real people, seeded as prospects with profiles already on file, so an
+  // organiser inviting a fresh conference's speakers has a concrete, recognisable
+  // name to reach for. Synthetic emails; public-role bios only.
+  {
+    id: "aditya-advani",
+    name: "Aditya Advani",
+    email: "aditya.advani@example.org",
+    jobTitle: "Founder",
+    organisation: "MoltPod",
+    bio: "Aditya builds MoltPod, an AI-native event manager, and has hacked and spoken at AI Engineer three years running. He is unreasonably interested in agents that do the operational work no one wants to.",
+    phone: null,
+    links: "https://moltpod.example.org",
+    pronouns: null,
+    internalRole: null,
+  },
+  {
+    id: "swyx",
+    name: "Swyx",
+    email: "swyx@example.org",
+    jobTitle: "Curator",
+    organisation: "AI Engineer",
+    bio: "Swyx named 'the AI Engineer' and curates the conference by that name, alongside the Latent Space podcast. He writes about the people building on top of foundation models.",
+    phone: null,
+    links: "https://latent.space",
+    pronouns: null,
+    internalRole: null,
+  },
 ];
 
 /**
