@@ -243,6 +243,20 @@ test('capabilitiesOf: a dual-role organizer in the speaker portal gets ONLY spea
   assert.equal(caps.has('star'), true);
 });
 
+test('capabilitiesOf: an event approver decides but cannot invite (Codex auth fix)', () => {
+  // Inviting writes the speaker CRM, which requireOrg gates to organizer/owner.
+  // An approver must not pass the invite capability, or it commits-then-throws.
+  const caps = capabilitiesOf(prin({ eventRoles: { 'ev-1': 'approver' } }), 'ev-1', 'backstage');
+  assert.equal(caps.has('decide'), true);
+  assert.equal(caps.has('invite'), false);
+});
+
+test('capabilitiesOf: an event owner both decides and invites', () => {
+  const caps = capabilitiesOf(prin({ eventRoles: { 'ev-1': 'owner' } }), 'ev-1', 'backstage');
+  assert.equal(caps.has('decide'), true);
+  assert.equal(caps.has('invite'), true);
+});
+
 test('capabilitiesOf: an attendee on the backstage surface can do nothing', () => {
   assert.equal(capabilitiesOf(prin(), 'ev-1', 'backstage').size, 0);
 });

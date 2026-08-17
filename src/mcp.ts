@@ -1503,19 +1503,33 @@ const SIGNED_TOOLS: Record<string, Tool> = {
         principal,
         pendingId,
         number,
-        nowMs
+        nowMs,
+        ['invite'] // this tool commits invites only — never some other owned pending
       );
       if (!result.ok) return refuse(COMMIT_REFUSAL[result.reason] ?? "That couldn't be committed.");
       const outcome = result.outcome;
-      const says =
-        outcome === 'done'
-          ? 'Done — the invites are written and waiting in the event outbox. Nothing sends until you release it.'
-          : outcome === 'partial'
-            ? 'Some of them were written, not all — a few could not be added. The rest are waiting in the outbox.'
-            : outcome === 'moved'
-              ? 'The world shifted while committing — nothing was written. Propose it again.'
-              : 'That did not go through, and nothing was written.';
-      return answered({ committed: outcome === 'done' || outcome === 'partial', outcome, says });
+      if (outcome === 'done') {
+        return answered({
+          committed: true,
+          outcome,
+          says: 'Done — the invites are written and waiting in the event outbox. Nothing sends until you release it.',
+        });
+      }
+      if (outcome === 'partial') {
+        return answered({
+          committed: true,
+          partial: true,
+          outcome,
+          says: 'Some were written, not all — a few could not be added. The rest are waiting in the event outbox.',
+        });
+      }
+      // 'moved'/'trouble'/anything else: nothing usable was written. This is an
+      // ERROR result (isError), never a quiet success through answered() (Codex).
+      return refuse(
+        outcome === 'moved'
+          ? 'The world shifted while committing — nothing was written. Propose it again.'
+          : 'That did not go through, and nothing was written.'
+      );
     },
   },
 };
@@ -1537,6 +1551,7 @@ const COMMIT_REFUSAL: Record<string, string> = {
   'not-allowed': 'You are no longer allowed to do that.',
   'wrong-number': 'That number does not match what was staged. Read the count in the proposal and send exactly that.',
   'unknown-action': "I don't recognise that staged action.",
+  'not-committable': 'That kind of staged action cannot be committed over MCP — finish it in the app.',
 };
 
 const STAR_REFUSAL: Record<string, string> = {

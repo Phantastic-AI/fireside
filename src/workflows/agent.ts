@@ -68,6 +68,12 @@ export function capabilitiesOf(principal: Principal, eventId: string | null, sur
   // that may invite or decide. An 'editor' can shape the event but not send —
   // Codex caught editor→decide as a privilege bug; a 'viewer' reads only.
   const isDecider = principal.role === 'organizer' || eventRole === 'owner' || eventRole === 'approver';
+  // Inviting is stricter than deciding (Codex): it writes to the speaker CRM,
+  // which requireOrg gates to an install-organizer or an event OWNER — an
+  // approver decides proposals but does not manage the contact book. Keeping the
+  // capability and the workflow's own guard in agreement means an approver is
+  // refused cleanly at propose, never committed-then-thrown at execute.
+  const isOwnerOrg = principal.role === 'organizer' || eventRole === 'owner';
   const isReviewer = principal.role === 'reviewer' || eventRole === 'reviewer';
 
   // The surface decides which of the principal's standings are in play here.
@@ -86,10 +92,8 @@ export function capabilitiesOf(principal: Principal, eventId: string | null, sur
       if (isReviewer || isDecider) allow('review');
       break;
     case 'backstage':
-      if (isDecider) {
-        allow('invite');
-        allow('decide');
-      }
+      if (isDecider) allow('decide');
+      if (isOwnerOrg) allow('invite');
       break;
     case 'global':
       // Nothing state-changing before a conference is even chosen. Onboarding
@@ -284,35 +288,56 @@ export const ACTIONS: Record<string, ActionDef> = {
       // nobody can act on. Lifecycle is computed, so ask the query that owns it.
       const home = await eventBySlug(env.DB, ev.slug);
       if (!home || home.lifecycle !== 'open') return { ok: false, reason: 'not-open' };
-      const names = contacts.map((c) => c.name);
-      const shown = names.slice(0, 5).join(', ') + (names.length > 5 ? `, and ${names.length - 5} more` : '');
+      // Resolve every address to its CANONICAL identity NOW, so the human
+      // confirms the real people (Codex P1/P2): an address already on file shows
+      // the name we hold, never whatever the agent typed beside it; a new address
+      // is shown as given and created on commit. The frozen list is these
+      // resolved recipients, so execution invites exactly who was confirmed.
+      const resolved: { name: string; email: string; personId: string | null }[] = [];
+      for (const c of contacts) {
+        const existing = await env.DB
+          .prepare('SELECT id, name FROM person WHERE email = ? AND merged_into_id IS NULL')
+          .bind(c.email)
+          .first<{ id: string; name: string }>();
+        resolved.push({ email: c.email, name: existing?.name ?? c.name, personId: existing?.id ?? null });
+      }
+      // The manifest lists EVERY recipient, name and address — nothing hidden
+      // behind "and N more" (Codex P1). The human approves exactly these people.
+      const lines = resolved.map((r) => `- ${r.name} <${r.email}>`).join('\n');
       return {
         ok: true,
-        args: { contacts },
-        subject: `${contacts.length} to ${ev.name}`,
-        manifest: `Invite ${contacts.length} ${contacts.length === 1 ? 'person' : 'people'} to submit to ${ev.name}: ${shown}.`,
-        count: contacts.length,
+        args: { contacts: resolved },
+        subject: `${resolved.length} to ${ev.name}`,
+        manifest: `Invite ${resolved.length} ${resolved.length === 1 ? 'person' : 'people'} to submit to ${ev.name}:\n${lines}`,
+        count: resolved.length,
       };
     },
     async execute(env, p, eventId, args) {
       if (!eventId) return 'trouble';
-      const contacts = Array.isArray(args.contacts) ? (args.contacts as { name: string; email: string }[]) : [];
+      const recipients = Array.isArray(args.contacts)
+        ? (args.contacts as { name: string; email: string; personId: string | null }[])
+        : [];
       const ev = await env.DB
         .prepare('SELECT slug, name FROM event WHERE id = ?')
         .bind(eventId)
         .first<{ slug: string; name: string }>();
       if (!ev) return 'trouble';
+      // Re-check the call is still open at execution: a proposal can outlive the
+      // close by up to the pending TTL, and inviting to a shut call is a note
+      // nobody can act on (Codex P3).
+      const home = await eventBySlug(env.DB, ev.slug);
+      if (!home || home.lifecycle !== 'open') return 'trouble';
       const cfpUrl = `${ORIGIN}/${ev.slug}/cfp`;
       let invited = 0;
-      for (const c of contacts) {
-        const personId = await findOrCreatePerson(env.DB, p, c);
+      for (const r of recipients) {
+        const personId = r.personId ?? (await findOrCreatePerson(env.DB, p, { name: r.name, email: r.email }));
         if (!personId) continue;
-        const r = await inviteToSubmit(env.DB, p, { id: eventId, name: ev.name }, personId, cfpUrl);
-        if (r.ok) invited++;
+        const res = await inviteToSubmit(env.DB, p, { id: eventId, name: ev.name }, personId, cfpUrl);
+        if (res.ok) invited++;
       }
       // 'done' when everyone the human confirmed was rostered and noted; a
       // partial run says so, so the caller never claims a full sweep it didn't do.
-      return invited === contacts.length ? 'done' : invited > 0 ? 'partial' : 'trouble';
+      return invited === recipients.length ? 'done' : invited > 0 ? 'partial' : 'trouble';
     },
   },
 };
@@ -440,14 +465,21 @@ export async function proposeAction(
   return { kind: 'pending', id, manifest: c.manifest, tier: def.tier, count: c.count ?? null };
 }
 
-export type CommitResult = { ok: true; outcome: string } | { ok: false; reason: CommitRefusal | 'unknown-action' };
+export type CommitResult =
+  | { ok: true; outcome: string }
+  | { ok: false; reason: CommitRefusal | 'unknown-action' | 'not-committable' };
 
 export async function commitPendingAction(
   env: Env,
   principal: Principal,
   pendingId: string,
   providedNumber: number | null = null,
-  nowMs: number = now()
+  nowMs: number = now(),
+  // When set, only these action types may be committed through this caller — the
+  // MCP commit tool passes ['invite'] so it can never be tricked into committing
+  // some OTHER owned pending (a connect, a future higher-stakes act) it did not
+  // propose (Codex P3). In-product callers pass nothing and commit any owned act.
+  allowedActions?: string[]
 ): Promise<CommitResult> {
   const row = await env.DB
     .prepare(
@@ -471,6 +503,7 @@ export async function commitPendingAction(
 
   const def = ACTIONS[row.action_type];
   if (!def) return { ok: false, reason: 'unknown-action' };
+  if (allowedActions && !allowedActions.includes(row.action_type)) return { ok: false, reason: 'not-committable' };
 
   const pending: Pending = {
     id: row.id,
