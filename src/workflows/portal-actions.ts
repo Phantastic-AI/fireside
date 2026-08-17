@@ -44,6 +44,46 @@ const MY_OPEN_TASK = `
    WHERE id = ? AND person_id = ?
      AND completed_at IS NULL AND cancelled_at IS NULL`;
 
+// Theirs, and actually done. The undo of completeTask: only a task that is
+// completed (and not cancelled) can be put back on the list.
+const MY_DONE_TASK = `
+  SELECT 1 FROM task
+   WHERE id = ? AND person_id = ?
+     AND completed_at IS NOT NULL AND cancelled_at IS NULL`;
+
+/**
+ * Put a completed task back on this person's list — the undo of completeTask.
+ * Only theirs, only one that is actually done. A file_request completed by a
+ * real deck upload can be reopened too; the deck row stays in place, so this is
+ * "back on your list", never "un-sent".
+ */
+export async function reopenTask(
+  db: D1Database,
+  personId: string,
+  taskId: string
+): Promise<WriteOutcome> {
+  try {
+    await checkedBatch(
+      db,
+      [
+        guard(db, `SELECT 1 WHERE NOT EXISTS (${MY_DONE_TASK})`, taskId, personId),
+        db
+          .prepare(
+            `UPDATE task SET completed_at = NULL
+              WHERE id = ? AND person_id = ?
+                AND completed_at IS NOT NULL AND cancelled_at IS NULL`
+          )
+          .bind(taskId, personId),
+      ],
+      [0, 1],
+      STALE
+    );
+    return 'done';
+  } catch (e) {
+    return outcomeOf(e, 'reopenTask');
+  }
+}
+
 /**
  * Mark one of this person's open tasks done. Only theirs, only while open.
  */

@@ -38,6 +38,8 @@ import { setStar } from './social';
 import { sendFriendRequest } from './friends';
 import { addManualContact, inviteToSubmit } from './crm';
 import { stageDecision, type Decision } from './decide';
+import { completeTask, reopenTask, withdrawProposal } from './portal-actions';
+import { taskActorId } from '../queries/helpers';
 import { eventBySlug } from '../queries/public';
 
 // The canonical public origin, for links the boundary writes into invite notes.
@@ -53,7 +55,15 @@ const INVITE_MAX = 100;
  * ------------------------------------------------------------------ */
 
 export type Surface = 'event' | 'portal' | 'reviews' | 'backstage' | 'global';
-export type Capability = 'star' | 'connect' | 'follow' | 'review' | 'invite' | 'decide';
+export type Capability =
+  | 'star'
+  | 'connect'
+  | 'follow'
+  | 'review'
+  | 'invite'
+  | 'decide'
+  | 'task' // a speaker (or their helper) marking their own deliverable task done / undone
+  | 'withdraw'; // a speaker pulling their own proposal back
 export type Tier = 'direct' | 'confirm' | 'confirm-number';
 
 /** Everything this principal is allowed to do, on this event, from this
@@ -81,13 +91,24 @@ export function capabilitiesOf(principal: Principal, eventId: string | null, sur
   const allow = (cap: Capability) => has.add(cap);
   switch (surface) {
     case 'event':
-    case 'portal':
-      // An attendee's own low-stakes acts, and a speaker's self-service (the
-      // portal). Never an organizer or reviewer act, whatever the account also
-      // holds elsewhere.
+      // A visitor's own low-stakes acts on the public event pages. Never a
+      // speaker/organizer/reviewer act, whatever the account also holds.
       allow('star');
       allow('connect');
       allow('follow');
+      break;
+    case 'portal':
+      // The speaker portal: everything the event surface allows, PLUS a
+      // speaker's self-service on their OWN tasks and proposals. Ownership is
+      // enforced in each workflow's SQL (WHERE person_id / participation), so
+      // like star the capability is portal-wide — the public event bubble
+      // (surface 'event') never gets these, so speaker-facing content there can
+      // never reach a withdraw.
+      allow('star');
+      allow('connect');
+      allow('follow');
+      allow('task');
+      allow('withdraw');
       break;
     case 'reviews':
       if (isReviewer || isDecider) allow('review');
@@ -389,6 +410,99 @@ export const ACTIONS: Record<string, ActionDef> = {
       // stageDecision never throws (it returns {ok:false} on a stale/illegal
       // move); a failure means the world moved, so say so honestly.
       return r.ok ? 'done' : 'moved';
+    },
+  },
+
+  // A speaker (or their helper) marks one of their own deliverable tasks done.
+  // Direct + reversible: self-scoped, undoable by task_reopen. The ACTOR is
+  // resolved by taskActorId — the task's owner when the principal owns it OR is
+  // an active helper of the owner — so an assistant's agent completes the deck
+  // reminder AS the speaker, and a stranger resolves to null and is refused.
+  task_done: {
+    capability: 'task',
+    tier: 'direct',
+    surfaces: ['portal'],
+    async validateAndFreeze(env, p, eventId, raw) {
+      const taskId = str(raw.taskId);
+      if (!taskId || !eventId) return { ok: false, reason: 'no-task' };
+      const actorId = await taskActorId(env.DB, taskId, p.personId);
+      if (!actorId) return { ok: false, reason: 'no-task' };
+      const row = await env.DB
+        .prepare(
+          `SELECT t.title FROM task t JOIN submission s ON s.id = t.submission_id
+            WHERE t.id = ? AND t.person_id = ? AND s.event_id = ?
+              AND t.completed_at IS NULL AND t.cancelled_at IS NULL`
+        )
+        .bind(taskId, actorId, eventId)
+        .first<{ title: string }>();
+      if (!row) return { ok: false, reason: 'no-task' };
+      return { ok: true, args: { taskId, actorId }, subject: row.title, manifest: `Mark "${row.title}" done.` };
+    },
+    async execute(env, _p, _eventId, args) {
+      return completeTask(env.DB, str(args.actorId), str(args.taskId));
+    },
+  },
+
+  // The undo of task_done — put a completed task back on the list. Same actor
+  // resolution, so a helper can undo their own mistake for the speaker.
+  task_reopen: {
+    capability: 'task',
+    tier: 'direct',
+    surfaces: ['portal'],
+    async validateAndFreeze(env, p, eventId, raw) {
+      const taskId = str(raw.taskId);
+      if (!taskId || !eventId) return { ok: false, reason: 'no-task' };
+      const actorId = await taskActorId(env.DB, taskId, p.personId);
+      if (!actorId) return { ok: false, reason: 'no-task' };
+      const row = await env.DB
+        .prepare(
+          `SELECT t.title FROM task t JOIN submission s ON s.id = t.submission_id
+            WHERE t.id = ? AND t.person_id = ? AND s.event_id = ?
+              AND t.completed_at IS NOT NULL AND t.cancelled_at IS NULL`
+        )
+        .bind(taskId, actorId, eventId)
+        .first<{ title: string }>();
+      if (!row) return { ok: false, reason: 'no-task' };
+      return { ok: true, args: { taskId, actorId }, subject: row.title, manifest: `Put "${row.title}" back on your list.` };
+    },
+    async execute(env, _p, _eventId, args) {
+      return reopenTask(env.DB, str(args.actorId), str(args.taskId));
+    },
+  },
+
+  // A speaker pulls their OWN proposal back. Confirm-tier: withdrawn is terminal
+  // (the transition trigger allows no move out of it — there is no un-withdraw),
+  // and it removes the talk from the committee's list. NO helper substitution
+  // here — withdraw is the speaker's own act, so it binds principal.personId
+  // directly; a helper's participation row does not match, so a helper is
+  // cleanly refused, which is exactly "a helper can't withdraw".
+  withdraw_proposal: {
+    capability: 'withdraw',
+    tier: 'confirm',
+    surfaces: ['portal'],
+    async validateAndFreeze(env, p, eventId, raw) {
+      const submissionId = str(raw.submissionId);
+      if (!submissionId || !eventId) return { ok: false, reason: 'no-proposal' };
+      const row = await env.DB
+        .prepare(
+          `SELECT s.title FROM submission s
+             JOIN participation pa ON pa.submission_id = s.id AND pa.person_id = ?
+            WHERE s.id = ? AND s.event_id = ?
+              AND s.state IN ('submitted','waitlisted','accepted')
+              AND NOT (s.agenda_published = 1 AND s.starts_at IS NOT NULL)`
+        )
+        .bind(p.personId, submissionId, eventId)
+        .first<{ title: string }>();
+      if (!row) return { ok: false, reason: 'no-proposal' };
+      return {
+        ok: true,
+        args: { submissionId },
+        subject: row.title,
+        manifest: `Withdraw "${row.title}"? It leaves the committee's list, and you cannot put it back.`,
+      };
+    },
+    async execute(env, p, _eventId, args) {
+      return withdrawProposal(env.DB, p.personId, str(args.submissionId));
     },
   },
 };

@@ -28,8 +28,9 @@
 //     refusals in the same words. A proposal sent from here is not a lesser
 //     proposal; it is the same row, written the same way.
 //   * The signed tools (whoami, pile_summary, my_owed, review_queue,
-//     review_proposal, submit_review, star_session, propose_invite,
-//     propose_decision, commit_pending) hold no authorization logic
+//     review_proposal, submit_review, star_session, mark_task_done,
+//     propose_withdraw, propose_invite, propose_decision, commit_pending) hold
+//     no authorization logic
 //     of their own either: pile() and requireScope (queries/admin.ts),
 //     reviewEvent and queuePosition (queries/reviews.ts), and portalView
 //     (queries/portal.ts) decide what a standing may see, exactly as they do for
@@ -1402,6 +1403,103 @@ const SIGNED_TOOLS: Record<string, Tool> = {
     },
   },
 
+  // A speaker (or their helper) marks a deliverable task done, or puts it back.
+  // Direct + reversible, self-scoped through the portal surface; the boundary
+  // resolves the actor so a helper's agent completes the deck reminder AS the
+  // speaker they assist.
+  mark_task_done: {
+    title: 'Mark a deliverable task done (or put it back)',
+    description:
+      'Mark one of your own deliverable tasks done — or, with done=false, put a completed one back on ' +
+      "your list. Reversible, yours alone. If you are a speaker's helper, this acts for the speaker you " +
+      'assist. Give the task id (my_owed lists them). Refuses if the task is not yours or not on this event.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...EVENT_ARG,
+        task: { type: 'string', description: "The task's id, as my_owed or the portal gives it." },
+        done: { type: 'boolean', description: 'true to mark done (default), false to put it back on your list.' },
+      },
+      required: ['event', 'task'],
+      additionalProperties: false,
+    },
+    async run(env, args, nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const found = await eventOr(env, args, nowMs);
+      if (!found.ok) return refuse(found.says);
+      const taskId = textArg(args, 'task');
+      if (!taskId) return refuse('Name the task — its id, as my_owed lists it.');
+      const done = typeof args['done'] === 'boolean' ? (args['done'] as boolean) : true;
+      const proposed = await proposeAction(
+        { DB: env.DB, FILES: env.FILES },
+        principal,
+        { eventId: found.ev.id, surface: 'portal' },
+        done ? 'task_done' : 'task_reopen',
+        { taskId },
+        nowMs
+      );
+      if (proposed.kind === 'refused') return refuse(TASK_REFUSAL[proposed.reason] ?? "I couldn't do that.");
+      if (proposed.kind === 'executed') {
+        if (proposed.outcome !== 'done') {
+          return refuse(
+            proposed.outcome === 'moved'
+              ? 'That task had already changed — nothing to do.'
+              : "I couldn't do that just now. Nothing changed."
+          );
+        }
+        return answered({
+          task: taskId,
+          done,
+          says: done ? `Marked "${proposed.subject}" done.` : `Put "${proposed.subject}" back on your list.`,
+        });
+      }
+      return refuse('That one needs confirming in the app.');
+    },
+  },
+
+  // A speaker withdraws their OWN proposal. Confirm-tier: withdrawn is terminal
+  // (no un-withdraw) and removes the talk from the committee's list. A helper
+  // cannot withdraw — the boundary binds the speaker's own identity.
+  propose_withdraw: {
+    title: 'Propose withdrawing a proposal',
+    description:
+      'Stage a withdrawal of one of YOUR proposals. Withdrawn is final — the talk leaves the committee' +
+      "'s list and cannot be put back — so this returns a pending id and a manifest; call commit_pending " +
+      "with the id to withdraw it. A helper cannot withdraw a speaker's talk. Refuses if the proposal is " +
+      'not yours, not on this event, or already placed on a published agenda.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...EVENT_ARG,
+        proposal: { type: 'string', description: "The proposal's id, as my_owed or the portal gives it." },
+      },
+      required: ['event', 'proposal'],
+      additionalProperties: false,
+    },
+    async run(env, args, nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const found = await eventOr(env, args, nowMs);
+      if (!found.ok) return refuse(found.says);
+      const proposed = await proposeAction(
+        { DB: env.DB, FILES: env.FILES },
+        principal,
+        { eventId: found.ev.id, surface: 'portal' },
+        'withdraw_proposal',
+        { submissionId: textArg(args, 'proposal') },
+        nowMs
+      );
+      if (proposed.kind === 'refused') return refuse(WITHDRAW_REFUSAL[proposed.reason] ?? "I couldn't stage that.");
+      if (proposed.kind === 'pending') {
+        return answered({
+          pending_id: proposed.id,
+          manifest: proposed.manifest,
+          says: `${proposed.manifest} Call commit_pending with pending_id "${proposed.id}" to withdraw it.`,
+        });
+      }
+      return refuse('That could not be staged for confirmation.');
+    },
+  },
+
   // The organizer's flagship over MCP (D-037): invite a batch of people to
   // submit to an open call — the "invite my Gmail contacts" gedanken. This is a
   // confirm-with-number act, so it is TWO calls, never one: propose_invite
@@ -1557,7 +1655,8 @@ const SIGNED_TOOLS: Record<string, Tool> = {
         pendingId,
         number,
         nowMs,
-        ['invite', 'decide'] // commits only the confirm-tier acts proposed over MCP — never some other owned pending
+        // commits only the confirm-tier acts proposed over MCP — never some other owned pending
+        ['invite', 'decide', 'withdraw_proposal']
       );
       if (!result.ok) return refuse(COMMIT_REFUSAL[result.reason] ?? "That couldn't be committed.");
       const outcome = result.outcome;
@@ -1585,6 +1684,20 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       );
     },
   },
+};
+
+const TASK_REFUSAL: Record<string, string> = {
+  'no-task': 'That task is not yours to mark, or not on this event. my_owed lists the ones that are.',
+  'not-allowed': "That isn't something you can do from here.",
+  'not-here': "That isn't something you can do from here.",
+};
+
+const WITHDRAW_REFUSAL: Record<string, string> = {
+  'no-proposal':
+    'That proposal is not yours to withdraw, is already placed on the published agenda, or is not on this event.',
+  'not-allowed': "That isn't something you can do from here.",
+  'not-here': "That isn't something you can do from here.",
+  'too-many-pending': 'You have several actions waiting on confirmation — commit or drop those first.',
 };
 
 const DECIDE_REFUSAL: Record<string, string> = {

@@ -243,6 +243,19 @@ test('capabilitiesOf: a dual-role organizer in the speaker portal gets ONLY spea
   assert.equal(caps.has('star'), true);
 });
 
+test('capabilitiesOf: speaker acts (task/withdraw) are PORTAL-only, never the public event bubble', () => {
+  // The split that keeps speaker-facing content on the public event surface from
+  // ever reaching a "withdraw my talk". Same account, two surfaces.
+  const portal = capabilitiesOf(prin(), 'ev-1', 'portal');
+  assert.equal(portal.has('task'), true);
+  assert.equal(portal.has('withdraw'), true);
+  assert.equal(portal.has('star'), true);
+  const event = capabilitiesOf(prin(), 'ev-1', 'event');
+  assert.equal(event.has('task'), false);
+  assert.equal(event.has('withdraw'), false);
+  assert.equal(event.has('star'), true);
+});
+
 test('capabilitiesOf: an event approver decides but cannot invite (Codex auth fix)', () => {
   // Inviting writes the speaker CRM, which requireOrg gates to organizer/owner.
   // An approver must not pass the invite capability, or it commits-then-throws.
