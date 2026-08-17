@@ -242,9 +242,9 @@ export async function enrollInPipeline(
       [
         db
           .prepare(
-            'INSERT INTO crm_card (id, person_id, stage, score, rationale, created_at, updated_at) VALUES (?,?,?,?,?,?,?)'
+            'INSERT INTO crm_card (id, person_id, stage, score, rationale, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)'
           )
-          .bind(cardId, personId, stage, score, rationale, t, t),
+          .bind(cardId, personId, stage, score, rationale, principal.personId, t, t),
         db
           .prepare('INSERT INTO crm_card_event (id, card_id, from_stage, to_stage, created_at) VALUES (?,?,NULL,?,?)')
           .bind(newId('cev'), cardId, stage, t),

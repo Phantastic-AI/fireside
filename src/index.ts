@@ -135,6 +135,28 @@ app.post('/__cp0/reseed', async (c) => {
   }
 });
 
+// The drop door, behind the same secret: tear down one REAL event's whole
+// tree (and, optionally, listed gedanken contacts) so a rehearsal can be
+// reset and conducted again. Refuses the demo conferences — reseed owns
+// those. Body: { "slug": "...", "people": ["per-..."] } — either part may
+// be omitted.
+app.post('/__cp0/drop', async (c) => {
+  const key = c.req.header('x-reseed');
+  if (!c.env.RESEED_KEY || !key || key !== c.env.RESEED_KEY) return c.text('no', 403);
+  const body = (await c.req.json().catch(() => ({}))) as { slug?: unknown; people?: unknown };
+  const slugv = typeof body.slug === 'string' ? body.slug.trim() : '';
+  const people = Array.isArray(body.people) ? body.people.map(String) : [];
+  if (!slugv && people.length === 0) return c.json({ error: 'nothing to drop' }, 400);
+  const { dropEvent, dropPeople } = await import('./workflows/reseed');
+  try {
+    const event = slugv ? await dropEvent(c.env.DB, c.env.FILES, slugv) : undefined;
+    const dropped = people.length ? await dropPeople(c.env.DB, people) : undefined;
+    return c.json({ event, people: dropped });
+  } catch (e) {
+    return c.json({ error: String(e) }, 500);
+  }
+});
+
 const cssHeaders = { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'public, max-age=300' };
 app.get('/a/on.css', (c) => c.body(tokensCss + sharedCss + onstageCss + marketingCss, 200, cssHeaders));
 app.get('/a/back.css', (c) => c.body(tokensCss + sharedCss + backstageCss, 200, cssHeaders));

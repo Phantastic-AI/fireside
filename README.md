@@ -28,11 +28,12 @@ not yet sent) and **DevOps Days Charlotte 2025** (finished, recordings up).
 That credential is published on purpose: Naomi is the demonstration
 organizer, and her conference is reset to the same instant of mid-decision
 drama on demand — and automatically, once a day at **13:00 UTC** (06:00
-Pacific). So anything you change is yours to play with and gone by morning;
-nothing you do to the demo sticks. Sign up fresh at
-[/sign-up](https://onfireside.com/sign-up) and you can start a
-conference of your own — the form at `/admin/new` takes a name, days, rooms
-and tracks, and hands you the keys.
+Pacific). The rebuild is surgical: the demo conferences and their cast reset
+to pristine, and whatever you did while signed in as the demo cast resets
+with them. Sign up fresh at [/sign-up](https://onfireside.com/sign-up) and
+you can start a conference of your own — the form at `/admin/new` takes a
+name, days, rooms and tracks, and hands you the keys — and what you create
+under your own account is yours: the nightly rebuild never touches it.
 
 Speakers and reviewers in the demonstration cast sign in with magic links;
 for `@example.org` addresses the link prints on the page instead of
@@ -193,14 +194,7 @@ switched off.
 ```sh
 npm install
 npx wrangler d1 create fireside          # then put the id in wrangler.jsonc
-npx wrangler d1 execute fireside --remote --file schema/0001_init.sql
-npx wrangler d1 execute fireside --remote --file schema/0002_roles.sql
-npx wrangler d1 execute fireside --remote --file schema/0003_passwords.sql
-npx wrangler d1 execute fireside --remote --file schema/0004_reviewer_role.sql
-npx wrangler d1 execute fireside --remote --file schema/0005_submission_waves.sql
-npx wrangler d1 execute fireside --remote --file schema/0006_file_comments.sql
-npx wrangler d1 execute fireside --remote --file schema/0007_review_depth.sql
-npx wrangler d1 execute fireside --remote --file schema/0008_speaker_crm.sql
+for f in schema/0*.sql; do npx wrangler d1 execute fireside --remote --file "$f"; done
 npx wrangler secret put SESSION_SECRET   # any long random string
 npx wrangler deploy
 ```
@@ -258,6 +252,8 @@ pre-seeded, so there is no setup:
 - The demo world **rebuilds to its pristine state every day at 13:00 UTC**
   (06:00 Pacific). A full run is well under an hour, so start clear of that
   window and it won't reset under you; the kit is resumable if it ever does.
+  The rebuild touches only the demo conferences and cast — accounts and
+  conferences an evaluator creates for itself survive it.
 
 ## Colophon
 
