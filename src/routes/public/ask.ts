@@ -232,6 +232,26 @@ async function portalRefs(db: D1Database, eventId: string, principal: Principal)
   return refs;
 }
 
+/** The reviewer's own live assignments this round, as the reference list the
+ *  reviews-page bubble resolves against (to step aside). Titles are shown to
+ *  reviewers under blind review — only author names are hidden — and only their
+ *  OWN review rows are read, so the list can never reach another reviewer's
+ *  queue. The boundary re-checks the assignment before it recuses. */
+async function reviewerRefs(db: D1Database, eventId: string, principal: Principal): Promise<Referent[]> {
+  const rows = await db
+    .prepare(
+      `SELECT s.id, s.title FROM review r
+         JOIN submission s ON s.id = r.submission_id
+         JOIN event e ON e.id = s.event_id
+        WHERE r.reviewer_person_id = ? AND s.event_id = ?
+          AND r.submitted_at IS NULL AND r.round = e.current_round
+        LIMIT 60`
+    )
+    .bind(principal.personId, eventId)
+    .all<{ id: string; title: string }>();
+  return rows.results.map((r) => ({ id: r.id, title: r.title, kind: 'queue' as const }));
+}
+
 function noteBlock(note: Note, ev: EventHome): string {
   return (
     '<div class="cc-fs" data-ask-note>' +
@@ -654,14 +674,16 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
     // surface (star a session). The surface decides both what the person may DO
     // and which list the planner resolves ids against.
     const here = String(form['here'] ?? '').trim();
-    const surface: Surface = here === 'portal' ? 'portal' : 'event';
+    const surface: Surface = here === 'portal' ? 'portal' : here === 'reviews' ? 'reviews' : 'event';
     if (principal && canActHere(principal, ev.id, surface)) {
       const planClaim = await claimAsk(c.env.DB, asker);
       if (!planClaim.ok) return reply(planClaim.who === 'everyone' ? 'busy-today' : 'at-the-cap');
       const refs =
         surface === 'portal'
           ? await portalRefs(c.env.DB, ev.id, principal)
-          : starrableSessions(await agenda(c.env.DB, ev.id));
+          : surface === 'reviews'
+            ? await reviewerRefs(c.env.DB, ev.id, principal)
+            : starrableSessions(await agenda(c.env.DB, ev.id));
       const act = await conciergeAct(
         { DB: c.env.DB, FILES: c.env.FILES, AI: c.env.AI },
         principal,

@@ -221,7 +221,9 @@ export function backstageShell(o: {
     `<span>${esc(o.tzLabel)}</span>` +
     `<span style="margin-left:auto"><a class="link" href="/${o.eventSlug}">See the public page ↗</a></span>` +
     '</div></footer></div>' +
-    conciergeMount(o.eventSlug, 'backstage')
+    // On the reviews screen the bubble is the REVIEWER's — it acts on their own
+    // queue (step aside). Elsewhere on the backstage it stays a plain reader.
+    conciergeMount(o.eventSlug, 'backstage', o.here === '/reviews' ? 'reviews' : undefined)
   );
 }
 

@@ -65,6 +65,13 @@ const CATALOG: ActionSpec[] = [
       'Withdraw one of my own proposals. This is final — the talk leaves the committee list and cannot be put back.',
     args: 'submissionId: the id from YOUR PROPOSALS.',
   },
+  {
+    type: 'step_aside',
+    capability: 'review',
+    blurb:
+      'Step aside from (recuse myself from) one proposal I was assigned to review — a conflict, or I know the speaker. Final for this round.',
+    args: 'submissionId: the id from YOUR REVIEW QUEUE.',
+  },
 ];
 
 /** The actions this principal may actually take here, in catalog order. Pure. */
@@ -154,13 +161,14 @@ const SYSTEM = [
  *  a session to star, a task to mark done, a proposal to withdraw. `kind` is
  *  the group it is listed under, so the model picks an id from the right list
  *  for the action it chose. The boundary still validates the id it returns. */
-export type Referent = { id: string; title: string; kind: 'session' | 'task' | 'proposal' };
+export type Referent = { id: string; title: string; kind: 'session' | 'task' | 'proposal' | 'queue' };
 export type SessionRef = Referent; // kept for the event surface's session list
 
 const GROUP_LABEL: Record<Referent['kind'], string> = {
   session: 'SESSIONS',
   task: 'YOUR TASKS',
   proposal: 'YOUR PROPOSALS',
+  queue: 'YOUR REVIEW QUEUE',
 };
 
 function buildUser(message: string, catalog: ActionSpec[], refs: Referent[]): string {
@@ -170,7 +178,7 @@ function buildUser(message: string, catalog: ActionSpec[], refs: Referent[]): st
   // knows which list an id came from. Defense-in-depth alongside the SECURITY
   // rule in the system prompt and the boundary's own validation.
   const blocks: string[] = [];
-  for (const kind of ['session', 'task', 'proposal'] as Referent['kind'][]) {
+  for (const kind of ['session', 'task', 'proposal', 'queue'] as Referent['kind'][]) {
     const items = refs.filter((r) => r.kind === kind);
     if (!items.length) continue;
     const label = GROUP_LABEL[kind];
@@ -344,6 +352,9 @@ function interpretDirect(plan: Extract<Plan, { route: 'act' }>, outcome: string,
       const back = plan.args.done === false;
       return { kind: 'acted', say: back ? `Done — "${subject}" is back on your list.` : `Done — marked "${subject}" done.` };
     }
+    if (plan.action === 'step_aside') {
+      return { kind: 'acted', say: `Done — you've stepped aside from "${subject}". It is off your list for this round.` };
+    }
     return { kind: 'acted', say: 'Done.' };
   }
   if (outcome === 'moved') {
@@ -363,6 +374,8 @@ function refusalSentence(reason: string): string {
       return "I couldn't find that on your list — which task did you mean?";
     case 'no-proposal':
       return "I couldn't find that proposal of yours — which one did you mean?";
+    case 'not-assigned':
+      return "That proposal isn't on your reading list this round — which one did you mean?";
     case 'no-polarity':
       return 'Did you want that added to your schedule, or taken off?';
     case 'not-allowed':

@@ -39,6 +39,7 @@ import { sendFriendRequest } from './friends';
 import { addManualContact, inviteToSubmit } from './crm';
 import { stageDecision, type Decision } from './decide';
 import { completeTask, reopenTask, withdrawProposal } from './portal-actions';
+import { stepAside } from './review';
 import { taskActorId } from '../queries/helpers';
 import { eventBySlug } from '../queries/public';
 
@@ -111,7 +112,11 @@ export function capabilitiesOf(principal: Principal, eventId: string | null, sur
       allow('withdraw');
       break;
     case 'reviews':
-      if (isReviewer || isDecider) allow('review');
+      // Everyone the review workflows admit (REVIEW_ROLES: owner, approver,
+      // editor, viewer, reviewer, plus install-organizer/reviewer) — so the
+      // capability agrees with the workflow guard and an editor/viewer who can
+      // score on the web is not refused by the concierge (Codex).
+      if (isReviewer || isDecider || eventRole === 'editor' || eventRole === 'viewer') allow('review');
       break;
     case 'backstage':
       if (isDecider) allow('decide');
@@ -520,6 +525,40 @@ export const ACTIONS: Record<string, ActionDef> = {
     },
     async execute(env, p, _eventId, args) {
       return withdrawProposal(env.DB, p.personId, str(args.submissionId));
+    },
+  },
+
+  // A reviewer recuses from a proposal they were assigned — a conflict, or they
+  // know the speaker. Direct: their own explicit ask on their own queue, the
+  // same immediacy the MCP step_aside tool has. The reviewer must ACTUALLY hold
+  // the assignment (a review row they own), so a decider's whole-pile view can
+  // never recuse from a proposal never handed to them.
+  step_aside: {
+    capability: 'review',
+    tier: 'direct',
+    surfaces: ['reviews'],
+    async validateAndFreeze(env, p, eventId, raw) {
+      const submissionId = str(raw.submissionId);
+      if (!submissionId || !eventId) return { ok: false, reason: 'not-assigned' };
+      const row = await env.DB
+        .prepare(
+          `SELECT s.title, r.round FROM review r
+             JOIN submission s ON s.id = r.submission_id
+            WHERE r.submission_id = ? AND r.reviewer_person_id = ? AND s.event_id = ?
+            ORDER BY r.round DESC LIMIT 1`
+        )
+        .bind(submissionId, p.personId, eventId)
+        .first<{ title: string; round: number }>();
+      if (!row) return { ok: false, reason: 'not-assigned' };
+      return { ok: true, args: { submissionId, round: row.round }, subject: row.title, manifest: `Step aside from "${row.title}".` };
+    },
+    async execute(env, p, eventId, args) {
+      if (!eventId) return 'trouble';
+      const round = typeof args.round === 'number' ? args.round : 0;
+      const outcome = await stepAside(env.DB, p, eventId, round, str(args.submissionId));
+      // 'stepped'/'already' both leave them off the list — success; the rest are
+      // the world having moved under them.
+      return outcome === 'stepped' || outcome === 'already' ? 'done' : outcome === 'trouble' ? 'trouble' : 'moved';
     },
   },
 };
