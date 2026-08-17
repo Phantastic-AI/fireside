@@ -1042,6 +1042,78 @@ export async function openNextRound(
   return 'opened';
 }
 
+/**
+ * The closed set for reopening an earlier round.
+ *
+ *   'reopened'     — the committee is reading that round again
+ *   'has-reviews'  — the current round holds submitted work; not a button
+ *   'moved'        — the round moved underneath between reading and clicking
+ *   'refused'      — not an earlier round, or not a round at all
+ *   'trouble'      — something unexpected; nothing was written
+ */
+export type ReopenOutcome = 'reopened' | 'has-reviews' | 'moved' | 'refused' | 'trouble';
+
+/**
+ * Reopen an earlier round — the way back this room never had. A committee
+ * that rolled forward too soon, or watched a round's dates lapse with nothing
+ * sent in, steps back to the round whose card it actually configured instead
+ * of losing the rubric to the next round's simpler one.
+ *
+ * Nothing is deleted in either direction: the later round's name, dates and
+ * card stay written for when it opens again, and every review ever submitted
+ * stays on the record — the same non-destructive law openNextRound keeps.
+ *
+ * The one refusal with teeth: the CURRENT round must hold no submitted
+ * reviews. Stepping the committee back over work already sent in is a
+ * conversation, not a button — and a different act from recovering an empty
+ * room, which is the whole of what this one does.
+ */
+export async function reopenRound(
+  db: D1Database,
+  principal: Principal,
+  eventId: string,
+  fromRound: number,
+  toRound: number
+): Promise<ReopenOutcome> {
+  requireDecider(principal, eventId);
+  if (!Number.isInteger(fromRound) || !Number.isInteger(toRound)) return 'refused';
+  if (toRound < 1 || toRound >= fromRound) return 'refused';
+
+  const ev = await db
+    .prepare('SELECT current_round FROM event WHERE id = ?')
+    .bind(eventId)
+    .first<{ current_round: number }>();
+  if (!ev) return 'moved';
+  if (ev.current_round !== fromRound) return 'moved';
+
+  const SENT_IN_CURRENT = `SELECT 1 FROM review r JOIN submission s ON s.id = r.submission_id
+     WHERE s.event_id = ?1 AND r.round = ?2 AND r.submitted_at IS NOT NULL`;
+  const sent = await db.prepare(`${SENT_IN_CURRENT} LIMIT 1`).bind(eventId, fromRound).first();
+  if (sent) return 'has-reviews';
+
+  try {
+    await checkedBatch(
+      db,
+      [
+        // Both facts re-checked inside the batch: the round is still the one
+        // the screen showed, and no review landed in it between the reading
+        // and the click — two chairs, two laptops, nothing happens twice.
+        guard(db, 'SELECT 1 FROM event WHERE id = ?1 AND current_round <> ?2', eventId, fromRound),
+        guard(db, SENT_IN_CURRENT, eventId, fromRound),
+        db
+          .prepare('UPDATE event SET current_round = ?2 WHERE id = ?1 AND current_round = ?3')
+          .bind(eventId, toRound, fromRound),
+      ],
+      [0, 0, 1],
+      STALE
+    );
+  } catch (e) {
+    const outcome = outcomeOf(e, 'reopenRound');
+    return outcome === 'moved' ? 'moved' : 'trouble';
+  }
+  return 'reopened';
+}
+
 /* ------------------------------------------------------------------ *
  * The nudge
  * ------------------------------------------------------------------ */

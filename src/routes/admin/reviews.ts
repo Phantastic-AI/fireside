@@ -84,6 +84,7 @@ import {
   ROUND_NAME_MAX,
   SEARCH_MAX,
   TEXT_MARK_MAX,
+  roundConfigFor,
   type HandTarget,
   type QueueAuthor,
   type QueueRow,
@@ -106,6 +107,7 @@ import {
   takeBackAssignments,
   stepAside,
   openNextRound,
+  reopenRound,
   saveRoundConfig,
   nudgeReviewer,
   MOST_EACH,
@@ -117,6 +119,7 @@ import {
   type RoundConfigInput,
   type RoundConfigOutcome,
   type RoundOutcome,
+  type ReopenOutcome,
   type StepAsideOutcome,
 } from '../../workflows/review';
 // @ts-ignore -- plain-JS island shipped as its own source text; see cfp.ts.
@@ -326,6 +329,36 @@ function roundSaid(code: RoundOutcome, round: number): string {
       return 'Somebody opened it first. This is the round the committee is on.';
     case 'refused':
       return 'That is not the round after this one. Nothing was changed.';
+    case 'trouble':
+      return 'That did not go through. Try it once more.';
+  }
+}
+
+const REOPEN_CODES: readonly ReopenOutcome[] = [
+  'reopened', 'has-reviews', 'moved', 'refused', 'trouble',
+];
+
+function reopenCode(raw: string | undefined): ReopenOutcome | null {
+  return REOPEN_CODES.find((c) => c === raw) ?? null;
+}
+
+/** `round` is the one the committee is on now — after reopening, the earlier one. */
+function reopenSaid(code: ReopenOutcome, round: number): string {
+  switch (code) {
+    case 'reopened':
+      return (
+        `${say('review.round', { n: num(round) })} is open again. Its card and its reading ` +
+        'lists are exactly as they were left, and nothing written later moved.'
+      );
+    case 'has-reviews':
+      return (
+        'This round already holds submitted reviews, so stepping back over them is not a ' +
+        'button. Take back what was sent in first, or talk to the committee.'
+      );
+    case 'moved':
+      return 'The round moved while you were looking. This is the one the committee is on.';
+    case 'refused':
+      return 'Only an earlier round can be reopened. Nothing was changed.';
     case 'trouble':
       return 'That did not go through. Try it once more.';
   }
@@ -1091,7 +1124,7 @@ function roundConfigForm(ev: ReviewEvent, round: number): string {
 
 /** One earlier round, read back whole — the proof that opening the next one
  *  did not touch it: its own name, its own dates, its own counts, unmoved. */
-function roundHistoryLine(ev: ReviewEvent, r: RoundHistoryEntry): string {
+function roundHistoryLine(ev: ReviewEvent, r: RoundHistoryEntry, current: number): string {
   const name = r.name ?? say('review.round', { n: num(r.round) });
   const record =
     r.onRecord === 0
@@ -1121,6 +1154,14 @@ function roundHistoryLine(ev: ReviewEvent, r: RoundHistoryEntry): string {
     `${esc(r.blind ? 'Names hidden while scoring' : 'Names visible while scoring')}</div>` +
     `<div class="sub" style="margin-top:2px">${esc(`${record}${stepped}`)}</div>` +
     cardLine +
+    // The way back (T603): any earlier round can be reopened, and the
+    // workflow refuses when the current round already holds submitted work —
+    // the button is always honest to press.
+    `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/reopen-round" style="margin-top:8px">` +
+    `<input type="hidden" name="from" value="${esc(String(current))}">` +
+    `<input type="hidden" name="to" value="${esc(String(r.round))}">` +
+    '<button class="btn btn-sm btn-quiet" type="submit">Reopen this round</button>' +
+    '</form>' +
     '</div>'
   );
 }
@@ -1169,6 +1210,10 @@ function roundPanel(
     '<span class="sub">Everyone starts again on the proposals that are still undecided.</span>' +
     '</div>';
 
+  // A round that was open before (reopened, then advanced again) keeps its
+  // identity: the confirm prefils from the stored config so pressing Open
+  // does not overwrite a saved name and dates with blanks (T603).
+  const nextCfg = roundConfigFor(ev.roundConfigRaw, standing.round + 1);
   const confirm =
     '<div class="notebox" style="margin-top:12px;border-left-color:var(--danger)">' +
     `<b>Open ${esc(next.toLowerCase())}?</b>` +
@@ -1188,14 +1233,15 @@ function roundPanel(
     `<input type="hidden" name="to" value="${standing.round + 1}">` +
     '<div style="display:flex;gap:12px;flex-wrap:wrap">' +
     '<label class="f" style="flex:1;min-width:200px"><span class="f-lab">Name it</span>' +
-    `<input type="text" name="name" maxlength="${ROUND_NAME_MAX}" placeholder="${esc(next)}"></label>` +
+    `<input type="text" name="name" maxlength="${ROUND_NAME_MAX}" placeholder="${esc(next)}"` +
+    ` value="${esc(nextCfg.name ?? '')}"></label>` +
     '<label class="f" style="min-width:140px"><span class="f-lab">Opens</span>' +
-    '<input type="text" name="opens" placeholder="2026-10-16"></label>' +
+    `<input type="text" name="opens" placeholder="2026-10-16" value="${esc(nextCfg.opensAt ? isoDay(nextCfg.opensAt) : '')}"></label>` +
     '<label class="f" style="min-width:140px"><span class="f-lab">Closes</span>' +
-    '<input type="text" name="closes" placeholder="2026-11-30"></label>' +
+    `<input type="text" name="closes" placeholder="2026-11-30" value="${esc(nextCfg.closesAt ? isoDay(nextCfg.closesAt) : '')}"></label>` +
     '</div>' +
     '<label class="radio" style="margin-top:10px;align-items:flex-start">' +
-    '<input type="checkbox" name="blind" value="1" checked>' +
+    `<input type="checkbox" name="blind" value="1"${nextCfg.blind ? ' checked' : ''}>` +
     '<span>Hide author names and employers from everyone reading it</span></label>' +
     '<div class="btnrow" style="margin-top:12px">' +
     `<button class="btn btn-danger" type="submit">Open ${esc(next.toLowerCase())}</button>` +
@@ -1207,7 +1253,7 @@ function roundPanel(
     earlier.length > 0
       ? '<div class="card card-pad" style="margin-top:12px">' +
         '<h4 class="serif" style="font-size:15.5px;font-weight:600">Earlier rounds</h4>' +
-        earlier.map((r) => roundHistoryLine(ev, r)).join('') +
+        earlier.map((r) => roundHistoryLine(ev, r, standing.round)).join('') +
         '</div>'
       : '';
 
@@ -2028,6 +2074,7 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     // against its own closed set before it is allowed to mean anything.
     const did = ev.everything ? assignCode(c.req.query('did')) : null;
     const rnd = ev.everything ? roundCode(c.req.query('round')) : null;
+    const rop = ev.everything ? reopenCode(c.req.query('reopen')) : null;
     const rc = ev.everything ? roundConfigCode(c.req.query('rc')) : null;
     const nudged = ev.everything ? nudgeCode(c.req.query('nudged')) : null;
     // A name off the address bar would be a stranger's word. This one is
@@ -2054,11 +2101,13 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
           ? assignSaid(did, tally(c.req.query('gave')), tally(c.req.query('held')), c.req.query('more') === '1')
           : rnd
             ? roundSaid(rnd, ev.round)
-            : rc
-              ? roundConfigSaid(rc)
-              : nudged
-                ? nudgeSaid(nudged, whoName, tally(c.req.query('open_left')))
-                : null,
+            : rop
+              ? reopenSaid(rop, ev.round)
+              : rc
+                ? roundConfigSaid(rc)
+                : nudged
+                  ? nudgeSaid(nudged, whoName, tally(c.req.query('open_left')))
+                  : null,
       })
     );
   });
@@ -2287,6 +2336,33 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     } catch (e) {
       if (e instanceof ScopeError) {
         return new Response(deniedPage('Opening a round is not yours to do.'), {
+          status: 403,
+          headers: HTML,
+        });
+      }
+      throw e;
+    }
+  });
+
+  // REOPENING AN EARLIER ROUND (T603) — the workflow itself refuses when the
+  // current round holds submitted work, so the button's honesty lives in one
+  // place and a crafted POST is told the same sentence as the screen.
+  app.post('/admin/:eventSlug/reviews/reopen-round', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const opened = await enter(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'), slug);
+    if (opened instanceof Response) return opened;
+    const { principal, ev } = opened;
+
+    const form = await c.req.parseBody();
+    const from = Number.parseInt(typeof form['from'] === 'string' ? form['from'] : '', 10);
+    const to = Number.parseInt(typeof form['to'] === 'string' ? form['to'] : '', 10);
+
+    try {
+      const outcome = await reopenRound(c.env.DB, principal, ev.id, from, to);
+      return c.redirect(teamUrl(ev.slug, { reopen: outcome }), 303);
+    } catch (e) {
+      if (e instanceof ScopeError) {
+        return new Response(deniedPage('Reopening a round is not yours to do.'), {
           status: 403,
           headers: HTML,
         });
