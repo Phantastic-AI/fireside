@@ -125,6 +125,7 @@ function rosterOnlyAsListRow(r: {
   return {
     personId: r.personId,
     name: r.name,
+    stage: null,
     jobTitle: r.jobTitle,
     organisation: r.organisation,
     proposals: [],
@@ -301,6 +302,7 @@ function personRow(slug: string, r: PersonListRow, headshots: Map<string, string
     '</span></div></td>' +
     `<td>${proposalChips(r.proposals)}</td>` +
     `<td>${owe}</td>` +
+    `<td>${r.stage ? `<span class="chip">${esc(r.stage)}</span>` : '<span class="sub">—</span>'}</td>` +
     `<td style="text-align:right;white-space:nowrap"><a class="btn btn-sm" href="/admin/${esc(slug)}/people/${esc(r.personId)}">Open</a></td>` +
     '</tr>'
   );
@@ -309,7 +311,7 @@ function personRow(slug: string, r: PersonListRow, headshots: Map<string, string
 function peopleTable(slug: string, rows: PersonListRow[], headshots: Map<string, string>): string {
   return (
     '<div class="tablewrap" style="margin-top:6px"><table class="t"><thead><tr>' +
-    '<th>Speaker</th><th>Proposals here</th><th>Open tasks</th><th></th>' +
+    '<th>Speaker</th><th>Proposals here</th><th>Open tasks</th><th>Pipeline</th><th></th>' +
     '</tr></thead><tbody>' +
     rows.map((r) => personRow(slug, r, headshots)).join('') +
     '</tbody></table></div>'

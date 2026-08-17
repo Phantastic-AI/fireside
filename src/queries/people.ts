@@ -32,6 +32,8 @@ export type PersonListRow = {
   proposals: PersonProposal[];
   /** Open tasks (not done, not cancelled) they hold at THIS event. */
   openTaskCount: number;
+  /** Their pipeline stage on the shared sourcing board, when they hold a card. */
+  stage: string | null;
 };
 
 export type PeopleList = {
@@ -117,7 +119,8 @@ export async function peopleList(
   const [personRes, proposalRes, taskRes] = await db.batch<Record<string, unknown>>([
     db
       .prepare(
-        `SELECT DISTINCT pe.id, pe.name, pe.job_title, pe.organisation
+        `SELECT DISTINCT pe.id, pe.name, pe.job_title, pe.organisation,
+                (SELECT cc.stage FROM crm_card cc WHERE cc.person_id = pe.id) AS stage
          FROM person pe
          JOIN participation pa ON pa.person_id = pe.id
          JOIN submission s ON s.id = pa.submission_id
@@ -166,11 +169,13 @@ export async function peopleList(
     name: string;
     job_title: string | null;
     organisation: string | null;
+    stage: string | null;
   }>(personRes).map((p) => ({
     personId: p.id,
     name: p.name,
     jobTitle: p.job_title,
     organisation: p.organisation,
+    stage: p.stage,
     proposals: proposalsByPerson.get(p.id) ?? [],
     openTaskCount: openTasksByPerson.get(p.id) ?? 0,
   }));

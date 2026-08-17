@@ -594,17 +594,27 @@ function dayWord(iso: string): string {
   return `${d} ${REMINDER_MONTHS[m - 1] ?? ''}`.trim();
 }
 
-function reminderSubject(titles: string[]): string {
+/** Each title said once, with a count when it repeats — two tasks that share
+ *  a name read "Send your slides ×2", never the same line twice (T612). */
+function saidOnce(titles: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const t of titles) counts.set(t, (counts.get(t) ?? 0) + 1);
+  return [...counts.entries()].map(([t, n]) => (n > 1 ? `${t} ×${n}` : t));
+}
+
+function reminderSubject(rawTitles: string[]): string {
+  const titles = saidOnce(rawTitles);
   return titles.length === 1
     ? `Reminder: ${titles[0]}`
-    : `Reminder: ${titles.length} deliverables still open`;
+    : `Reminder: ${rawTitles.length} deliverables still open`;
 }
 
 /** Names the outstanding deliverable(s) and the date they now owe it by — the
  *  exact two facts CNT-08's manual check reads for — and carries the link
  *  straight to the portal that answers them. A signed-out speaker or helper
  *  clicking it lands on the portal's sign-in, which returns them right back. */
-export function reminderBody(titles: string[], eventName: string, dueOn: string, portalUrl: string): string {
+export function reminderBody(rawTitles: string[], eventName: string, dueOn: string, portalUrl: string): string {
+  const titles = saidOnce(rawTitles);
   const said = dayWord(dueOn);
   const open = `Open your portal to send it: ${portalUrl}`;
   if (titles.length === 1) {

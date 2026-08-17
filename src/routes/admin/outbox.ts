@@ -920,6 +920,11 @@ export function registerOutbox(app: Hono<{ Bindings: Env }>): void {
       // A refusal re-renders the screen it came from, with its own sentence —
       // the number in front of her is always the number in the database.
       const again = async (message: string) => {
+        // T612 — an agent driving this door gets a parseable refusal instead
+        // of a re-rendered page: same sentence, machine shape, honest 409.
+        if ((c.req.header('accept') ?? '').includes('application/json')) {
+          return c.json({ ok: false, refused: message }, 409);
+        }
         const [ob, hist] = await Promise.all([
           outbox(c.env.DB, principal, ev!.id),
           sentHistory(c.env.DB, principal, ev!.id),
@@ -1042,6 +1047,11 @@ export function registerOutbox(app: Hono<{ Bindings: Env }>): void {
       const sane = /^\d+$/.test(raw) && Number.isSafeInteger(expected) && expected > 0;
 
       const again = async (message: string) => {
+        // T612 — an agent driving this door gets a parseable refusal instead
+        // of a re-rendered page: same sentence, machine shape, honest 409.
+        if ((c.req.header('accept') ?? '').includes('application/json')) {
+          return c.json({ ok: false, refused: message }, 409);
+        }
         const [ob, hist] = await Promise.all([
           outbox(c.env.DB, principal, ev!.id),
           sentHistory(c.env.DB, principal, ev!.id),

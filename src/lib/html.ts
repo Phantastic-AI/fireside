@@ -223,7 +223,7 @@ export function backstageShell(o: {
     '</div></footer></div>' +
     // On the reviews screen the bubble is the REVIEWER's — it acts on their own
     // queue (step aside). Elsewhere on the backstage it stays a plain reader.
-    conciergeMount(o.eventSlug, 'backstage', o.here === '/reviews' ? 'reviews' : undefined)
+    conciergeMount(o.eventSlug, 'backstage', o.here === '/reviews' ? 'reviews' : 'backstage')
   );
 }
 

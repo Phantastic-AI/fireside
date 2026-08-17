@@ -302,6 +302,22 @@ async function reviewerRefs(db: D1Database, eventId: string, principal: Principa
   return rows.results.map((r) => ({ id: r.id, title: r.title, kind: 'queue' as const }));
 }
 
+/** The organizer's undecided pile, newest first, capped — what the backstage
+ *  bubble can decide on (T612). A pile past the cap still decides its most
+ *  recent arrivals here; the desk and MCP hold the whole of it. */
+async function pileRefs(db: D1Database, eventId: string): Promise<Referent[]> {
+  const rows = await db
+    .prepare(
+      `SELECT id, title FROM submission
+        WHERE event_id = ? AND state = 'submitted'
+        ORDER BY submitted_at DESC, id DESC
+        LIMIT 60`
+    )
+    .bind(eventId)
+    .all<{ id: string; title: string }>();
+  return rows.results.map((r) => ({ id: r.id, title: r.title, kind: 'pile' as const }));
+}
+
 function noteBlock(note: Note, ev: EventHome): string {
   return (
     '<div class="cc-fs" data-ask-note>' +
@@ -748,7 +764,14 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
     // surface (star a session). The surface decides both what the person may DO
     // and which list the planner resolves ids against.
     const here = String(form['here'] ?? '').trim();
-    const surface: Surface = here === 'portal' ? 'portal' : here === 'reviews' ? 'reviews' : 'event';
+    const surface: Surface =
+      here === 'portal'
+        ? 'portal'
+        : here === 'reviews'
+          ? 'reviews'
+          : here === 'backstage'
+            ? 'backstage'
+            : 'event';
     if (principal && canActHere(principal, ev.id, surface)) {
       const planClaim = await claimAsk(c.env.DB, asker);
       if (!planClaim.ok) return reply(planClaim.who === 'everyone' ? 'busy-today' : 'at-the-cap');
@@ -757,7 +780,9 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
           ? await portalRefs(c.env.DB, ev.id, principal)
           : surface === 'reviews'
             ? await reviewerRefs(c.env.DB, ev.id, principal)
-            : starrableSessions(await agenda(c.env.DB, ev.id));
+            : surface === 'backstage'
+              ? await pileRefs(c.env.DB, ev.id)
+              : starrableSessions(await agenda(c.env.DB, ev.id));
       const act = await conciergeAct(
         { DB: c.env.DB, FILES: c.env.FILES, AI: c.env.AI },
         principal,

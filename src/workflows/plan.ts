@@ -66,6 +66,13 @@ const CATALOG: ActionSpec[] = [
     args: 'submissionId: the id from YOUR PROPOSALS.',
   },
   {
+    type: 'decide',
+    capability: 'decide',
+    blurb:
+      'Stage a decision on one proposal from THE PILE: accepted, waitlisted, or rejected. Staged only — a letter joins the outbox and nothing reaches the speaker until the organizer releases it.',
+    args: "submissionId: the id from THE PILE. decision: one of 'accepted' | 'waitlisted' | 'rejected'. You MUST decide which from what the person said.",
+  },
+  {
     type: 'step_aside',
     capability: 'review',
     blurb:
@@ -161,7 +168,7 @@ const SYSTEM = [
  *  a session to star, a task to mark done, a proposal to withdraw. `kind` is
  *  the group it is listed under, so the model picks an id from the right list
  *  for the action it chose. The boundary still validates the id it returns. */
-export type Referent = { id: string; title: string; kind: 'session' | 'task' | 'proposal' | 'queue' };
+export type Referent = { id: string; title: string; kind: 'session' | 'task' | 'proposal' | 'queue' | 'pile' };
 export type SessionRef = Referent; // kept for the event surface's session list
 
 const GROUP_LABEL: Record<Referent['kind'], string> = {
@@ -169,6 +176,7 @@ const GROUP_LABEL: Record<Referent['kind'], string> = {
   task: 'YOUR TASKS',
   proposal: 'YOUR PROPOSALS',
   queue: 'YOUR REVIEW QUEUE',
+  pile: 'THE PILE',
 };
 
 function buildUser(message: string, catalog: ActionSpec[], refs: Referent[]): string {
@@ -178,7 +186,7 @@ function buildUser(message: string, catalog: ActionSpec[], refs: Referent[]): st
   // knows which list an id came from. Defense-in-depth alongside the SECURITY
   // rule in the system prompt and the boundary's own validation.
   const blocks: string[] = [];
-  for (const kind of ['session', 'task', 'proposal', 'queue'] as Referent['kind'][]) {
+  for (const kind of ['session', 'task', 'proposal', 'queue', 'pile'] as Referent['kind'][]) {
     const items = refs.filter((r) => r.kind === kind);
     if (!items.length) continue;
     const label = GROUP_LABEL[kind];
