@@ -438,3 +438,74 @@ test('weightedAverage: an 8 out of 10 counts exactly as a 4 out of 5', () => {
   const plain = scorecardFor(JSON.stringify({ '1': [{ key: 'fit', label: 'Fit', max: 5 }] }), 1);
   assert.equal(weightedAverage(plain, { fit: 3 }), 3);
 });
+
+// ---- Surface parity: every agentic act answers on every face, or says why not
+//
+// The ACTIONS registry (workflows/agent.ts) is the one truth for what the
+// product can DO agentically. This test holds the law that each action is
+// reachable from BOTH faces — the in-product bubble (via the planner CATALOG)
+// and MCP — unless it carries an explicit exemption with a reason. Adding an
+// action without deciding its surfaces fails here, on purpose, instead of
+// being discovered in production three days later.
+import { ACTIONS } from '../src/workflows/agent';
+import { CATALOG } from '../src/workflows/plan';
+
+// The bubble cannot front these, and each says why. A stale entry (the action
+// gained bubble support, or stopped existing) fails below.
+const BUBBLE_EXEMPT: Record<string, string> = {
+  connect_request: 'needs a people reference list the bubble does not carry yet (epic T602 note)',
+  invite: 'takes name+email pairs an in-page referent list cannot carry; MCP is its home',
+  task_reopen: 'the planner dispatches it through task_done with done=false',
+};
+
+// MCP tool -> action type it fronts (read the tools, not assumptions).
+const MCP_FRONTS = new Set([
+  'star', // star_session
+  'task_done', // mark_task_done
+  'task_reopen', // mark_task_done with done=false
+  'withdraw_proposal', // propose_withdraw
+  'invite', // propose_invite
+  'decide', // propose_decision
+  'step_aside', // step_aside
+]);
+const MCP_EXEMPT: Record<string, string> = {
+  connect_request: 'attendee social act; MCP surface deferred with the bubble one (epic T602 note)',
+};
+
+test('surface parity: every action reaches the bubble or is exempt with a reason', () => {
+  const planned = new Set(CATALOG.map((a) => a.type));
+  for (const type of Object.keys(ACTIONS)) {
+    assert.ok(
+      planned.has(type) || type in BUBBLE_EXEMPT,
+      `action "${type}" is neither in the planner CATALOG nor bubble-exempted — decide its surface`
+    );
+  }
+  for (const type of Object.keys(BUBBLE_EXEMPT)) {
+    assert.ok(type in ACTIONS, `stale bubble exemption "${type}" — the action no longer exists`);
+    assert.ok(
+      !planned.has(type),
+      `stale bubble exemption "${type}" — the planner now fronts it, drop the exemption`
+    );
+  }
+});
+
+test('surface parity: every action reaches MCP or is exempt with a reason', () => {
+  for (const type of Object.keys(ACTIONS)) {
+    assert.ok(
+      MCP_FRONTS.has(type) || type in MCP_EXEMPT,
+      `action "${type}" has no MCP tool and no exemption — decide its surface`
+    );
+  }
+  for (const type of Object.keys(MCP_EXEMPT)) {
+    assert.ok(type in ACTIONS, `stale MCP exemption "${type}" — the action no longer exists`);
+  }
+});
+
+test('surface parity: the planner never offers an action the boundary lacks', () => {
+  for (const a of CATALOG) {
+    assert.ok(
+      a.type in ACTIONS || a.type === 'task_done',
+      `planner CATALOG offers "${a.type}" but the ACTIONS boundary has no such act`
+    );
+  }
+});

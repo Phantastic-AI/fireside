@@ -43,7 +43,7 @@ type ActionSpec = {
 // v1 wires exactly one write end to end: star / unstar. It is reversible and
 // self-scoped, so it proves the whole pipeline at the lowest possible stakes.
 // More actions slot in here as their confirm surfaces are built.
-const CATALOG: ActionSpec[] = [
+export const CATALOG: ActionSpec[] = [
   {
     type: 'star',
     capability: 'star',
