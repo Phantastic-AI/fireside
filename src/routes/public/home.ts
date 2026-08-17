@@ -418,8 +418,8 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     // swapped the two engineer facts he flagged for a fast claim the agenda copy
     // already makes and the fact that there is one login for the whole cast.
     '<ul class="mkt-feat">' +
-    '<li>Free and open source</li><li>Fast on one bar of wifi</li>' +
-    '<li>Every role, one login</li><li>Speaks MCP</li>' +
+    '<li>Free and open source</li><li>User-friendly UX</li>' +
+    '<li>Covers all roles</li><li>Speaks MCP</li>' +
     '</ul>' +
     '</div>' +
     heroShot +
