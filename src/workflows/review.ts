@@ -124,6 +124,7 @@ export async function upsertReview(
           `SELECT 1 FROM submission s
             WHERE s.id = ?1
               AND (s.event_id <> ?2 OR s.state <> 'submitted'
+                   OR (SELECT current_round FROM event WHERE id = ?2) <> ?4
                    OR EXISTS (SELECT 1 FROM review rv
                                WHERE rv.submission_id = s.id
                                  AND rv.reviewer_person_id = ?3 AND rv.round = ?4
@@ -210,7 +211,8 @@ export async function submitReviews(
       [
         guard(
           db,
-          `SELECT 1 WHERE (SELECT COUNT(*) FROM (${COHORT})) <> ?4`,
+          `SELECT 1 WHERE (SELECT COUNT(*) FROM (${COHORT})) <> ?4
+              OR (SELECT current_round FROM event WHERE id = ?1) <> ?3`,
           eventId,
           principal.personId,
           round,
@@ -289,6 +291,7 @@ export async function submitOneReview(
           `SELECT 1 FROM submission s
             WHERE s.id = ?1
               AND (s.event_id <> ?2 OR s.state <> 'submitted'
+                   OR (SELECT current_round FROM event WHERE id = ?2) <> ?4
                    OR EXISTS (SELECT 1 FROM review rv
                                WHERE rv.submission_id = s.id
                                  AND rv.reviewer_person_id = ?3 AND rv.round = ?4
@@ -760,6 +763,7 @@ export async function stepAside(
           `SELECT 1 FROM submission s
             WHERE s.id = ?1
               AND (s.event_id <> ?2 OR s.state <> 'submitted'
+                   OR (SELECT current_round FROM event WHERE id = ?2) <> ?4
                    OR EXISTS (SELECT 1 FROM review rv
                                WHERE rv.submission_id = s.id
                                  AND rv.reviewer_person_id = ?3 AND rv.round = ?4
@@ -1109,7 +1113,12 @@ export async function reopenRound(
     );
   } catch (e) {
     const outcome = outcomeOf(e, 'reopenRound');
-    return outcome === 'moved' ? 'moved' : 'trouble';
+    if (outcome !== 'moved') return 'trouble';
+    // The batch aborted on one of two guards. Say which one, so a review
+    // that landed between the reading and the click gets its own sentence
+    // rather than a generic "it moved".
+    const sentNow = await db.prepare(`${SENT_IN_CURRENT} LIMIT 1`).bind(eventId, fromRound).first();
+    return sentNow ? 'has-reviews' : 'moved';
   }
   return 'reopened';
 }

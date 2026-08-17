@@ -281,6 +281,8 @@ export type RoundStanding = {
   unassigned: number;
   /** True when the next round already has a scorecard written for it. */
   nextCardExists: boolean;
+  /** Review rows the next round already holds — kept lists after a reopen. */
+  nextRoundRows: number;
 };
 
 /** A staged review as the confirm pass reads it back, before it goes. */
@@ -1067,7 +1069,7 @@ export async function roundStanding(
   event: ReviewEvent
 ): Promise<RoundStanding> {
   requireScope(principal, event.id, REVIEW_ROLES);
-  const [standRes, waitingRes] = await db.batch<Record<string, unknown>>([
+  const [standRes, waitingRes, nextRes] = await db.batch<Record<string, unknown>>([
     db
       .prepare(
         `SELECT COUNT(CASE WHEN ${SCORED_SQL} THEN 1 END) AS on_record,
@@ -1086,6 +1088,15 @@ export async function roundStanding(
                              WHERE rv.submission_id = s.id AND rv.round = ?2)`
       )
       .bind(event.id, event.round),
+    // Rows the NEXT round already holds — zero forever on a round opening for
+    // the first time, real after a reopen, when its reading lists were kept.
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM review rv
+           JOIN submission s ON s.id = rv.submission_id
+          WHERE s.event_id = ?1 AND rv.round = ?2`
+      )
+      .bind(event.id, event.round + 1),
   ]);
   const row = rowsOf<{ on_record: number; stepped: number }>(standRes)[0];
   const next = asObject(event.scorecardsRaw)[String(event.round + 1)];
@@ -1095,6 +1106,7 @@ export async function roundStanding(
     stepped: row?.stepped ?? 0,
     unassigned: rowsOf<{ n: number }>(waitingRes)[0]?.n ?? 0,
     nextCardExists: Array.isArray(next) && next.length > 0,
+    nextRoundRows: rowsOf<{ n: number }>(nextRes)[0]?.n ?? 0,
   };
 }
 
@@ -1144,8 +1156,17 @@ export async function roundHistory(
     .all<{ round: number; on_record: number; stepped: number; readers: number }>();
   const counted = new Map(res.results.map((r) => [r.round, r]));
 
+  // The high-water mark, not current_round: after a reopen the committee is
+  // reading an earlier round, and the later one — its card, its config, its
+  // rows — must stay on the record rather than vanish from the page.
+  const configured = Object.keys(asObject(event.scorecardsRaw))
+    .concat(Object.keys(asObject(event.roundConfigRaw)))
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n >= 1);
+  const highest = Math.max(event.round, ...counted.keys(), ...configured, 1);
+
   const out: RoundHistoryEntry[] = [];
-  for (let round = 1; round <= event.round; round++) {
+  for (let round = 1; round <= highest; round++) {
     const c = counted.get(round);
     const cfg = roundConfigFor(event.roundConfigRaw, round);
     out.push({

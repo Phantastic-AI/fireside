@@ -544,8 +544,10 @@ export const ACTIONS: Record<string, ActionDef> = {
         .prepare(
           `SELECT s.title, r.round FROM review r
              JOIN submission s ON s.id = r.submission_id
+             JOIN event e ON e.id = s.event_id
             WHERE r.submission_id = ? AND r.reviewer_person_id = ? AND s.event_id = ?
-            ORDER BY r.round DESC LIMIT 1`
+              AND r.round = e.current_round
+            LIMIT 1`
         )
         .bind(submissionId, p.personId, eventId)
         .first<{ title: string; round: number }>();

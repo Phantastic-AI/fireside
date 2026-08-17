@@ -334,6 +334,15 @@ function roundSaid(code: RoundOutcome, round: number): string {
   }
 }
 
+/** True when the form was rendered under a different round than the one the
+ *  event is on now — a tab left open across a reopen. A form with no round
+ *  field (an older cached page) is let through and the workflow's own
+ *  current_round guard has the last word. */
+function staleRound(form: Record<string, unknown>, current: number): boolean {
+  const r = Number.parseInt(typeof form['round'] === 'string' ? form['round'] : '', 10);
+  return Number.isInteger(r) && r >= 1 && r !== current;
+}
+
 const REOPEN_CODES: readonly ReopenOutcome[] = [
   'reopened', 'has-reviews', 'moved', 'refused', 'trouble',
 ];
@@ -352,8 +361,8 @@ function reopenSaid(code: ReopenOutcome, round: number): string {
       );
     case 'has-reviews':
       return (
-        'This round already holds submitted reviews, so stepping back over them is not a ' +
-        'button. Take back what was sent in first, or talk to the committee.'
+        'This round already holds submitted reviews, and stepping back over sent-in work ' +
+        'is a committee conversation, not a button. Nothing was changed.'
       );
     case 'moved':
       return 'The round moved while you were looking. This is the one the committee is on.';
@@ -762,6 +771,7 @@ function queueRow(
   const card =
     `<form class="card card-pad" id="p-${esc(row.id)}" method="post" style="margin-top:14px"` +
     ` action="/admin/${encodeURIComponent(ev.slug)}/reviews/stage">` +
+    `<input type="hidden" name="round" value="${ev.round}">` +
     `<input type="hidden" name="on" value="${esc(row.id)}">` +
     `<input type="hidden" name="q" value="${esc(v.q)}">` +
     `<input type="hidden" name="p" value="${v.page}">` +
@@ -798,6 +808,7 @@ function queueRow(
     'tell whoever hands the pile out.</p>' +
     `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/step-aside"` +
     ' class="btnrow" style="margin-top:12px">' +
+    `<input type="hidden" name="round" value="${ev.round}">` +
     `<input type="hidden" name="on" value="${esc(row.id)}">` +
     `<input type="hidden" name="q" value="${esc(v.q)}">` +
     `<input type="hidden" name="p" value="${v.page}">` +
@@ -1154,14 +1165,17 @@ function roundHistoryLine(ev: ReviewEvent, r: RoundHistoryEntry, current: number
     `${esc(r.blind ? 'Names hidden while scoring' : 'Names visible while scoring')}</div>` +
     `<div class="sub" style="margin-top:2px">${esc(`${record}${stepped}`)}</div>` +
     cardLine +
-    // The way back (T603): any earlier round can be reopened, and the
+    // The way back (T603): an earlier round can be reopened, and the
     // workflow refuses when the current round already holds submitted work —
-    // the button is always honest to press.
-    `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/reopen-round" style="margin-top:8px">` +
-    `<input type="hidden" name="from" value="${esc(String(current))}">` +
-    `<input type="hidden" name="to" value="${esc(String(r.round))}">` +
-    '<button class="btn btn-sm btn-quiet" type="submit">Reopen this round</button>' +
-    '</form>' +
+    // the button is always honest to press. A LATER round (kept on the page
+    // after a reopen) is returned to through "Open round N" above instead.
+    (r.round < current
+      ? `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/reopen-round" style="margin-top:8px">` +
+        `<input type="hidden" name="from" value="${esc(String(current))}">` +
+        `<input type="hidden" name="to" value="${esc(String(r.round))}">` +
+        '<button class="btn btn-sm btn-quiet" type="submit">Reopen this round</button>' +
+        '</form>'
+      : '<div class="sub" style="margin-top:6px">Waiting ahead — open it again from the round panel above when the committee is ready.</div>') +
     '</div>'
   );
 }
@@ -1219,7 +1233,11 @@ function roundPanel(
     `<b>Open ${esc(next.toLowerCase())}?</b>` +
     `<p style="margin:6px 0 0">${esc(
       `${count(standing.onRecord, 'review', 'reviews')} from ${here.toLowerCase()} ` +
-        `stay on the record. ${next} starts empty.`
+        `stay on the record. ` +
+        (standing.nextRoundRows > 0
+          ? `${next} resumes the reading lists it was left with — ` +
+            `${count(standing.nextRoundRows, 'assignment', 'assignments')} waiting.`
+          : `${next} starts empty.`)
     )}</p>` +
     `<p style="margin:6px 0 0" class="sub">${esc(
       standing.nextCardExists
@@ -1248,12 +1266,15 @@ function roundPanel(
     `<a class="btn btn-quiet" href="${esc(queueUrl(ev.slug))}#team">Stay on ${esc(here.toLowerCase())}</a>` +
     '</div></form></div>';
 
-  const earlier = history.slice(0, -1).reverse();
+  // Every round that is not the current one: earlier rounds, and — after a
+  // reopen — the later round waiting ahead, which must stay on the page
+  // rather than vanish because current_round stepped back.
+  const others = history.filter((r) => !r.current).reverse();
   const past =
-    earlier.length > 0
+    others.length > 0
       ? '<div class="card card-pad" style="margin-top:12px">' +
-        '<h4 class="serif" style="font-size:15.5px;font-weight:600">Earlier rounds</h4>' +
-        earlier.map((r) => roundHistoryLine(ev, r, standing.round)).join('') +
+        '<h4 class="serif" style="font-size:15.5px;font-weight:600">Other rounds</h4>' +
+        others.map((r) => roundHistoryLine(ev, r, standing.round)).join('') +
         '</div>'
       : '';
 
@@ -1905,6 +1926,7 @@ function confirmPage(
       `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/submit"` +
       ' class="btnrow" style="margin-top:20px">' +
       `<input type="hidden" name="expected" value="${staged.length}">` +
+      `<input type="hidden" name="round" value="${ev.round}">` +
       `<button class="btn btn-primary btn-lg" type="submit">Submit ${esc(many)}</button>` +
       `<a class="btn" href="${esc(queueUrl(ev.slug))}">Keep them staged</a>` +
       '</form>',
@@ -2174,6 +2196,13 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     const view = viewFrom(form);
     const on = typeof form['on'] === 'string' ? form['on'] : '';
     if (!on) return c.redirect(backTo(ev.slug, 'moved', view), 303);
+    // A form rendered under one round never writes into another (a tab left
+    // open across a reopen): the round it carried must be the round we're on.
+    if (staleRound(form, ev.round)) {
+      return c.req.header('x-fireside-deck') === '1'
+        ? c.body('moved', 409)
+        : c.redirect(backTo(ev.slug, 'moved', view), 303);
+    }
 
     const note = typeof form['note'] === 'string' ? form['note'].slice(0, 2000) : null;
     const outcome = await upsertReview(
@@ -2210,6 +2239,7 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     const form = await c.req.parseBody();
     const view = viewFrom(form);
     const on = typeof form['on'] === 'string' ? form['on'] : '';
+    if (staleRound(form, ev.round)) return c.redirect(backTo(ev.slug, 'moved', view), 303);
     const outcome = await stepAside(c.env.DB, principal, ev.id, ev.round, on);
     return c.redirect(backTo(ev.slug, `aside_${outcome}`, view), 303);
   });
@@ -2223,6 +2253,7 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
     const { principal, ev } = opened;
 
     const form = await c.req.parseBody();
+    if (staleRound(form, ev.round)) return c.redirect(backTo(ev.slug, 'moved', HERE), 303);
     const expected = Number.parseInt(
       typeof form['expected'] === 'string' ? form['expected'] : '',
       10
