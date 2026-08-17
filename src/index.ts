@@ -110,22 +110,6 @@ app.get('/walkthrough', async (c) => {
   });
 });
 
-// Temporary inbound-email smoke: reseed-key-gated. Sends a tiny message to a
-// reply+<local>@onfireside.com address so we can watch whether Cloudflare
-// routes a sub-addressed reply to the reply@ Worker rule (the one open
-// question in the inbound design). Remove once the smoke is confirmed.
-app.get('/__cp0/email-selftest', async (c) => {
-  if (!c.env.RESEED_KEY || c.req.header('x-reseed') !== c.env.RESEED_KEY) return c.text('no', 403);
-  const local = c.req.query('local') ?? 'selftest';
-  await c.env.EMAIL.send({
-    to: `reply+${local}@onfireside.com`,
-    from: { email: c.env.FROM_EMAIL, name: 'Fireside self-test' },
-    subject: 'inbound smoke',
-    text: 'This is a self-test to confirm reply+ routing reaches the Worker.',
-  });
-  return c.json({ sent_to: `reply+${local}@onfireside.com` });
-});
-
 let heroBytes: Uint8Array | null = null;
 app.get('/a/hero.jpg', () => {
   if (!heroBytes) heroBytes = Uint8Array.from(atob(HERO_JPG_B64), (ch) => ch.charCodeAt(0));
