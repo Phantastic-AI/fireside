@@ -1560,6 +1560,52 @@ const SIGNED_TOOLS: Record<string, Tool> = {
   // count; the agent shows the person that manifest; then commit_pending sends
   // it with the count restated. So a prompt-injected abstract can neither add a
   // recipient nor change the number a human approved — the boundary froze both.
+  // T611 over the wire: mint a named lanyard link, optionally mailed to the
+  // human it names. Two calls like every confirm-tier act.
+  propose_checkin_link: {
+    title: 'Propose minting a day-of check-in link',
+    description:
+      "Stage a named check-in link for this event's green room — the person named holds it on the " +
+      'day and marks speakers arrived; every mark carries the name and the time. Give an email and ' +
+      'the link is mailed to them on commit. Returns a pending id and a manifest; show it to the ' +
+      'organizer, then call commit_pending with the id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...EVENT_ARG,
+        name: { type: 'string', description: "Who holds it — e.g. 'Sam, front door'." },
+        email: { type: 'string', description: 'Where to mail the link. Optional.' },
+      },
+      required: ['event', 'name'],
+      additionalProperties: false,
+    },
+    async run(env, args, nowMs, principal) {
+      if (!principal) return refuse(NEEDS_SIGNED_IN);
+      const found = await eventOr(env, args, nowMs);
+      if (!found.ok) return refuse(found.says);
+      const proposed = await proposeAction(
+        { DB: env.DB, FILES: env.FILES, EMAIL: env.EMAIL, FROM_EMAIL: env.FROM_EMAIL },
+        principal,
+        { eventId: found.ev.id, surface: 'backstage' },
+        'checkin_link',
+        { name: args['name'], email: args['email'] },
+        nowMs
+      );
+      if (proposed.kind === 'refused') {
+        return refuse(CHECKIN_REFUSAL[proposed.reason] ?? "I couldn't stage that link.");
+      }
+      if (proposed.kind === 'pending') {
+        return answered({
+          pending_id: proposed.id,
+          manifest: proposed.manifest,
+          says:
+            `Staged, not minted: ${proposed.manifest} Show this to the organizer, then call ` +
+            `commit_pending with pending_id "${proposed.id}" to mint it.`,
+        });
+      }
+      return refuse("I couldn't stage that link.");
+    },
+  },
   propose_invite: {
     title: 'Propose inviting people to submit',
     description:
@@ -1703,20 +1749,22 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       if (!pendingId) return refuse('Name the staged action — its pending id, as propose_invite gives it.');
       const number = numberArg(args, 'number') ?? null;
       const result = await commitPendingAction(
-        { DB: env.DB, FILES: env.FILES },
+        { DB: env.DB, FILES: env.FILES, EMAIL: env.EMAIL, FROM_EMAIL: env.FROM_EMAIL },
         principal,
         pendingId,
         number,
         nowMs,
         // commits only the confirm-tier acts proposed over MCP — never some other owned pending
-        ['invite', 'decide', 'withdraw_proposal']
+        ['invite', 'decide', 'withdraw_proposal', 'checkin_link']
       );
       if (!result.ok) return refuse(COMMIT_REFUSAL[result.reason] ?? "That couldn't be committed.");
       const outcome = result.outcome;
       if (outcome === 'done') {
         // The confirmation is the committed action's own, never a borrowed one.
         const says =
-          result.actionType === 'invite'
+          result.actionType === 'checkin_link'
+            ? 'Done — the link is minted (and mailed, when an address was given). It is listed on the green room, where it can be revoked alone.'
+            : result.actionType === 'invite'
             ? 'Done — the invites are written and waiting in the event outbox. Nothing sends until you release it.'
             : result.actionType === 'decide'
               ? 'Done — the decision is staged in the event outbox. Nothing reaches the speaker until you release it.'
@@ -1772,6 +1820,13 @@ const DECIDE_REFUSAL: Record<string, string> = {
   'not-allowed': 'You need approval power on that conference to decide.',
   'not-here': 'You need approval power on that conference to decide.',
   'too-many-pending': 'You have several actions waiting on confirmation — commit or drop those first.',
+};
+
+const CHECKIN_REFUSAL: Record<string, string> = {
+  'no-event': 'Name the conference first.',
+  'no-name': "A check-in link needs a name — whose hands hold it, e.g. 'Sam, front door'.",
+  'bad-address': 'That email address does not read as one. Give a working address, or none.',
+  'no-capability': 'Minting check-in links is the organizer’s to do on this conference.',
 };
 
 const INVITE_REFUSAL: Record<string, string> = {

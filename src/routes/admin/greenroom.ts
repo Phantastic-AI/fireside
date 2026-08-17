@@ -64,7 +64,7 @@ import {
   mintCheckinLink,
   revokeCheckinLink,
   type CheckinLinkRow,
-} from '../public/checkin';
+} from '../../workflows/checkin';
 import {
   deliverableRows,
   stillWaitingCount,

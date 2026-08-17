@@ -454,6 +454,7 @@ import { CATALOG } from '../src/workflows/plan';
 // gained bubble support, or stopped existing) fails below.
 const BUBBLE_EXEMPT: Record<string, string> = {
   connect_request: 'needs a people reference list the bubble does not carry yet (epic T602 note)',
+  checkin_link: 'takes a name and an email the in-page referent list cannot carry; MCP is its home',
   invite: 'takes name+email pairs an in-page referent list cannot carry; MCP is its home',
   task_reopen: 'the planner dispatches it through task_done with done=false',
 };
@@ -467,6 +468,7 @@ const MCP_FRONTS = new Set([
   'invite', // propose_invite
   'decide', // propose_decision
   'step_aside', // step_aside
+  'checkin_link', // propose_checkin_link
 ]);
 const MCP_EXEMPT: Record<string, string> = {
   connect_request: 'attendee social act; MCP surface deferred with the bubble one (epic T602 note)',

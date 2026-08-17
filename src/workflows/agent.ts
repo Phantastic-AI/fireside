@@ -64,7 +64,8 @@ export type Capability =
   | 'invite'
   | 'decide'
   | 'task' // a speaker (or their helper) marking their own deliverable task done / undone
-  | 'withdraw'; // a speaker pulling their own proposal back
+  | 'withdraw' // a speaker pulling their own proposal back
+  | 'checkin'; // the organizer minting a named day-of check-in link
 export type Tier = 'direct' | 'confirm' | 'confirm-number';
 
 /** Everything this principal is allowed to do, on this event, from this
@@ -121,6 +122,7 @@ export function capabilitiesOf(principal: Principal, eventId: string | null, sur
     case 'backstage':
       if (isDecider) allow('decide');
       if (isOwnerOrg) allow('invite');
+      if (isOwnerOrg) allow('checkin');
       break;
     case 'global':
       // Nothing state-changing before a conference is even chosen. Onboarding
@@ -185,7 +187,23 @@ async function digest(argsJson: string): Promise<string> {
  * The action registry — each action owns its authorization + canonicalisation
  * ------------------------------------------------------------------ */
 
-type Env = { DB: D1Database; FILES: R2Bucket };
+type EmailBinding = {
+  send(msg: {
+    to: string;
+    from: { email: string; name: string };
+    subject: string;
+    text: string;
+  }): Promise<unknown>;
+};
+
+type Env = {
+  DB: D1Database;
+  FILES: R2Bucket;
+  /** Present when the caller can send mail — checkin_link uses it; every
+   *  other action ignores it. */
+  EMAIL?: EmailBinding;
+  FROM_EMAIL?: string;
+};
 
 type Canonical =
   // `subject` is the server's OWN name for what was acted on (the session's real
@@ -297,6 +315,58 @@ export const ACTIONS: Record<string, ActionDef> = {
   // that was approved. The write only ROSTERS each person and QUEUES a note to
   // the event's outbox — nothing is emailed until the organizer releases the
   // outbox — so the confirmed act's blast radius is a draft, not a send.
+  // T611 over MCP: mint a named lanyard link, and mail it to the human it
+  // names. One confirm — it mints a credential and (when an address is given)
+  // a letter leaves the building, but the credential opens exactly one sheet
+  // and revocation is one press on the green room.
+  checkin_link: {
+    capability: 'checkin',
+    tier: 'confirm',
+    surfaces: ['backstage'],
+    async validateAndFreeze(_env, _p, eventId, raw) {
+      if (!eventId) return { ok: false, reason: 'no-event' };
+      const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 60) : '';
+      if (!name) return { ok: false, reason: 'no-name' };
+      const email = typeof raw.email === 'string' ? raw.email.trim().toLowerCase() : '';
+      if (email && !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)) {
+        return { ok: false, reason: 'bad-address' };
+      }
+      return {
+        ok: true,
+        args: { name, email },
+        subject: name,
+        manifest:
+          `Mint a check-in link named "${name}"` +
+          (email ? ` and email it to ${email}` : '') +
+          '. It opens the run of show and marks arrivals — nothing else — and can be revoked alone from the green room.',
+      };
+    },
+    async execute(env, _p, eventId, args) {
+      if (!eventId) return 'trouble';
+      const { mintCheckinLink } = await import('./checkin');
+      const name = str(args.name);
+      const email = str(args.email);
+      const nonce = await mintCheckinLink(env.DB, eventId, name);
+      if (!nonce) return 'trouble';
+      const url = `${ORIGIN}/ci/${nonce}`;
+      if (email && env.EMAIL && env.FROM_EMAIL && !/@example\.(org|com|net)$/i.test(email)) {
+        try {
+          await env.EMAIL.send({
+            to: email,
+            from: { email: env.FROM_EMAIL, name: 'Fireside' },
+            subject: `You're on check-in — ${name}`,
+            text:
+              `Hello,\n\nThis link is yours by name for day-of check-in:\n${url}\n\n` +
+              'It opens the run of show and marks speakers arrived — nothing else. ' +
+              'Every mark you make carries your name and the time.\n\n— sent from Fireside.',
+          });
+        } catch {
+          // the link exists either way; the green room lists it
+        }
+      }
+      return 'done';
+    },
+  },
   invite: {
     capability: 'invite',
     tier: 'confirm-number',
