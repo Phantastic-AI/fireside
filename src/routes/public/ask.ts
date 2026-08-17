@@ -46,7 +46,7 @@ import { esc, page, onstageShell, eventNav, conferenceMasthead } from '../../lib
 import { label } from '../../lib/labels';
 import { eventBySlug, sessionBySlug, agenda, type EventHome } from '../../queries/public';
 import { conciergeAct, canActHere, type SessionRef, type Referent, type Undo } from '../../workflows/plan';
-import type { Surface } from '../../workflows/agent';
+import { commitPendingAction, type Surface } from '../../workflows/agent';
 import { portalView } from '../../queries/portal';
 import { helpingAt } from '../../queries/helpers';
 import { claimAsk, clientIp } from '../../lib/ratelimit';
@@ -175,9 +175,59 @@ function actionBlock(say: string[], doors: Door[], extra = ''): string {
   return '<div class="cc-fs" data-ask-answer>' + sentences(say) + doorRow(doors) + extra + '</div>';
 }
 
+/** The confirm for a staged, "are you sure" act (withdraw a talk, send a
+ *  connection). One button that commits the exact pending action the human just
+ *  read — it carries only the pending id, never the arguments, so the server
+ *  executes the STORED manifest. The island posts it in place; with scripts off
+ *  the form posts and the page comes back with the outcome. */
+function confirmForm(slug: string, pendingId: string, here: string): string {
+  return (
+    `<form method="post" action="/${esc(encodeURIComponent(slug))}/ask" style="margin-top:12px">` +
+    (here ? `<input type="hidden" name="here" value="${esc(here)}">` : '') +
+    `<button class="btn btn-primary" type="submit" name="commit" value="${esc(pendingId)}">Yes, do it</button>` +
+    '</form>'
+  );
+}
+
 /** The deterministic, model-free undo for a direct action: one button that posts
  *  the reverse straight to the guarded star endpoint. Not a chat round-trip, so
  *  a wrong write is undone without any chance of re-injection. */
+/** What to say after the human confirmed a staged act and the server committed
+ *  it. The action's own true outcome, plainly — never a borrowed line. */
+function committedSay(result: Awaited<ReturnType<typeof commitPendingAction>>): string {
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'gone':
+        return 'That was already taken care of — nothing more to do.';
+      case 'expired':
+        return 'That sat too long and expired. Ask me again and I will set it up fresh.';
+      case 'not-allowed':
+        return "That isn't something you can do from here anymore.";
+      case 'wrong-number':
+        return "That number didn't match what was staged — nothing was sent.";
+      default:
+        return "I couldn't finish that just now. Nothing changed.";
+    }
+  }
+  if (result.outcome !== 'done' && result.outcome !== 'partial') {
+    return result.outcome === 'moved'
+      ? 'Something shifted while I was doing that — nothing changed. Ask me again.'
+      : "I couldn't finish that. Nothing changed.";
+  }
+  switch (result.actionType) {
+    case 'connect_request':
+      return 'Done — your connection request is on its way.';
+    case 'withdraw_proposal':
+      return 'Done — your talk is withdrawn. It has left the committee list.';
+    case 'decide':
+      return 'Done — the decision is staged in the outbox; nothing reaches the speaker until you release it.';
+    case 'invite':
+      return 'Done — the invitations are written and waiting in the outbox.';
+    default:
+      return 'Done.';
+  }
+}
+
 function undoForm(slug: string, undo: Undo): string {
   return (
     `<form method="post" action="/${esc(encodeURIComponent(slug))}/my-schedule/star" style="margin-top:12px">` +
@@ -623,6 +673,19 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
         })
       );
 
+    // A confirm from the bubble: the human just approved a staged act, so commit
+    // exactly that pending row — never the planner again. The arguments are
+    // frozen server-side, so this only says "yes" to the manifest they read.
+    const commitId = String(form['commit'] ?? '').trim();
+    if (commitId) {
+      if (!principal) return reply('blank');
+      const result = await commitPendingAction({ DB: c.env.DB, FILES: c.env.FILES }, principal, commitId);
+      const block = actionBlock([committedSay(result)], [], '');
+      c.header('cache-control', 'no-store');
+      if (inPlace) return c.html(block);
+      return await wholePage(await curatedAnswers(c.env.DB, ev.id), youBubble('Yes, do it') + block);
+    }
+
     // An instant answer is one read and a template. Nothing is spent on it,
     // because nothing costs anything: the budget is read rather than claimed,
     // and only to keep a pressed-all-afternoon chip out of the digest. The
@@ -696,7 +759,14 @@ export function registerAsk(app: Hono<{ Bindings: Env }>): void {
         // A clarify (a question back) and a staged confirm keep the reader here;
         // everything else offers the agenda/speakers to walk to.
         const doors = act.kind === 'clarify' || act.kind === 'staged' ? [] : plainDoors(ev, ev.agendaPublished);
-        const extra = act.kind === 'acted' && act.undo ? undoForm(ev.slug, act.undo) : '';
+        // A staged act carries a Confirm button (commit the exact pending row);
+        // a completed direct act carries its one-tap undo.
+        const extra =
+          act.kind === 'staged'
+            ? confirmForm(ev.slug, act.pendingId, here)
+            : act.kind === 'acted' && act.undo
+              ? undoForm(ev.slug, act.undo)
+              : '';
         const block = actionBlock(say, doors, extra);
         c.header('cache-control', 'no-store');
         if (inPlace) return c.html(block);

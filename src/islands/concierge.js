@@ -278,6 +278,14 @@ function conciergeIsland() {
       );
       return;
     }
+    // The Confirm button on a staged act: commit exactly that pending row in
+    // place. Scripts off, its own form posts and the page comes back instead.
+    var confirm = t.closest('button[name="commit"]');
+    if (confirm && confirm.value) {
+      e.preventDefault();
+      send('commit=' + encodeURIComponent(confirm.value), 'Yes, do it');
+      return;
+    }
     if (t.closest('[data-cc-send]')) typed();
   });
 
