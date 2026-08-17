@@ -27,7 +27,9 @@ not yet sent) and **DevOps Days Charlotte 2025** (finished, recordings up).
 
 That credential is published on purpose: Naomi is the demonstration
 organizer, and her conference is reset to the same instant of mid-decision
-drama on demand. Sign up fresh at
+drama on demand — and automatically, once a day at **13:00 UTC** (06:00
+Pacific). So anything you change is yours to play with and gone by morning;
+nothing you do to the demo sticks. Sign up fresh at
 [/sign-up](https://onfireside.com/sign-up) and you can start a
 conference of your own — the form at `/admin/new` takes a name, days, rooms
 and tracks, and hands you the keys.
@@ -253,6 +255,9 @@ pre-seeded, so there is no setup:
   inbox.
 - Run the kit (`pnpm run eval`). The areas chain in order against the same
   deployment, the way the kit intends.
+- The demo world **rebuilds to its pristine state every day at 13:00 UTC**
+  (06:00 Pacific). A full run is well under an hour, so start clear of that
+  window and it won't reset under you; the kit is resumable if it ever does.
 
 ## Colophon
 
