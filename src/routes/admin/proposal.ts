@@ -781,19 +781,51 @@ function deliverablesSection(p: Proposal, slug: string, tz: string, todayKey: st
 
 /* ---------- earlier versions ---------- */
 
-function revisionsSection(p: Proposal, tz: string): string {
+/** One snapshot's words, parsed back out of the JSON they were kept as —
+ *  a version the panel can read, not a blob. An unparseable body (never
+ *  written by this build, but history is history) renders as it is. */
+function revisionWords(body: string): { title: string | null; abstract: string | null } {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const o = parsed as Record<string, unknown>;
+      return {
+        title: typeof o.title === 'string' ? o.title : null,
+        abstract: typeof o.abstract === 'string' ? o.abstract : null,
+      };
+    }
+  } catch {
+    /* pre-JSON history renders raw below */
+  }
+  return { title: null, abstract: null };
+}
+
+function revisionsSection(p: Proposal, slug: string, tz: string, mayAsk: boolean): string {
   if (p.revisions.length === 0) return '';
   return (
     `<div class="sec" id="versions">${sectionHead(label('pane.versions', 'backstage'))}` +
-    '<p class="sub" style="margin-bottom:8px">Only organizers see these.</p>' +
+    '<p class="sub" style="margin-bottom:8px">Only organizers see these. Restoring one swaps the ' +
+    'words back and keeps today&#39;s as a new version — nothing is ever lost in either direction.</p>' +
     p.revisions
-      .map(
-        (r) =>
+      .map((r) => {
+        const words = revisionWords(r.body);
+        const who = r.authorName ?? 'an unrecorded hand';
+        const restore = mayAsk
+          ? `<form method="post" action="/admin/${esc(slug)}/submissions/${esc(p.id)}/restore" style="margin-top:8px">` +
+            `<input type="hidden" name="revision" value="${esc(r.id)}">` +
+            '<button class="btn btn-sm btn-quiet" type="submit">Restore this version</button>' +
+            '</form>'
+          : '';
+        return (
           `<details style="border-bottom:1px solid var(--line-soft);padding:10px 0">` +
-          `<summary style="cursor:pointer"><span style="font-weight:620">${esc(dLong(r.createdAt, tz))}</span></summary>` +
-          `<div class="abstract" style="font-size:16px;margin-top:8px">${paras(r.body)}</div>` +
+          `<summary style="cursor:pointer"><span style="font-weight:620">${esc(dLong(r.createdAt, tz))}</span>` +
+          ` <span class="sub">· ${esc(who)}</span></summary>` +
+          (words.title ? `<p style="margin:8px 0 0;font-weight:620">${esc(words.title)}</p>` : '') +
+          `<div class="abstract" style="font-size:16px;margin-top:8px">${paras(words.abstract ?? r.body)}</div>` +
+          restore +
           '</details>'
-      )
+        );
+      })
       .join('') +
     '</div>'
   );
@@ -1230,7 +1262,7 @@ function renderProposal(o: {
     lettersSection(p, slug, tz, inPlay) +
     reviewsSection(p, slug, inPlay) +
     firstReadSection(p, slug, o.firstRead, o.mayDecide, tz) +
-    revisionsSection(p, tz) +
+    revisionsSection(p, slug, tz, o.mayAsk) +
     publicDoor +
     `<p style="margin-top:14px"><a class="link" href="/admin/${esc(slug)}/submissions">← Back to the ` +
     'proposals</a></p>' +
@@ -1402,6 +1434,52 @@ export function registerProposal(app: Hono<{ Bindings: Env }>): void {
   // Correcting the title or the abstract from the committee's own side —
   // previously this existed nowhere in the admin. The write is workflows/
   // people-admin.ts's editSubmissionWords; this only carries its sentences.
+  // T608 — restore: the snapshot's words go back through the same guarded
+  // editor that made the snapshot, which writes today's words as a NEW
+  // attributed revision on its way — so a restore is itself a version, and
+  // nothing is lost in either direction.
+  app.post('/admin/:eventSlug/submissions/:id/restore', async (c) => {
+    const slug = c.req.param('eventSlug');
+    const id = c.req.param('id');
+    const principal = await principalFromCookie(c.env.DB, c.env.SESSION_SECRET, c.req.header('cookie'));
+    if (!principal) return c.redirect('/sign-in', 303);
+    const events = await adminEvents(c.env.DB, principal);
+    const ev = events.find((e) => e.slug === slug);
+    if (!ev) return c.html(deniedPage(), 403);
+    const form = await c.req.parseBody();
+    const revId = typeof form['revision'] === 'string' ? form['revision'] : '';
+    const back = `/admin/${encodeURIComponent(slug)}/submissions/${encodeURIComponent(id)}#versions`;
+    const rev = await c.env.DB
+      .prepare(
+        `SELECT body FROM revision WHERE id = ?1 AND owner_kind = 'submission' AND owner_id = ?2`
+      )
+      .bind(revId, id)
+      .first<{ body: string }>();
+    if (!rev) return c.redirect(back, 303);
+    let words: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(rev.body);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        words = parsed as Record<string, unknown>;
+      }
+    } catch {
+      return c.redirect(back, 303);
+    }
+    try {
+      await editSubmissionWords(c.env.DB, principal, ev.id, id, {
+        title: typeof words.title === 'string' ? words.title : '',
+        abstract: typeof words.abstract === 'string' ? words.abstract : '',
+        format: typeof words.format === 'string' ? words.format : '',
+        level: typeof words.level === 'string' ? words.level : '',
+        trackSlug: typeof words.track === 'string' ? words.track : '',
+      });
+    } catch (e) {
+      if (e instanceof ScopeError) return c.html(deniedPage(e.message), 403);
+      throw e;
+    }
+    return c.redirect(back, 303);
+  });
+
   // T606 — the human's number beside the machine's. Saving with a number sets
   // the override; the Clear button (or a blank box) lifts it. The machine's
   // own read is never touched by either.

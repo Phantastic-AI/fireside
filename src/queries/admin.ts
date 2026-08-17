@@ -221,6 +221,8 @@ export type ProposalRevision = {
   body: string;
   source: string;
   createdAt: number;
+  /** Whose hand wrote the words this snapshot replaced — null before 0020. */
+  authorName: string | null;
 };
 
 export type Proposal = {
@@ -735,9 +737,10 @@ export async function proposal(
       .bind(submissionId),
     db
       .prepare(
-        `SELECT id, body, source, created_at
-         FROM revision WHERE owner_kind = 'submission' AND owner_id = ?
-         ORDER BY created_at DESC`
+        `SELECT r.id, r.body, r.source, r.created_at, r.author_id, pe.name AS author_name
+         FROM revision r LEFT JOIN person pe ON pe.id = r.author_id
+         WHERE r.owner_kind = 'submission' AND r.owner_id = ?
+         ORDER BY r.created_at DESC`
       )
       .bind(submissionId),
   ]);
@@ -929,8 +932,10 @@ export async function proposal(
         comments: commentsByTask.get(t.id) ?? [],
       }));
     })(),
-    revisions: rowsOf<{ id: string; body: string; source: string; created_at: number }>(revRes).map(
-      (r) => ({ id: r.id, body: r.body, source: r.source, createdAt: r.created_at })
+    revisions: rowsOf<{
+      id: string; body: string; source: string; created_at: number; author_name: string | null;
+    }>(revRes).map(
+      (r) => ({ id: r.id, body: r.body, source: r.source, createdAt: r.created_at, authorName: r.author_name })
     ),
   };
 }

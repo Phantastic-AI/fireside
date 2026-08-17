@@ -328,10 +328,10 @@ export async function editProposal(
     ),
     db
       .prepare(
-        `INSERT INTO revision (id, owner_kind, owner_id, body, source, created_at)
-         VALUES (?, 'submission', ?, ?, 'edit', ?)`
+        `INSERT INTO revision (id, owner_kind, owner_id, body, source, created_at, author_id)
+         VALUES (?, 'submission', ?, ?, 'edit', ?, ?)`
       )
-      .bind(newId('rev'), submissionId, previousBody, nowMs),
+      .bind(newId('rev'), submissionId, previousBody, nowMs, personId),
     db
       .prepare(
         `UPDATE submission

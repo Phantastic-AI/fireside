@@ -343,10 +343,10 @@ export async function editSubmissionWords(
         ),
         db
           .prepare(
-            `INSERT INTO revision (id, owner_kind, owner_id, body, source, created_at)
-             VALUES (?, 'submission', ?, ?, 'organizer_edit', ?)`
+            `INSERT INTO revision (id, owner_kind, owner_id, body, source, created_at, author_id)
+             VALUES (?, 'submission', ?, ?, 'organizer_edit', ?, ?)`
           )
-          .bind(newId('rev'), submissionId, previousBody, now()),
+          .bind(newId('rev'), submissionId, previousBody, now(), principal.personId),
         db
           .prepare(
             `UPDATE submission
