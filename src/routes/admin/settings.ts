@@ -546,6 +546,11 @@ function eventSection(ev: EventSettings, said: Said | null, nowMs: number): stri
       wrong: saidAt('decide_by', said),
       hint: 'The date the call promises and every letter repeats. Written as 2026-08-27.',
     }) +
+    '<label class="radio" style="margin:4px 0 14px;align-items:flex-start">' +
+    `<input type="checkbox" name="reminders" value="on"${ev.autoReminders ? ' checked' : ''}>` +
+    '<span>Remind speakers about due deliverables automatically — once a day, only when ' +
+    'something is due within three days or overdue, in one letter per person. Turn it off ' +
+    'and only your own reminders go out.</span></label>' +
     '<div class="btnrow"><button class="btn btn-primary" type="submit">Save the event</button>' +
     `<a class="btn" href="/${encodeURIComponent(ev.slug)}/cfp">See the call ↗</a>` +
     `<a class="btn" href="/${encodeURIComponent(ev.slug)}">See the public page ↗</a></div>` +
@@ -1303,6 +1308,7 @@ export function registerSettings(app: Hono<{ Bindings: Env }>): void {
         maxSubmissions: text('cap'),
         callOpensOn: text('call_opens'),
         callClosesOn: text('call_closes'),
+        autoReminders: body['reminders'] === 'on',
       });
     })
   );

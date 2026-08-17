@@ -401,3 +401,23 @@ test('label: throws when a key has no string for the asked register', () => {
   // silently render an empty or wrong-register word.
   assert.throws(() => label('helper.banner', 'backstage'), /no backstage string/);
 });
+
+// ---- T605: the reminder pass's pure parts --------------------------------
+import { localDay, daysAhead, dedupeTitles, REMIND_WITHIN_DAYS } from '../src/workflows/reminders';
+
+test('localDay: a due date is a local fact', () => {
+  const ms = Date.UTC(2026, 10, 8, 2, 0); // 02:00 UTC on Nov 8
+  assert.equal(localDay('America/Los_Angeles', ms), '2026-11-07'); // still the 7th out west
+  assert.equal(localDay('UTC', ms), '2026-11-08');
+  assert.equal(localDay('not/a-zone', ms), '2026-11-08'); // falls back to UTC, never throws
+});
+
+test('daysAhead: the horizon crosses months without drama', () => {
+  assert.equal(daysAhead('2026-08-30', REMIND_WITHIN_DAYS), '2026-09-02');
+  assert.equal(daysAhead('2026-12-31', 1), '2027-01-01');
+});
+
+test('dedupeTitles: two tasks with one name read once, with a count', () => {
+  assert.deepEqual(dedupeTitles(['Send your slides', 'Send your slides']), ['Send your slides ×2']);
+  assert.deepEqual(dedupeTitles(['A', 'B']), ['A', 'B']);
+});

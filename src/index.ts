@@ -440,6 +440,22 @@ export default {
       const { reseed } = await import('./workflows/reseed');
       ctx.waitUntil(reseed(env.DB, env.FILES));
     }
+    // T605 — the reminder nobody has to remember to send: every open task due
+    // soon or overdue writes its speaker one letter a day, per event settings.
+    // Runs AFTER the reseed promise is queued but reads its own rows; a demo
+    // task rebuilt mid-pass costs at worst one duplicate portal note on demo
+    // fixtures, and real tenants are never rebuilt.
+    ctx.waitUntil(
+      (async () => {
+        const { runDueReminders } = await import('./workflows/reminders');
+        const out = await runDueReminders(
+          env.DB,
+          env.EMAIL && env.FROM_EMAIL ? { binding: env.EMAIL, from: env.FROM_EMAIL } : null,
+          (p) => ctx.waitUntil(p)
+        );
+        console.log(`reminders: ${out.letters} letter(s) covering ${out.tasks} task(s)`);
+      })()
+    );
   },
   // Inbound email (bidirectional, the receiving half). A reply to a reminder,
   // addressed reply+<ticket>@onfireside.com, lands the attached deck on the

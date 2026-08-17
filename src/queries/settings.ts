@@ -101,6 +101,7 @@ export type EventSettings = {
   decideBy: string | null;
   maxSubmissions: number;
   agendaPublished: boolean;
+  autoReminders: boolean;
   greenRoomNonce: string | null;
   questions: SettingsQuestion[];
   questionCount: number;
@@ -148,6 +149,7 @@ type EventRow = {
   max_submissions: number;
   agenda_published: number;
   green_room_nonce: string | null;
+  auto_reminders: number;
   questions: string;
   current_round: number;
   round_scorecards: string;
@@ -197,7 +199,7 @@ export async function eventSettings(
     .prepare(
       `SELECT id, slug, name, tagline, starts_on, ends_on, timezone, tz_label, venue_name,
               venue_address, cfp_intro, cfp_opens_at, cfp_closes_at, decide_by, max_submissions,
-              agenda_published, green_room_nonce, questions, current_round, round_scorecards
+              agenda_published, green_room_nonce, questions, current_round, round_scorecards, auto_reminders
        FROM event WHERE slug = ?`
     )
     .bind(slug)
@@ -285,6 +287,7 @@ export async function eventSettings(
     decideBy: ev.decide_by,
     maxSubmissions: ev.max_submissions,
     agendaPublished: ev.agenda_published === 1,
+    autoReminders: ev.auto_reminders === 1,
     greenRoomNonce: ev.green_room_nonce,
     questions: questions.map((q) => ({ ...q, answered: answered.get(q.id) ?? 0 })),
     questionCount: questions.length,

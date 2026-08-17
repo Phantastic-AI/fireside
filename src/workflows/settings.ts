@@ -106,6 +106,8 @@ export type EventFacts = {
    *  Both blank = the call is shut. */
   callOpensOn: string;
   callClosesOn: string;
+  /** T605 — whether the daily pass may remind this event's speakers itself. */
+  autoReminders: boolean;
 };
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -160,7 +162,7 @@ export async function saveEventFacts(
           .prepare(
             `UPDATE event SET name = ?2, tagline = ?3, venue_name = ?4, venue_address = ?5,
                     cfp_intro = ?6, decide_by = ?7, max_submissions = ?8,
-                    cfp_opens_at = ?9, cfp_closes_at = ?10
+                    cfp_opens_at = ?9, cfp_closes_at = ?10, auto_reminders = ?11
              WHERE id = ?1`
           )
           .bind(
@@ -173,7 +175,8 @@ export async function saveEventFacts(
             decideBy === '' ? null : decideBy,
             cap,
             opensAt,
-            closesAt
+            closesAt,
+            facts.autoReminders ? 1 : 0
           ),
       ],
       [0, 1]
