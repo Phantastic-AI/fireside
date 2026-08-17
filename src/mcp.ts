@@ -1701,11 +1701,16 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       if (!result.ok) return refuse(COMMIT_REFUSAL[result.reason] ?? "That couldn't be committed.");
       const outcome = result.outcome;
       if (outcome === 'done') {
-        return answered({
-          committed: true,
-          outcome,
-          says: 'Done — the invites are written and waiting in the event outbox. Nothing sends until you release it.',
-        });
+        // The confirmation is the committed action's own, never a borrowed one.
+        const says =
+          result.actionType === 'invite'
+            ? 'Done — the invites are written and waiting in the event outbox. Nothing sends until you release it.'
+            : result.actionType === 'decide'
+              ? 'Done — the decision is staged in the event outbox. Nothing reaches the speaker until you release it.'
+              : result.actionType === 'withdraw_proposal'
+                ? 'Done — the proposal is withdrawn. It has left the committee’s list.'
+                : 'Done — committed.';
+        return answered({ committed: true, outcome, says });
       }
       if (outcome === 'partial') {
         return answered({

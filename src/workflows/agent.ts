@@ -631,7 +631,7 @@ export async function proposeAction(
 }
 
 export type CommitResult =
-  | { ok: true; outcome: string }
+  | { ok: true; outcome: string; actionType: string }
   | { ok: false; reason: CommitRefusal | 'unknown-action' | 'not-committable' };
 
 export async function commitPendingAction(
@@ -714,7 +714,7 @@ export async function commitPendingAction(
   const args = JSON.parse(row.args_json) as Record<string, unknown>;
   const outcome = await def.execute(env, principal, row.event_id, args);
   await audit(env, principal.personId, row.event_id, row.action_type, await digest(row.args_json), outcome, nowMs);
-  return { ok: true, outcome };
+  return { ok: true, outcome, actionType: row.action_type };
 }
 
 export async function cancelPendingAction(env: Env, principal: Principal, pendingId: string): Promise<void> {
