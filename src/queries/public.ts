@@ -167,7 +167,7 @@ export type EventHome = EventCard & {
 export type SpeakerRef = {
   personId: string;
   name: string;
-  role: 'speaker' | 'co_speaker' | 'moderator';
+  role: 'speaker' | 'co_speaker' | 'co_author' | 'panelist' | 'moderator';
   position: number;
 };
 
@@ -213,7 +213,7 @@ export type PublicSpeaker = {
   links: string | null;
   headshotFileId: string | null;
   initials: string;
-  role: 'speaker' | 'co_speaker' | 'moderator';
+  role: 'speaker' | 'co_speaker' | 'co_author' | 'panelist' | 'moderator';
   position: number;
 };
 
@@ -364,7 +364,7 @@ type SpeakerRow = {
   pronouns: string | null;
   links: string | null;
   headshot_file_id: string | null;
-  role: 'speaker' | 'co_speaker' | 'moderator';
+  role: 'speaker' | 'co_speaker' | 'co_author' | 'panelist' | 'moderator';
   position: number;
 };
 

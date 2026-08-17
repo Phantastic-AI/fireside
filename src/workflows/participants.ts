@@ -100,7 +100,9 @@ export async function addCoPresenter(
     statements.push(plan.create);
     expect.push(1);
   }
-  statements.push(coParticipation(db, submissionId, plan.personId, nextPosition));
+  statements.push(
+    coParticipation(db, submissionId, plan.personId, nextPosition, reading.fresh[0]?.role)
+  );
   expect.push(1);
 
   try {
@@ -115,7 +117,7 @@ export async function addCoPresenter(
 
 /**
  * Take one co-presenter off. Scoped in the statement itself to a co-speaker's
- * own row — `role = 'co_speaker' AND is_submitter = 0` — so this can never
+ * own row — `role <> 'speaker' AND is_submitter = 0` — so this can never
  * reach the row that says whose proposal it is, whatever id is posted.
  */
 export async function removeCoPresenter(
@@ -137,7 +139,7 @@ export async function removeCoPresenter(
           .prepare(
             `DELETE FROM participation
               WHERE submission_id = ?1 AND person_id = ?2
-                AND role = 'co_speaker' AND is_submitter = 0`
+                AND role <> 'speaker' AND is_submitter = 0`
           )
           .bind(submissionId, personId),
       ],

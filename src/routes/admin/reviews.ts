@@ -645,6 +645,8 @@ function writtenMarks(card: ScorecardKey[], scores: Scores): string {
 const PARTICIPATION_ROLE_KEY: Record<string, LabelKey> = {
   speaker: 'role.speaker',
   co_speaker: 'role.cospeaker',
+  co_author: 'role.coauthor',
+  panelist: 'role.panelist',
   moderator: 'role.host',
 };
 

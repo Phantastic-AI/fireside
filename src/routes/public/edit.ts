@@ -47,6 +47,9 @@ import {
   visibleQuestions,
   type CoRow,
   type TrackOption,
+  CO_ROLES,
+  coRoleOf,
+  type CoRole,
 } from '../../workflows/submit';
 import { editProposal, trueStanding } from '../../workflows/edit';
 // The island is hand-written browser JS, deliberately outside the TypeScript
@@ -93,8 +96,8 @@ type FormValues = {
  *  until there are three. Every person it shows is a person it can also take
  *  off, which is the whole reason the number is not fixed at three. */
 function coRowsOf(existing: readonly CoRow[]): CoRow[] {
-  const rows = existing.map((r) => ({ name: r.name, email: r.email }));
-  while (rows.length < CO_ROWS) rows.push({ name: '', email: '' });
+  const rows: CoRow[] = existing.map((r) => ({ name: r.name, email: r.email, role: r.role }));
+  while (rows.length < CO_ROWS) rows.push({ name: '', email: '', role: 'co_speaker' });
   return rows;
 }
 
@@ -366,8 +369,27 @@ function coRow(i: number, row: CoRow): string {
     '<span class="f-lab">Email</span>' +
     `<input type="email" id="f-co-email-${n}" name="co_email_${n}" value="${esc(row.email)}" ` +
     'autocomplete="off"></label>' +
+    `<label class="f" for="f-co-role-${n}" style="flex:0 1 11em;margin-bottom:0">` +
+    '<span class="f-lab">On the talk as</span>' +
+    `<select id="f-co-role-${n}" name="co_role_${n}">` +
+    CO_ROLES.map(
+      (r) =>
+        `<option value="${r}"${row.role === r ? ' selected' : ''}>${esc(coRoleWord(r))}</option>`
+    ).join('') +
+    '</select></label>' +
     '</div>'
   );
+}
+
+/** The word for a co-row's role, from the label map like every other word. */
+function coRoleWord(r: CoRole): string {
+  return r === 'co_author'
+    ? label('role.coauthor', 'onstage')
+    : r === 'panelist'
+      ? label('role.panelist', 'onstage')
+      : r === 'moderator'
+        ? label('role.host', 'onstage')
+        : label('role.cospeaker', 'onstage');
 }
 
 function coBlock(rows: readonly CoRow[]): string {
@@ -749,8 +771,8 @@ export function registerEditProposal(app: Hono<{ Bindings: Env }>): void {
     // come back to. Somebody an organizer put on without one is not shown and
     // not touched — this form only takes off what it can put back.
     const co = people
-      .filter((p) => p.role === 'co_speaker' && !p.isSubmitter && p.email !== null)
-      .map((p) => ({ name: p.name, email: p.email ?? '' }));
+      .filter((p) => p.role !== 'speaker' && !p.isSubmitter && p.email !== null)
+      .map((p) => ({ name: p.name, email: p.email ?? '', role: coRoleOf(p.role) }));
     return c.html(
       editPage({ ev, s: standing.s, tracks, questions, values: valuesOf(standing.s, co) })
     );

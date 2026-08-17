@@ -257,10 +257,24 @@ export async function editProposal(
   const goodbye = asked
     ? onIt.filter(
         (p) =>
-          p.role === 'co_speaker' &&
+          p.role !== 'speaker' &&
           !p.isSubmitter &&
           p.email !== null &&
           !stays.has(p.email.toLowerCase())
+      )
+    : [];
+  // Kept people whose role changed on their row (T604): the same upsert the
+  // arrivals use, which touches role and position and can never reach the
+  // submitter's own standing.
+  const rerolled = asked
+    ? onIt.filter(
+        (p) =>
+          p.role !== 'speaker' &&
+          !p.isSubmitter &&
+          p.email !== null &&
+          stays.has(p.email.toLowerCase()) &&
+          coReading.postedRoles[p.email.toLowerCase()] !== undefined &&
+          coReading.postedRoles[p.email.toLowerCase()] !== p.role
       )
     : [];
   const arrivals = await planCoPresenters(db, coReading.fresh, nowMs);
@@ -349,7 +363,27 @@ export async function editProposal(
   }
   for (const mate of arrivals) {
     statements.push(
-      coParticipation(db, submissionId, mate.personId, coReading.posted.indexOf(mate.email) + 1)
+      coParticipation(
+        db,
+        submissionId,
+        mate.personId,
+        coReading.posted.indexOf(mate.email) + 1,
+        coReading.postedRoles[mate.email] ?? 'co_speaker'
+      )
+    );
+    expect.push(1);
+  }
+  // Role changes for people already on the talk — same upsert, same wall.
+  for (const p of rerolled) {
+    const email = (p.email ?? '').toLowerCase();
+    statements.push(
+      coParticipation(
+        db,
+        submissionId,
+        p.personId,
+        coReading.posted.indexOf(email) + 1,
+        coReading.postedRoles[email] ?? 'co_speaker'
+      )
     );
     expect.push(1);
   }
@@ -365,7 +399,7 @@ export async function editProposal(
         .prepare(
           `DELETE FROM participation
             WHERE submission_id = ? AND person_id = ?
-              AND role = 'co_speaker' AND is_submitter = 0`
+              AND role <> 'speaker' AND is_submitter = 0`
         )
         .bind(submissionId, gone.personId)
     );

@@ -149,7 +149,7 @@ export type ProposalParticipant = {
   jobTitle: string | null;
   organisation: string | null;
   phone: string | null;
-  role: 'speaker' | 'co_speaker' | 'moderator';
+  role: 'speaker' | 'co_speaker' | 'co_author' | 'panelist' | 'moderator';
   position: number;
   isSubmitter: boolean;
 };
@@ -804,7 +804,7 @@ export async function proposal(
       job_title: string | null;
       organisation: string | null;
       phone: string | null;
-      role: 'speaker' | 'co_speaker' | 'moderator';
+      role: 'speaker' | 'co_speaker' | 'co_author' | 'panelist' | 'moderator';
       position: number;
       is_submitter: number;
     }>(partRes).map((p) => ({

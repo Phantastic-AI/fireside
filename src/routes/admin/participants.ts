@@ -18,6 +18,7 @@ import { esc, page, backstageShell, deniedPage } from '../../lib/html';
 import { label, type LabelKey } from '../../lib/labels';
 import { ScopeError, adminEvents, type AdminEvent } from '../../queries/admin';
 import { principalFromCookie, type Principal } from '../../workflows/account';
+import { coRoleOf } from '../../workflows/submit';
 import {
   addCoPresenter,
   castOf,
@@ -41,6 +42,8 @@ function initialsOf(name: string): string {
 const ROLE_KEY: Record<string, LabelKey> = {
   speaker: 'role.speaker',
   co_speaker: 'role.cospeaker',
+  co_author: 'role.coauthor',
+  panelist: 'role.panelist',
   moderator: 'role.host',
 };
 
@@ -129,6 +132,13 @@ function participantsPage(
     '<input type="text" name="name" maxlength="120"></label>' +
     '<label class="f" style="flex:1;min-width:220px"><span class="f-lab">Email</span>' +
     '<input type="email" name="email" maxlength="200"></label>' +
+    '<label class="f" style="min-width:11em"><span class="f-lab">On the talk as</span>' +
+    '<select name="role">' +
+    `<option value="co_speaker">${esc(label('role.cospeaker', 'backstage'))}</option>` +
+    `<option value="co_author">${esc(label('role.coauthor', 'backstage'))}</option>` +
+    `<option value="panelist">${esc(label('role.panelist', 'backstage'))}</option>` +
+    `<option value="moderator">${esc(label('role.host', 'backstage'))}</option>` +
+    '</select></label>' +
     '</div>' +
     '<div class="btnrow" style="margin-top:12px">' +
     '<button class="btn btn-primary" type="submit">Add</button></div>' +
@@ -201,6 +211,7 @@ export function registerParticipants(app: Hono<{ Bindings: Env }>): void {
     const row = {
       name: typeof form['name'] === 'string' ? form['name'] : '',
       email: typeof form['email'] === 'string' ? form['email'] : '',
+      role: coRoleOf(typeof form['role'] === 'string' ? form['role'] : ''),
     };
 
     try {

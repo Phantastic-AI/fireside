@@ -197,6 +197,8 @@ const levelWords = (stored: string | null): string | null =>
 const ROLE_KEY: Record<string, LabelKey> = {
   speaker: 'role.speaker',
   co_speaker: 'role.cospeaker',
+  co_author: 'role.coauthor',
+  panelist: 'role.panelist',
   moderator: 'role.host',
 };
 const roleWords = (stored: string): string => wordFor(ROLE_KEY, stored);

@@ -74,6 +74,8 @@ const LABELS = {
   // §1.10 — roles, formats, levels, provenance
   'role.speaker': 'Speaker',
   'role.cospeaker': 'Co-speaker',
+  'role.coauthor': 'Co-author',
+  'role.panelist': 'Panelist',
   'role.host': 'Host',
   'format.talk': 'Talk',
   'format.workshop': 'Workshop',

@@ -46,6 +46,9 @@ import {
   LEVELS,
   type CoRow,
   type TrackOption,
+  CO_ROLES,
+  coRoleOf,
+  type CoRole,
 } from '../../workflows/submit';
 // The island is hand-written browser JS, deliberately outside the TypeScript
 // program (tsconfig has no allowJs, and types.d.ts declares only '*.css').
@@ -108,7 +111,7 @@ type FormValues = {
 /** As many empty rows as the block draws — a row is a row whether it has been
  *  typed into or not, so a refusal can point at the third one and be right. */
 const emptyRows = (): CoRow[] =>
-  Array.from({ length: CO_ROWS }, () => ({ name: '', email: '' }));
+  Array.from({ length: CO_ROWS }, () => ({ name: '', email: '', role: 'co_speaker' as const }));
 
 const blank = (): FormValues => ({
   title: '', abstract: '', track: '', format: '', level: '',
@@ -411,8 +414,27 @@ function coRow(i: number, row: CoRow): string {
     '<span class="f-lab">Email</span>' +
     `<input type="email" id="f-co-email-${n}" name="co_email_${n}" value="${esc(row.email)}" ` +
     'autocomplete="off"></label>' +
+    `<label class="f" for="f-co-role-${n}" style="flex:0 1 11em;margin-bottom:0">` +
+    '<span class="f-lab">On the talk as</span>' +
+    `<select id="f-co-role-${n}" name="co_role_${n}">` +
+    CO_ROLES.map(
+      (r) =>
+        `<option value="${r}"${row.role === r ? ' selected' : ''}>${esc(coRoleWord(r))}</option>`
+    ).join('') +
+    '</select></label>' +
     '</div>'
   );
+}
+
+/** The word for a co-row's role, from the label map like every other word. */
+function coRoleWord(r: CoRole): string {
+  return r === 'co_author'
+    ? label('role.coauthor', 'onstage')
+    : r === 'panelist'
+      ? label('role.panelist', 'onstage')
+      : r === 'moderator'
+        ? label('role.host', 'onstage')
+        : label('role.cospeaker', 'onstage');
 }
 
 function coBlock(rows: readonly CoRow[]): string {

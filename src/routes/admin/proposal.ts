@@ -94,6 +94,8 @@ const SOURCE_KEY: Record<string, string> = { cfp: 'source.public', organizer: 's
 const ROLE_KEY: Record<string, string> = {
   speaker: 'role.speaker',
   co_speaker: 'role.cospeaker',
+  co_author: 'role.coauthor',
+  panelist: 'role.panelist',
   moderator: 'role.host',
 };
 

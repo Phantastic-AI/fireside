@@ -534,7 +534,20 @@ function seshCard(
   const titleHtml = href
     ? `<a href="${href}"${link.attrs}${strike}>${esc(s.title)}</a>`
     : `<span${strike}>${esc(s.title)}</span>`;
-  const names = s.speakers.map((p) => p.name);
+  // Billing follows standing (T604): a co-speaker shares the marquee bare,
+  // while a moderator, panelist or co-author says what they are beside their
+  // name — a moderator billed as a speaker is wrong in public.
+  const names = s.speakers.map((p) => {
+    const tagWord =
+      p.role === 'moderator'
+        ? label('role.host', 'onstage')
+        : p.role === 'panelist'
+          ? label('role.panelist', 'onstage')
+          : p.role === 'co_author'
+            ? label('role.coauthor', 'onstage')
+            : null;
+    return tagWord ? `${p.name} (${tagWord.toLowerCase()})` : p.name;
+  });
   const role = roleLine(s.speakers, roles);
   // Same source of truth as the masthead's one live fact (liveState) — a
   // session is only ever tagged here because it is the exact session that

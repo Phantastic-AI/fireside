@@ -114,14 +114,32 @@ export const CO_ROWS = 3;
  */
 export const CO_WINDOW = 8;
 
+/** Every standing a person can hold on a talk (T604). The submitter is the
+ *  speaker; everyone else picks from the co-set below. */
+export type TalkRole = 'speaker' | 'co_speaker' | 'co_author' | 'panelist' | 'moderator';
+
+/** The roles a co-row may carry — what the form's select offers, and the only
+ *  words a posted body is believed about. Anything else reads as co_speaker,
+ *  the role every co-row meant before roles existed. */
+export const CO_ROLES = ['co_speaker', 'co_author', 'panelist', 'moderator'] as const;
+export type CoRole = (typeof CO_ROLES)[number];
+
+export function coRoleOf(raw: string): CoRole {
+  return (CO_ROLES as readonly string[]).includes(raw) ? (raw as CoRole) : 'co_speaker';
+}
+
 /** One row of the block, exactly as it was typed. */
-export type CoRow = { name: string; email: string };
+export type CoRow = { name: string; email: string; role: CoRole };
 
 /** The rows off a posted body. The names are the form's: co_name_1, co_email_1. */
 export function coRowsFrom(read: (key: string) => string, upTo: number = CO_WINDOW): CoRow[] {
   const rows: CoRow[] = [];
   for (let i = 1; i <= upTo; i++) {
-    rows.push({ name: read(`co_name_${i}`), email: read(`co_email_${i}`) });
+    rows.push({
+      name: read(`co_name_${i}`),
+      email: read(`co_email_${i}`),
+      role: coRoleOf(read(`co_role_${i}`)),
+    });
   }
   return rows;
 }
@@ -134,8 +152,10 @@ export type CoReading =
       ok: true;
       /** Every complete row's address, in the order typed — what the talk should end with. */
       posted: string[];
+      /** Each posted address's role, as chosen on its row (T604). */
+      postedRoles: Record<string, CoRole>;
       /** The ones not on the talk already: these are the rows that mean work. */
-      fresh: { name: string; email: string }[];
+      fresh: { name: string; email: string; role: CoRole }[];
     }
   | { ok: false; field: string; message: string };
 
@@ -149,7 +169,8 @@ export type CoReading =
 export function readCoPresenters(rows: readonly CoRow[], taken: readonly string[]): CoReading {
   const already = new Set(taken.map((e) => lower(e)).filter((e) => e !== ''));
   const posted: string[] = [];
-  const fresh: { name: string; email: string }[] = [];
+  const postedRoles: Record<string, CoRole> = {};
+  const fresh: { name: string; email: string; role: CoRole }[] = [];
   const seen = new Set<string>();
 
   for (let i = 0; i < rows.length; i++) {
@@ -176,10 +197,11 @@ export function readCoPresenters(rows: readonly CoRow[], taken: readonly string[
     if (seen.has(email)) continue;
     seen.add(email);
     posted.push(email);
-    if (!already.has(email)) fresh.push({ name, email });
+    postedRoles[email] = raw.role;
+    if (!already.has(email)) fresh.push({ name, email, role: raw.role });
   }
 
-  return { ok: true, posted, fresh };
+  return { ok: true, posted, postedRoles, fresh };
 }
 
 /** A person to put on the talk, and the row that has to exist first. */
@@ -228,14 +250,18 @@ export function coParticipation(
   db: D1Database,
   submissionId: string,
   personId: string,
-  position: number
+  position: number,
+  role: CoRole = 'co_speaker'
 ): D1PreparedStatement {
   return db
     .prepare(
       `INSERT INTO participation (submission_id, person_id, role, position, is_submitter)
-       VALUES (?,?,'co_speaker',?,0)`
+       VALUES (?,?,?,?,0)
+       ON CONFLICT (submission_id, person_id)
+       DO UPDATE SET role = excluded.role, position = excluded.position
+       WHERE is_submitter = 0`
     )
-    .bind(submissionId, personId, position);
+    .bind(submissionId, personId, role, position);
 }
 
 /** Somebody on a talk. The role stays an enum here; the word for it is the
@@ -245,7 +271,7 @@ export type OnTheTalk = {
   personId: string;
   name: string;
   email: string | null;
-  role: 'speaker' | 'co_speaker' | 'moderator';
+  role: 'speaker' | 'co_speaker' | 'co_author' | 'panelist' | 'moderator';
   position: number;
   isSubmitter: boolean;
 };
@@ -255,7 +281,7 @@ type ParticipationRow = {
   person_id: string;
   name: string;
   email: string | null;
-  role: 'speaker' | 'co_speaker' | 'moderator';
+  role: 'speaker' | 'co_speaker' | 'co_author' | 'panelist' | 'moderator';
   position: number;
   is_submitter: number;
 };
@@ -600,7 +626,15 @@ export async function submitProposal(
   // Beside them, in the order they were typed. Position 0 is the submitter's,
   // and nothing here can take it.
   co.forEach((mate, i) => {
-    statements.push(coParticipation(db, submissionId, mate.personId, i + 1));
+    statements.push(
+      coParticipation(
+        db,
+        submissionId,
+        mate.personId,
+        i + 1,
+        coReading.fresh[i]?.role ?? 'co_speaker'
+      )
+    );
     expect.push(1);
   });
 
