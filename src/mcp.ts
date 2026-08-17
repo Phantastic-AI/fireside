@@ -1367,6 +1367,16 @@ const SIGNED_TOOLS: Record<string, Tool> = {
       const ev = found.ev;
       const spot = await queuePosition(env.DB, principal, ev, id);
       if (!spot) return refuse(NOT_ASSIGNED);
+      // queuePosition's decider branch returns the whole pile, not just what was
+      // handed to this reviewer — so require an ACTUAL assignment (a review row
+      // this person owns this round) before recusing. Without this, an owner or
+      // approver could "step aside" from a proposal never assigned to them,
+      // spuriously dropping it from the committee's unassigned count (Codex).
+      const assigned = await env.DB
+        .prepare(`SELECT 1 FROM review WHERE submission_id = ? AND reviewer_person_id = ? AND round = ?`)
+        .bind(spot.submissionId, principal.personId, ev.round)
+        .first();
+      if (!assigned) return refuse(NOT_ASSIGNED);
       const outcome = await stepAside(env.DB, principal, ev.id, ev.round, spot.submissionId);
       if (outcome !== 'stepped') return refuse(STEP_SAID[outcome] ?? 'That did not go through. Try once more.');
       return answered({
@@ -1452,7 +1462,8 @@ const SIGNED_TOOLS: Record<string, Tool> = {
     description:
       'Mark one of your own deliverable tasks done — or, with done=false, put a completed one back on ' +
       "your list. Reversible, yours alone. If you are a speaker's helper, this acts for the speaker you " +
-      'assist. Give the task id (my_owed lists them). Refuses if the task is not yours or not on this event.',
+      'assist. Give the task id from the portal (my_owed lists your own open tasks). Refuses if the task ' +
+      'is not yours to touch or not on this event.',
     inputSchema: {
       type: 'object',
       properties: {

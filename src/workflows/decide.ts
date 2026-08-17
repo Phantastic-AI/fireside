@@ -47,7 +47,12 @@ export async function stageDecision(
   eventId: string,
   submissionId: string,
   decision: Decision,
-  note: string | null
+  note: string | null,
+  // When set (the agentic confirm path), the decision_version the human saw when
+  // they staged this. If the proposal has moved since — another organizer
+  // accepted and placed it — the commit is refused rather than becoming a
+  // silent reversal the confirmed manifest never mentioned (Codex).
+  expectVersion?: number
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   requireDecider(principal, eventId);
 
@@ -58,6 +63,9 @@ export async function stageDecision(
     .bind(submissionId, eventId)
     .first<{ id: string; state: string; decision_version: number; event_name: string; person_id: string }>();
   if (!sub) return { ok: false, error: 'That proposal is not on this event.' };
+  if (expectVersion !== undefined && sub.decision_version !== expectVersion) {
+    return { ok: false, error: 'That proposal moved since you staged this decision. Look again and decide fresh.' };
+  }
   if (sub.state === decision) return { ok: true }; // idempotent — same call twice is one decision
 
   const t = now();

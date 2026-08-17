@@ -388,25 +388,35 @@ export const ACTIONS: Record<string, ActionDef> = {
       }
       const row = await env.DB
         .prepare(
-          `SELECT s.title, pe.name AS speaker FROM submission s
+          `SELECT s.title, s.state, s.decision_version AS version, pe.name AS speaker FROM submission s
              JOIN participation pa ON pa.submission_id = s.id AND pa.is_submitter = 1
              JOIN person pe ON pe.id = pa.person_id
             WHERE s.id = ? AND s.event_id = ?`
         )
         .bind(submissionId, eventId)
-        .first<{ title: string; speaker: string }>();
+        .first<{ title: string; state: string; version: number; speaker: string }>();
       if (!row) return { ok: false, reason: 'no-proposal' };
       const verb = decision === 'accepted' ? 'Accept' : decision === 'waitlisted' ? 'Waitlist' : 'Decline';
+      // If it is currently accepted and this un-accepts it, the confirmed act also
+      // clears its agenda slot and cancels its open tasks — disclose that in the
+      // manifest, never let it be a silent reversal (Codex).
+      const reversal =
+        row.state === 'accepted' && decision !== 'accepted'
+          ? ' This un-accepts it: its agenda slot and open tasks are cleared.'
+          : '';
+      // Freeze the version the human is deciding against; a commit after the
+      // proposal has moved is refused rather than reversing something unseen.
       return {
         ok: true,
-        args: { submissionId, decision },
+        args: { submissionId, decision, expectVersion: row.version },
         subject: row.title,
-        manifest: `${verb} "${row.title}" by ${row.speaker}. Staged only — nothing reaches ${row.speaker} until you release the outbox.`,
+        manifest: `${verb} "${row.title}" by ${row.speaker}.${reversal} Staged only — nothing reaches ${row.speaker} until you release the outbox.`,
       };
     },
     async execute(env, p, eventId, args) {
       if (!eventId) return 'trouble';
-      const r = await stageDecision(env.DB, p, eventId, str(args.submissionId), args.decision as Decision, null);
+      const expectVersion = typeof args.expectVersion === 'number' ? args.expectVersion : undefined;
+      const r = await stageDecision(env.DB, p, eventId, str(args.submissionId), args.decision as Decision, null, expectVersion);
       // stageDecision never throws (it returns {ok:false} on a stale/illegal
       // move); a failure means the world moved, so say so honestly.
       return r.ok ? 'done' : 'moved';
@@ -427,10 +437,13 @@ export const ACTIONS: Record<string, ActionDef> = {
       if (!taskId || !eventId) return { ok: false, reason: 'no-task' };
       const actorId = await taskActorId(env.DB, taskId, p.personId);
       if (!actorId) return { ok: false, reason: 'no-task' };
+      // Bind the event via task.event_id directly — a task may legitimately have
+      // a null submission_id (an event-wide "confirm travel" task shows in
+      // my_owed), and a submission join would wrongly drop it (Codex).
       const row = await env.DB
         .prepare(
-          `SELECT t.title FROM task t JOIN submission s ON s.id = t.submission_id
-            WHERE t.id = ? AND t.person_id = ? AND s.event_id = ?
+          `SELECT t.title FROM task t
+            WHERE t.id = ? AND t.person_id = ? AND t.event_id = ?
               AND t.completed_at IS NULL AND t.cancelled_at IS NULL`
         )
         .bind(taskId, actorId, eventId)
@@ -456,8 +469,8 @@ export const ACTIONS: Record<string, ActionDef> = {
       if (!actorId) return { ok: false, reason: 'no-task' };
       const row = await env.DB
         .prepare(
-          `SELECT t.title FROM task t JOIN submission s ON s.id = t.submission_id
-            WHERE t.id = ? AND t.person_id = ? AND s.event_id = ?
+          `SELECT t.title FROM task t
+            WHERE t.id = ? AND t.person_id = ? AND t.event_id = ?
               AND t.completed_at IS NOT NULL AND t.cancelled_at IS NULL`
         )
         .bind(taskId, actorId, eventId)
@@ -483,13 +496,17 @@ export const ACTIONS: Record<string, ActionDef> = {
     async validateAndFreeze(env, p, eventId, raw) {
       const submissionId = str(raw.submissionId);
       if (!submissionId || !eventId) return { ok: false, reason: 'no-proposal' };
+      // agenda_published is a column on event, not submission (Codex): join event
+      // and read it there, exactly as withdrawProposal's own guard does, or the
+      // query throws before ownership is ever evaluated.
       const row = await env.DB
         .prepare(
           `SELECT s.title FROM submission s
+             JOIN event e ON e.id = s.event_id
              JOIN participation pa ON pa.submission_id = s.id AND pa.person_id = ?
             WHERE s.id = ? AND s.event_id = ?
               AND s.state IN ('submitted','waitlisted','accepted')
-              AND NOT (s.agenda_published = 1 AND s.starts_at IS NOT NULL)`
+              AND NOT (e.agenda_published = 1 AND s.starts_at IS NOT NULL)`
         )
         .bind(p.personId, submissionId, eventId)
         .first<{ title: string }>();
