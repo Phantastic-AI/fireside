@@ -413,11 +413,12 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
       : '<a class="btn btn-primary btn-lg" href="/sign-up">Start your conference →</a>') +
     '<a class="btn btn-lg" href="#live">Walk a live one first →</a>' +
     '</div>' +
-    // Four things that are true of the software and rare together, said plainly
-    // (the tight feature strip Aditya liked on untitledconference.com).
+    // Four buyer hooks, not engineer trivia (Aditya): an organizer switching off
+    // a $40k SaaS cares about cost, that it is AI-native, that it is fast, and
+    // that it holds the whole cast. Distinctive product depth lives further down.
     '<ul class="mkt-feat">' +
-    '<li>Free and open source</li><li>Self-hostable, one Worker</li>' +
-    '<li>No attendee accounts</li><li>Speaks MCP</li>' +
+    '<li>Free &amp; open source</li><li>Runs by chat or agent</li>' +
+    '<li>Fast — no slow SaaS</li><li>Every role in one place</li>' +
     '</ul>' +
     '</div>' +
     heroShot +
