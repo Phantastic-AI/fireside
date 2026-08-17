@@ -138,6 +138,23 @@ function embedsPage(
       'The speaker gallery, faces and all. Paste this where the speakers page lives.',
       frame(`${at}/speakers?embed=1`, `${ev.name} — speakers`, 800)
     ),
+    // T610 — the program as data and as paper, for the sites that want to
+    // draw it themselves or take it without a script.
+    block(
+      'The program as JSON',
+      'Every session with its time, room, track, speakers and roles — live as the program changes, open to any origin. Narrow it with ?day=2026-09-03 or ?track=platform.',
+      `${at}/agenda.json`
+    ),
+    block(
+      'The speakers as JSON',
+      'The gallery as data: name, title, employer, and the address of each speaker page.',
+      `${at}/speakers.json`
+    ),
+    block(
+      'The program as plain HTML',
+      'One self-contained page: no script, no styles to fight, safe anywhere that takes markup. The iframe stays the living version; this one is paper.',
+      `${at}/agenda.html`
+    ),
     ...(firstDay
       ? [block(
           `One day — ${dayWords(firstDay)}`,
