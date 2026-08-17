@@ -347,6 +347,15 @@ function chipRow(ev: EventHome, intents: IntentChip[], lead?: string, act?: stri
     ? `<button class="cc-chip" type="submit" name="q" value="${esc(lead)}">${esc(lead)}</button>`
     : '';
   const room = Math.max(1, MOST_CHIPS - intents.length - (lead ? 1 : 0) - (act ? 1 : 0));
+  // A starter never repeats a topic an instant chip already carries: the
+  // call's close date is one chip, not two wordings of it. And a backstage
+  // reader is past the visitor starters — their standing chips lead instead.
+  const codes = new Set(intents.map((i) => i.code));
+  const fillers = starters(ev).filter((s) => {
+    if (codes.has('call-close') && s === 'When does the call for speakers close?') return false;
+    if (codes.has('pile-now') && s !== 'Where is it, and when does each day start?') return false;
+    return true;
+  });
   const chips =
     actChip +
     leadChip +
@@ -356,7 +365,7 @@ function chipRow(ev: EventHome, intents: IntentChip[], lead?: string, act?: stri
           `<button class="cc-chip" type="submit" name="i" value="${esc(i.code)}">${esc(i.label)}</button>`
       )
       .join('') +
-    starters(ev)
+    fillers
       .slice(0, room)
       .map(
         (s) => `<button class="cc-chip" type="submit" name="q" value="${esc(s)}">${esc(s)}</button>`

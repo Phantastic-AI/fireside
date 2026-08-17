@@ -73,8 +73,8 @@ function conciergeIsland() {
       'placeholder="Ask about the program" aria-label="Ask about the program">' +
       '<button type="button" data-cc-send>Ask</button></div>' +
       '<p class="cc-hand">Your agent can work this program too: ' +
-      '<span class="code">POST /mcp</span> speaks MCP — tools, the submit action, ' +
-      'and connect strings at <a class="link" href="/agents">/agents</a>.</p>' +
+      '<span class="code">' + location.origin + '/mcp</span> speaks MCP — ' +
+      'connect strings and instructions at <a class="link" href="/agents">/agents</a>.</p>' +
       '</div></div>'
     );
   }

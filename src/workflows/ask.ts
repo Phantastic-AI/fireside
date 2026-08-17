@@ -1693,15 +1693,18 @@ export async function offeredIntents(
   principal: Principal | null,
   nowMs: number = Date.now()
 ): Promise<IntentChip[]> {
-  const chip = (code: IntentCode): IntentChip => ({ code, label: intentLabel(code, ev, nowMs) });
-  const out: IntentChip[] = [chip('now-next')];
-  // A closed call at a conference that has already happened is nobody's
-  // question; an open one, or one whose decisions are still coming, is.
-  if (ev.cfpClosesAt !== null && ev.lifecycle !== 'happened') out.push(chip('call-close'));
-  // Nothing is started at a conference that is over — "what was on" is the
-  // whole of what a reader wants there, and two chips saying it is one too many.
-  if (ev.lifecycle !== 'happened') out.push(chip('getting-started'));
-  if (!principal) return out;
+  const chip = (code: IntentCode, label?: string): IntentChip => ({
+    code,
+    label: label ?? intentLabel(code, ev, nowMs),
+  });
+  // The three anybody may press. A closed call at a conference that has
+  // already happened is nobody's question; an open one, or one whose
+  // decisions are still coming, is. Nothing is started at a conference that
+  // is over — "what was on" is the whole of what a reader wants there.
+  const anybody: IntentChip[] = [chip('now-next')];
+  if (ev.cfpClosesAt !== null && ev.lifecycle !== 'happened') anybody.push(chip('call-close'));
+  if (ev.lifecycle !== 'happened') anybody.push(chip('getting-started'));
+  if (!principal) return anybody;
 
   const role = principal.eventRoles[ev.id];
   const backstage =
@@ -1718,12 +1721,28 @@ export async function offeredIntents(
     // A chip that cannot be decided on is a chip that is not drawn. The page
     // still answers everything a stranger could ask.
     console.log('ask: the standing chips did not read', String(e));
-    return out;
+    return anybody;
   }
 
+  // A standing leads with its own work — the organizer's first chip is her
+  // pile, a reviewer's is their queue, a speaker's is what they owe — and the
+  // universal questions follow. The same person on a conference where they
+  // hold nothing reads exactly as a visitor does.
+  const out: IntentChip[] = [];
   if (held.proposals > 0 || held.openTasks > 0) out.push(chip('my-owed'));
-  if (backstage) out.push(chip('pile-now'));
   if (readingRoom && held.reviews > 0) out.push(chip('my-queue'));
+  if (backstage) out.push(chip('pile-now'));
+  for (const c of anybody) {
+    // Backstage readers run the call and the doors; "What should I do first?"
+    // is visitor onboarding, and "Can I still send a talk?" is a visitor's
+    // wording for a date the organizer still wants — ask it as the date.
+    if (backstage && c.code === 'getting-started') continue;
+    if (backstage && c.code === 'call-close' && ev.lifecycle === 'open') {
+      out.push(chip('call-close', 'When does the call close?'));
+      continue;
+    }
+    out.push(c);
+  }
   return out;
 }
 
