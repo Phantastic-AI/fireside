@@ -103,6 +103,16 @@ function whoLine(event: AdminEvent, principal: Principal): { who: string; whoIni
 
 const num = (n: number): string => n.toLocaleString('en-US');
 
+const DUE_MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+/** "24 Aug" off a calendar-day string — the same short shape the deliverables
+ *  board uses, kept local like every other day-word in this build. */
+function dayMonth(iso: string): string {
+  const m = Number(iso.slice(5, 7));
+  return `${Number(iso.slice(8, 10))} ${DUE_MONTHS[m - 1] ?? ''}`.trim();
+}
+
 /** What she calls them out loud. One word, the one on the front of their name. */
 const firstNameOf = (name: string): string => name.trim().split(/\s+/)[0] ?? name;
 
@@ -126,6 +136,7 @@ function rosterOnlyAsListRow(r: {
     personId: r.personId,
     name: r.name,
     stage: null,
+    owed: [],
     jobTitle: r.jobTitle,
     organisation: r.organisation,
     proposals: [],
@@ -147,7 +158,7 @@ const OUTCOMES: Record<string, string> = {
   'no-kind': 'Say what kind of ask it is, so they know what to send back.',
   'bad-date': 'That is not a day anyone has. Give the date again and it goes on their list.',
   gone: 'That one was already off their list. Nothing changed.',
-  trouble: 'That did not go through, and nothing changed. Worth trying once more.',
+  trouble: 'That did not go through, and nothing changed. Try it again.',
   saved: 'Saved.',
   'not-found': 'That record could not be found. Nothing changed.',
   // creating or editing a speaker's own file
@@ -289,9 +300,21 @@ function proposalChips(proposals: PersonProposal[]): string {
 
 function personRow(slug: string, r: PersonListRow, headshots: Map<string, string>): string {
   const role = [r.jobTitle, r.organisation].filter((v): v is string => Boolean(v)).map((v) => esc(v)).join(' · ');
+  // Name what is owed, soonest first, not just how much of it: an organizer
+  // scanning this column is asking "waiting on what" (operator, 2026-08-17).
   const owe =
     r.openTaskCount > 0
-      ? `<span style="color:var(--ink-soft)">${esc(taskCountText(r.openTaskCount))}</span>`
+      ? `<span style="color:var(--ink-soft)">${esc(taskCountText(r.openTaskCount))}</span>` +
+        '<div class="t-sub" style="margin-top:2px">' +
+        r.owed
+          .slice(0, 3)
+          .map(
+            (t) =>
+              esc(t.title) + (t.dueOn ? ` <span style="opacity:.75">· by ${esc(dayMonth(t.dueOn))}</span>` : '')
+          )
+          .join('<br>') +
+        (r.owed.length > 3 ? `<br>and ${num(r.owed.length - 3)} more` : '') +
+        '</div>'
       : '<span class="t-sub">Nothing outstanding</span>';
   return (
     '<tr>' +

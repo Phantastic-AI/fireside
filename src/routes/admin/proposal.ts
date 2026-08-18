@@ -325,7 +325,7 @@ const OUTCOMES: Record<string, string> = {
   'look-again': 'Something moved while this page was open. Look again, then decide.',
   'second-look': 'A decision already made takes the second look first. Nothing has changed.',
   'no-decision': 'That carried no decision, so nothing changed.',
-  trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
+  trouble: 'That did not go through, and nothing has changed. Try it again.',
   // asking — its own codes, because "not here" means something else here than
   // it does about a decision: the speaker, not the proposal
   asked: 'Asked. It is on their portal now.',
@@ -334,7 +334,7 @@ const OUTCOMES: Record<string, string> = {
   'ask-no-title': 'An ask needs a short line saying what you are asking for.',
   'ask-no-kind': 'Say what kind of ask it is, so they know what to send back.',
   'ask-bad-date': 'That is not a day anyone has. Give the date again and it goes on their list.',
-  'ask-trouble': 'The ask did not go through, and nothing changed. Worth trying once more.',
+  'ask-trouble': 'The ask did not go through, and nothing changed. Try it again.',
   // CNT-05 — a reply on a deliverable's thread
   commented: 'Added. It is on the thread now, and the speaker can read it.',
   'no-comment': 'Nothing was written, so nothing was added.',
@@ -344,7 +344,7 @@ const OUTCOMES: Record<string, string> = {
   'edit-no-title': 'A title is needed — it is the line the committee reads first.',
   'edit-too-long': 'The abstract runs longer than the program has room for. Trim it and save again.',
   'edit-not-here': 'That proposal is not on this event.',
-  'edit-trouble': 'That did not go through, and nothing has changed. Worth trying once more.',
+  'edit-trouble': 'That did not go through, and nothing has changed. Try it again.',
 };
 
 /** decide.ts speaks in sentences; this maps each back to its code so the same

@@ -773,7 +773,7 @@ const WRITE_OUTCOMES: Record<string, string> = {
   'no-body': 'A letter needs something in it.',
   nobody: 'Nobody is in that group yet, so nothing was written.',
   gone: 'Those have already gone, so there was nothing to take back.',
-  trouble: 'That did not go through, and nothing changed. Worth trying once more.',
+  trouble: 'That did not go through, and nothing changed. Try it again.',
 };
 
 // The sentence is escaped once, by noteBox, on its way onto the page.

@@ -286,7 +286,7 @@ function importCard(events: AdminEvent[]): string {
     '<div class="card card-pad" style="margin-top:22px;max-width:44em">' +
     '<h2 class="display" style="font-size:20px;margin-bottom:4px">Bring in a list</h2>' +
     '<p class="sub" style="margin-bottom:10px">A CSV of names, emails, job titles, companies and bios, brought in ' +
-    'from an event’s own People page. Whoever comes in shows up here too.</p>' +
+    'from a conference’s own People page. Anyone added there appears here as well.</p>' +
     `<p style="margin:0">${links}</p></div>`
   );
 }
@@ -311,9 +311,9 @@ function addContactForm(): string {
 
 const DIRECTORY_NOTES: Record<string, string> = {
   'no-name': 'A name is needed — it is how you will find them again.',
-  'no-email': 'A working email address is needed.',
+  'no-email': 'An email address is needed.',
   taken: 'Somebody with that address is already here — open their record instead of adding a second one.',
-  trouble: 'That did not go through, and nothing changed. Worth trying once more.',
+  trouble: 'That did not go through, and nothing changed. Try it again.',
   added: 'Added.',
   noted: 'Saved.',
   tagged: 'Tagged.',
@@ -324,7 +324,7 @@ const DIRECTORY_NOTES: Record<string, string> = {
   merged: 'Merged. One record remains.',
   'merge-not-found': 'One of those records could not be found. Nothing changed.',
   'merge-same': 'Those are the same record.',
-  'merge-trouble': 'That did not go through, and nothing changed. Worth trying once more.',
+  'merge-trouble': 'That did not go through, and nothing changed. Try it again.',
   'no-tag': 'Type a word for the tag first.',
   enrolled: 'On the board.',
   'already-enrolled': 'They are on the board already — move their card instead of enrolling them twice.',

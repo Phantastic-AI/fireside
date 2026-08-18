@@ -260,7 +260,7 @@ const SHARE_NOTES: Record<string, string> = {
   rotated: 'A fresh link is live. The old one has stopped working.',
   revoked: 'The link is off. Nobody can open this file without signing in now.',
   moved: 'The link changed while you were looking. What you see now is what works.',
-  trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
+  trouble: 'That did not go through, and nothing has changed. Try it again.',
 };
 
 /** CNT: the per-file share panel, open only to whoever already holds

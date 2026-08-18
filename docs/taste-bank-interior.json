@@ -1,0 +1,79 @@
+{
+  "name": "fireside-interior-v1",
+  "scope": "The product's own screens and letters: backstage, portal, public event pages, and every string that leaves in an inbox. NOT the marketing page, which has its own bank (deslop skill, taste-bank-v1.1.json).",
+  "established": "2026-08-17, from three critic passes over the interior (waves 1-3).",
+  "hard_rules": [
+    {
+      "rule": "PLAIN_DOMAIN_WORDS",
+      "says": "Name the domain in the words an organizer already owns: assign, assignment, reviewer, proposal, decision, letter. Never hand out / holding / reader / the pile as unexplained metaphor.",
+      "why": "The review room spoke a house dialect that was coherent to its builders and a riddle to everyone else: 'Hand out again — it only gives out what nobody holds'."
+    },
+    {
+      "rule": "ONE_FACT_EMPTY_STATE",
+      "says": "An empty state states its one fact and stops. Mechanics belong on the control that performs them, said once.",
+      "why": "The proposal page explained the portal twice on one screen: once in the empty rail, once on the form beneath it."
+    },
+    {
+      "rule": "NO_INVENTED_REASON",
+      "says": "Never assert a cause, a feeling, or a count the software cannot know. State what happened.",
+      "why": "A rejection read 'There were more proposals than the days have hours' — consolation the product cannot verify."
+    },
+    {
+      "rule": "ANTECEDENT_IN_THE_SENTENCE",
+      "says": "The load-bearing noun lives in the sentence, not in the surrounding chrome. A line must survive being read alone, in a screenshot or an inbox.",
+      "why": "'The committee did not choose this one' names nothing; a speaker with two proposals could not tell which died."
+    },
+    {
+      "rule": "ONE_NAME_PER_THING",
+      "says": "One word per object across every surface. The public program is 'the program' everywhere, not schedule/agenda/program/speaker page by turns.",
+      "why": "'room' meant venue room, recipient cohort, and quota slot on three screens."
+    },
+    {
+      "rule": "NO_LEAKED_PLUMBING",
+      "says": "Never surface the demo's or the schema's internals in product copy. No 'real addresses', no 'picker', no table names.",
+      "why": "A send confirm said 'real addresses get an email too', implying some speakers are fake."
+    },
+    {
+      "rule": "SIGNED_BY_THE_SENDER",
+      "says": "A letter is signed by whoever actually sent it. Conference business signs as the conference; only sign-in and check-in links sign as Fireside.",
+      "why": "A committee's decision arriving 'sent from Fireside' hands the reader a vendor at the moment they most want a person."
+    },
+    {
+      "rule": "EM_DASHES_ALLOWED",
+      "says": "Em and en dashes are permitted in interior copy. The marketing bank's ban does not extend here.",
+      "why": "Owner ruling, KYS decision-log D-039."
+    }
+  ],
+  "accepted": [
+    { "line": "Marks stay yours until you submit them.", "why": "Removes the reviewer's actual fear in six words." },
+    { "line": "If you did not ask for it, ignore this and nothing happens.", "why": "Plain, calm, and true at a suspicious moment." },
+    { "line": "Nothing is asked of you until then.", "why": "Kills the waitlisted speaker's main anxiety, literally." },
+    { "line": "Decide quietly, tell everyone deliberately.", "why": "Names the product's central promise in five words." },
+    { "line": "Only the person writing it can see what is in it.", "why": "States visibility unprompted, which almost nothing does." },
+    { "line": "Nobody is waiting on you.", "why": "An empty state that says the fact the reader came for." },
+    { "line": "Your slides are in. The organizers can see them from here on.", "why": "Consequence stated without being asked." }
+  ],
+  "rejected": [
+    { "line": "Nothing is being asked of them yet. Ask below and it lands on their portal against this proposal.", "codes": ["ONE_FACT_EMPTY_STATE", "NO_LEAKED_PLUMBING"] },
+    { "line": "Hand out again — it only gives out what nobody holds", "codes": ["PLAIN_DOMAIN_WORDS"] },
+    { "line": "Anyone already holding one keeps it.", "codes": ["PLAIN_DOMAIN_WORDS", "ANTECEDENT_IN_THE_SENTENCE"] },
+    { "line": "There were more proposals than the days have hours, and the committee read every one of them.", "codes": ["NO_INVENTED_REASON"] },
+    { "line": "The committee did not choose this one for {event}.", "codes": ["ANTECEDENT_IN_THE_SENTENCE"] },
+    { "line": "They land in the speakers' portals at once, and real addresses get an email too.", "codes": ["NO_LEAKED_PLUMBING"] },
+    { "line": "Everything about your talk is in your portal.", "codes": ["NO_INVENTED_REASON"], "note": "An absolute the product cannot guarantee." },
+    { "line": "Nothing has gone out. Read them before they do.", "codes": ["ANTECEDENT_IN_THE_SENTENCE"] },
+    { "line": "The committee has moved this talk on, so it can no longer be withdrawn here.", "codes": ["ANTECEDENT_IN_THE_SENTENCE"], "note": "'moved on' could mean accepted, declined or advanced." }
+  ],
+  "conference_truths": [
+    "A decision is staged as a letter and reaches nobody until a human releases the outbox.",
+    "A reviewer's marks are private until they submit them.",
+    "Blind rounds hide names from reviewers, never from the chair.",
+    "The nightly rebuild resets the demonstration conferences only; a real sign-in's work is never touched.",
+    "Speakers with synthetic @example.org addresses get portal messages but no email."
+  ],
+  "process": {
+    "writer_critic_separation": "The critic never sees the writer's rationale and generates its own literal paraphrase first. Run each pass with a fresh critic context.",
+    "two_diseases": "Wave 1's disease (jargon, lectures) is not wave 2's (missing antecedents, leaked plumbing). A critic told to look for one will certify a page carrying the other. Vary the grudge.",
+    "stop_rule": "Fix bugs and confusions; do not churn copy nobody has complained about. Rewriting healthy text costs more than it returns."
+  }
+}

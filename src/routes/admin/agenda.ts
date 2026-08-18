@@ -160,16 +160,18 @@ function asNote(raw: string | undefined): Note | null {
 
 const CALM: Partial<Record<Note, string>> = {
   placed: 'That talk has a room and a time. Pick another one when you are ready.',
-  cleared: 'Off the grid, and picked up — click where it goes, or leave it in the list on the left.',
+  cleared:
+    'Taken off the schedule and picked up. Click a slot to place it, or leave it in the list on the left.',
   cancelled:
-    'Cancelled, and still in its own place on the agenda, struck through, so nobody turns up expecting it.',
+    'Cancelled. It keeps its slot on the program, struck through rather than removed.',
   restored: 'Back on. It reads as a normal session again.',
   published: 'The public agenda is live.',
   unpublished:
-    'The public agenda is down. Speakers still see their own times in their portal.',
+    'The program is not public yet. Speakers still see their own times in their portal.',
   'not-accepted': 'Only accepted talks go on the grid.',
-  moved: 'That one moved while you were looking at it. Nothing changed — look again.',
-  'count-moved': 'The grid moved while you were reading. Look again, then publish.',
+  moved:
+    'Somebody changed that session while this page was open, so nothing here was saved. Look again.',
+  'count-moved': 'The schedule changed while this page was open. Look again, then publish.',
   trouble: 'That did not save. Nothing changed.',
 };
 
@@ -515,8 +517,8 @@ function liveFact(view: Builder): string {
   if (n === 0) return '';
   const said =
     n === 1
-      ? 'One accepted talk still has nowhere to be.'
-      : `${n} accepted talks still have nowhere to be.`;
+      ? 'One accepted talk still needs a room and a time.'
+      : `${n} accepted talks still need a room and a time.`;
   return `<p class="livefact">${esc(said)}</p>`;
 }
 
@@ -575,7 +577,7 @@ function builderPage(view: Builder, principal: Principal, q: Params): string {
     '<p class="hint">' +
     (view.canEdit
       ? 'Pick a talk on the left, then click where it goes.'
-      : 'This is the program as it stands. Ask an organizer of this event for a hand in changing it.') +
+      : 'This is the program as it stands. Ask an organizer of this conference to change it.') +
     '</p>';
 
   return page({

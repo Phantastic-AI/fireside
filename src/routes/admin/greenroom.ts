@@ -216,7 +216,7 @@ const SLIDE_NOTES: Record<string, string> = {
   asked: 'Asked again. They have a reminder with the new date now.',
   'asked-all': 'Asked. Everyone still waiting has a reminder with the new date now.',
   moved: 'The numbers moved while you were looking. What you see now is where they stand.',
-  trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
+  trouble: 'That did not go through, and nothing has changed. Try it again.',
 };
 
 function noteLine(code: string | undefined): string {

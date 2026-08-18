@@ -249,7 +249,7 @@ const NOTES: Record<string, string> = {
   // from (routes/public/edit.ts, inHandPage) before changing a word of it.
   'in-hand': 'The committee has this talk in hand. While they read, the words stay as you sent them.',
   refused: 'Withdrawing has closed for this talk. If it must come off, write to the organizers.',
-  trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
+  trouble: 'That did not go through, and nothing has changed. Try it again.',
   // Δ helper — the words live in lib/labels.ts (helper.*, alongside the rest
   // of the feature's copy); these entries only wire them into the one
   // code→sentence door this page already has for everything else.

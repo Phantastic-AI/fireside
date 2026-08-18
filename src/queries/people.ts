@@ -32,6 +32,9 @@ export type PersonListRow = {
   proposals: PersonProposal[];
   /** Open tasks (not done, not cancelled) they hold at THIS event. */
   openTaskCount: number;
+  /** WHAT they owe, soonest due first — so the roster answers "waiting on
+   *  what", not merely "waiting on how many". */
+  owed: { title: string; dueOn: string | null }[];
   /** Their pipeline stage on the shared sourcing board, when they hold a card. */
   stage: string | null;
 };
@@ -142,10 +145,13 @@ export async function peopleList(
       .bind(eventId),
     db
       .prepare(
-        `SELECT person_id, COUNT(*) AS n
+        // What each person owes, not merely how much: the roster's whole job is
+        // answering "who is waiting on what", and a bare count made an organizer
+        // open every record to find out (operator, 2026-08-17).
+        `SELECT person_id, title, due_on
          FROM task
          WHERE event_id = ? AND completed_at IS NULL AND cancelled_at IS NULL
-         GROUP BY person_id`
+         ORDER BY due_on IS NULL, due_on, title`
       )
       .bind(eventId),
   ]);
@@ -160,8 +166,12 @@ export async function peopleList(
   }
 
   const openTasksByPerson = new Map<string, number>();
-  for (const row of rowsOf<{ person_id: string; n: number }>(taskRes)) {
-    openTasksByPerson.set(row.person_id, row.n);
+  const owedByPerson = new Map<string, { title: string; dueOn: string | null }[]>();
+  for (const row of rowsOf<{ person_id: string; title: string; due_on: string | null }>(taskRes)) {
+    const list = owedByPerson.get(row.person_id) ?? [];
+    list.push({ title: row.title, dueOn: row.due_on });
+    owedByPerson.set(row.person_id, list);
+    openTasksByPerson.set(row.person_id, list.length);
   }
 
   const rows: PersonListRow[] = rowsOf<{
@@ -178,6 +188,7 @@ export async function peopleList(
     stage: p.stage,
     proposals: proposalsByPerson.get(p.id) ?? [],
     openTaskCount: openTasksByPerson.get(p.id) ?? 0,
+    owed: owedByPerson.get(p.id) ?? [],
   }));
 
   return { eventId, search, rows };
