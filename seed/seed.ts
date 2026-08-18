@@ -569,11 +569,19 @@ export function buildSeed(): SeedData {
       d.message.push({
         id: msgId(), event_id: AIE, person_id: pid, submission_id: r.id, kind: 'decision',
         decision_version: 1,
-        subject: state === 'waitlisted' ? 'Your talk is waitlisted — a place may still open' : 'Not this time',
+        subject:
+          state === 'waitlisted'
+            ? 'Your talk is waitlisted — AI Engineer New York 2026'
+            : 'Not this time — AI Engineer New York 2026',
         body:
           state === 'waitlisted'
-            ? 'The committee wants this one if space allows. We will know by the week of the event.'
-            : 'The committee did not choose this one for the 2026 program. Please send it again next year.',
+            ? `“${String(r.title)}” is waitlisted for AI Engineer New York 2026, 3–4 September 2026. ` +
+              'The committee wants it if space allows, and we will know by the week of the event.' +
+              '\n\nNothing is asked of you until then. If you would rather not hold the dates, you ' +
+              'can withdraw it from your portal: https://onfireside.com/aie-nyc/portal'
+            : `“${String(r.title)}” did not make the program for AI Engineer New York 2026.` +
+              '\n\nPlease send it again next year. Your proposal is still in your portal: ' +
+              'https://onfireside.com/aie-nyc/portal',
         created_at: DECIDED + MS.hour, delivered_at: null, emailed_at: null, blocked_reason: null,
       });
     }

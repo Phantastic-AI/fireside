@@ -4,6 +4,7 @@
 // commit, real addresses only (R-12).
 import { checkedBatch, guard, now } from '../lib/db';
 import type { Principal } from './account';
+import { mailText } from '../lib/letters';
 import { isRealAddress } from './account';
 import { requireDecider } from './decide';
 
@@ -75,12 +76,13 @@ export async function releaseDecisions(
   if (email) {
     const recipients = await db
       .prepare(
-        `SELECT m.id, m.subject, m.body, p.email, p.name FROM message m
+        `SELECT m.id, m.subject, m.body, p.email, p.name, e.name AS event_name FROM message m
+           JOIN event e ON e.id = m.event_id
          JOIN person p ON p.id = m.person_id
          WHERE m.event_id = ?1 AND m.kind = 'decision' AND m.delivered_at = ?2 AND p.email IS NOT NULL`
       )
       .bind(eventId, t)
-      .all<{ id: string; subject: string; body: string; email: string; name: string }>();
+      .all<{ id: string; subject: string; body: string; email: string; name: string; event_name: string }>();
     const real = recipients.results.filter((r) => isRealAddress(r.email));
     emailed = real.length;
     waitUntil(
@@ -91,7 +93,9 @@ export async function releaseDecisions(
               to: r.email,
               from: { email: email.from, name: 'Fireside' },
               subject: r.subject,
-              text: `Hello ${r.name},\n\n${r.body}\n\n— sent from Fireside.`,
+              // A committee's decision is signed by the conference that made
+              // it, not by the software that carried it (lib/letters.ts).
+              text: mailText({ to: r.name, body: r.body, from: r.event_name }),
             });
             await db.prepare('UPDATE message SET emailed_at = ? WHERE id = ?').bind(now(), r.id).run();
           } catch {

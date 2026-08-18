@@ -1,5 +1,9 @@
 // Deciding is the first act. Staging a decision writes the state, bumps the
 // decision clock, and stages the letter — nothing leaves. Telling is release.ts.
+import { eventDates } from '../lib/letters';
+
+// The canonical public origin, for the portal link every letter carries.
+const ORIGIN = 'https://onfireside.com';
 import { checkedBatch, guard, newId, now } from '../lib/db';
 import type { Principal } from './account';
 import { ScopeError } from '../queries/admin';
@@ -14,24 +18,48 @@ export function requireDecider(principal: Principal, eventId: string): void {
 
 export type Decision = 'accepted' | 'waitlisted' | 'rejected';
 
-const LETTER: Record<Decision, { subject: string; body: (eventName: string, decideNote: string | null) => string }> = {
+/** What a decision letter knows about the talk it is about. Every field here
+ *  exists because a reader alone in an inbox needs it: the title so a speaker
+ *  with two proposals out knows WHICH one this is (the failure an adversarial
+ *  read caught as the worst in the product), the dates so an acceptance can be
+ *  forwarded for travel approval, the portal so there is a way back in. */
+export type LetterFacts = {
+  title: string;
+  eventName: string;
+  dates: string;
+  portalUrl: string;
+  note: string | null;
+};
+
+const from = (f: LetterFacts): string =>
+  f.dates ? `${f.eventName}, ${f.dates}` : f.eventName;
+const said = (note: string | null): string =>
+  note ? `\n\nFrom the committee:\n${note}` : '';
+
+const LETTER: Record<Decision, { subject: (f: LetterFacts) => string; body: (f: LetterFacts) => string }> = {
   accepted: {
-    subject: 'Your talk is on the program',
-    body: (ev, note) =>
-      `You are on the program at ${ev}. We will write again with your time and room.` +
-      (note ? `\n\nFrom the committee:\n${note}` : ''),
+    subject: (f) => `Your talk is on the program — ${f.eventName}`,
+    body: (f) =>
+      `“${f.title}” is on the program at ${from(f)}.` +
+      said(f.note) +
+      `\n\nWe will write again with your time and room. What we need from you, and when, is ` +
+      `in your portal: ${f.portalUrl}`,
   },
   waitlisted: {
-    subject: 'Your talk is waitlisted — a place may still open',
-    body: (ev, note) =>
-      `The committee wants this one at ${ev} if space allows. We will know by the week of the event.` +
-      (note ? `\n\nFrom the committee:\n${note}` : ''),
+    subject: (f) => `Your talk is waitlisted — ${f.eventName}`,
+    body: (f) =>
+      `“${f.title}” is waitlisted for ${from(f)}. The committee wants it if space allows, and ` +
+      `we will know by the week of the event.` +
+      said(f.note) +
+      `\n\nNothing is asked of you until then. If you would rather not hold the dates, you can ` +
+      `withdraw it from your portal: ${f.portalUrl}`,
   },
   rejected: {
-    subject: 'Not this time',
-    body: (ev, note) =>
-      `The committee did not choose this one for ${ev}. Please send it again next year.` +
-      (note ? `\n\nFrom the committee:\n${note}` : ''),
+    subject: (f) => `Not this time — ${f.eventName}`,
+    body: (f) =>
+      `“${f.title}” did not make the program for ${f.eventName}.` +
+      said(f.note) +
+      `\n\nPlease send it again next year. Your proposal is still in your portal: ${f.portalUrl}`,
   },
 };
 
@@ -58,10 +86,24 @@ export async function stageDecision(
 
   const sub = await db
     .prepare(
-      'SELECT s.id, s.state, s.decision_version, s.event_id, e.name AS event_name, p.person_id FROM submission s JOIN event e ON e.id = s.event_id JOIN participation p ON p.submission_id = s.id AND p.is_submitter = 1 WHERE s.id = ? AND s.event_id = ?'
+      `SELECT s.id, s.title, s.state, s.decision_version, s.event_id, e.name AS event_name,
+              e.slug AS event_slug, e.starts_on, e.ends_on, p.person_id
+         FROM submission s JOIN event e ON e.id = s.event_id
+         JOIN participation p ON p.submission_id = s.id AND p.is_submitter = 1
+        WHERE s.id = ? AND s.event_id = ?`
     )
     .bind(submissionId, eventId)
-    .first<{ id: string; state: string; decision_version: number; event_name: string; person_id: string }>();
+    .first<{
+      id: string;
+      title: string;
+      state: string;
+      decision_version: number;
+      event_name: string;
+      event_slug: string;
+      starts_on: string;
+      ends_on: string;
+      person_id: string;
+    }>();
   if (!sub) return { ok: false, error: 'That proposal is not on this event.' };
   if (expectVersion !== undefined && sub.decision_version !== expectVersion) {
     return { ok: false, error: 'That proposal moved since you staged this decision. Look again and decide fresh.' };
@@ -73,6 +115,13 @@ export async function stageDecision(
   const unAccepting = sub.state === 'accepted' && decision !== 'accepted';
   const reAccepting = decision === 'accepted' && (sub.state === 'waitlisted' || sub.state === 'rejected');
   const letter = LETTER[decision];
+  const facts: LetterFacts = {
+    title: sub.title,
+    eventName: sub.event_name,
+    dates: eventDates(sub.starts_on, sub.ends_on),
+    portalUrl: `${ORIGIN}/${sub.event_slug}/portal`,
+    note,
+  };
 
   const statements = [
     // if someone else decided meanwhile, the whole batch refuses
@@ -105,8 +154,8 @@ export async function stageDecision(
         submissionId,
         'decision',
         newVersion,
-        letter.subject,
-        letter.body(sub.event_name, note),
+        letter.subject(facts),
+        letter.body(facts),
         t
       ),
   ];
