@@ -549,7 +549,7 @@ function matchesStatus(r: DeliverableRow, status: StatusFilter, todayKey: string
 function askAgainForm(slug: string, r: DeliverableRow, dueOn: string, filters: Filters): string {
   return (
     `<span class="t-sub">Moves the due date to ${esc(dayShort(dueOn))} and reminds ${esc(r.personName)} — ` +
-    'it lands in their portal at once, and a real address gets an email too.</span><br>' +
+    'it lands in their portal at once, and an email goes as well when they have an address.</span><br>' +
     `<form method="post" action="/admin/${encodeURIComponent(slug)}/slides/ask-again" style="margin-top:4px">` +
     `<input type="hidden" name="task" value="${esc(r.taskId)}">` +
     (filters.status !== 'all' ? `<input type="hidden" name="status" value="${esc(filters.status)}">` : '') +
@@ -647,7 +647,7 @@ function askEveryoneBlock(
       '<div><div class="lab">Still to come, across the conference.</div>' +
       `<div class="why">Each of these was asked for and has not arrived. Asking again moves its ` +
       'due date out and reminds every speaker who still owes something — it lands in their portal ' +
-      'at once, and real addresses get an email too.</div></div>' +
+      'at once, and speakers with an email address get an email as well.</div></div>' +
       `<a class="btn go" href="${esc(withQuery(basePath, { ...here, ask: 'all' }))}">` +
       'Ask everyone at once →</a></div>'
     );
@@ -659,7 +659,7 @@ function askEveryoneBlock(
     `<div><div class="lab">Move the due date on all ${esc(num(waiting))}</div>` +
     `<div class="why">Every request still outstanding gets ${esc(dayShort(dueOn))} as its new due ` +
     `date, and each speaker who still owes something gets a reminder naming what is still due: it ` +
-    'lands in their portal at once, and real addresses get an email too.</div></div>' +
+    'lands in their portal at once, and an email goes as well when they have an address.</div></div>' +
     `<div class="btnrow go"><form method="post" action="/admin/${encodeURIComponent(slug)}/slides/ask-all" style="margin:0">` +
     `<input type="hidden" name="count" value="${esc(String(waiting))}">` +
     (filters.status !== 'all' ? `<input type="hidden" name="status" value="${esc(filters.status)}">` : '') +
@@ -743,7 +743,7 @@ function deliverablesPage(
       rows.map((r) => deliverableRow(r, slug, todayKey, filters, dueOn)).join('') +
       '</tbody></table></div>' +
       '<p class="hint" style="margin-top:12px">Asking again moves the due date on the request and ' +
-      'reminds the speaker: it lands in their portal at once, and a real address gets an email too.</p>';
+      'reminds the speaker: it lands in their portal at once, and an email goes as well when they have an address.</p>';
   }
 
   return page({

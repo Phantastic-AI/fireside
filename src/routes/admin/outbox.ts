@@ -356,8 +356,8 @@ function askBand(slug: string, ob: Outbox): string {
     `<div class="n">${esc(num(n))}</div>` +
     '<div>' +
     `<div class="lab">${esc(send)}. Each person gets the letter you have read.</div>` +
-    '<div class="why">They land in the speakers’ portals at once, and real addresses get an ' +
-    'email too. You cannot take it back.</div>' +
+    '<div class="why">They land in the speakers’ portals at once, and every speaker with an ' +
+    'email address gets an email as well. You cannot take it back.</div>' +
     '</div>' +
     `<input type="hidden" name="confirm" value="${esc(String(n))}">` +
     `<button class="btn btn-primary go" type="submit">${esc(send)}</button>` +
@@ -480,8 +480,8 @@ function notesAskBand(slug: string, n: number): string {
     `<div class="n">${esc(num(n))}</div>` +
     '<div>' +
     `<div class="lab">${esc(send)}. Everyone on the list gets the words you have read.</div>` +
-    '<div class="why">They land in the speakers’ portals at once, and real addresses get an ' +
-    'email too. You cannot take it back.</div>' +
+    '<div class="why">They land in the speakers’ portals at once, and every speaker with an ' +
+    'email address gets an email as well. You cannot take it back.</div>' +
     '</div>' +
     `<input type="hidden" name="confirm_notes" value="${esc(String(n))}">` +
     `<button class="btn btn-primary go" type="submit">${esc(send)}</button>` +
@@ -768,10 +768,10 @@ const NOTES_MOVED = 'The outbox moved while you were reading. Look again, then s
 
 /** What writing to a room can refuse, in the words this screen would use. */
 const WRITE_OUTCOMES: Record<string, string> = {
-  'no-audience': 'Say which room it goes to, and it will be waiting here.',
+  'no-audience': 'Say who it goes to, and it will be waiting here.',
   'no-subject': 'A letter needs a subject — it is the line they read first.',
   'no-body': 'A letter needs something in it.',
-  nobody: 'Nobody is in that room yet, so nothing was written.',
+  nobody: 'Nobody is in that group yet, so nothing was written.',
   gone: 'Those have already gone, so there was nothing to take back.',
   trouble: 'That did not go through, and nothing changed. Worth trying once more.',
 };
@@ -909,7 +909,7 @@ export function registerOutbox(app: Hono<{ Bindings: Env }>): void {
       // Said here rather than left to releaseDecisions, so the refusal is a
       // sentence and not the workflow's own machinery talking.
       if (!canDecide(principal, ev.id)) {
-        return c.html(deniedPage('Sending the letters is not yours on this conference.'), 403);
+        return c.html(deniedPage('Sending the letters is not yours to do on this conference.'), 403);
       }
 
       const form = await c.req.parseBody();

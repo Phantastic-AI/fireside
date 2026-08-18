@@ -22,7 +22,7 @@ const LETTER: Record<Decision, { subject: string; body: (eventName: string, deci
       (note ? `\n\nFrom the committee:\n${note}` : ''),
   },
   waitlisted: {
-    subject: 'Your talk is close — a room may still open',
+    subject: 'Your talk is waitlisted — a place may still open',
     body: (ev, note) =>
       `The committee wants this one at ${ev} if space allows. We will know by the week of the event.` +
       (note ? `\n\nFrom the committee:\n${note}` : ''),

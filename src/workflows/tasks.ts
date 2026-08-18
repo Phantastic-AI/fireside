@@ -274,7 +274,7 @@ export async function stageNotes(
           .bind(eventId, subject, body, t),
       ],
       [0, { atLeast: 1 }],
-      'there is nobody in that room yet'
+      'there is nobody in that group yet'
     );
     staged = results[1]?.meta.changes ?? 0;
   } catch (e) {

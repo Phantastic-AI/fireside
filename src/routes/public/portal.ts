@@ -229,7 +229,7 @@ function committeeNote(text: string): string {
  * ------------------------------------------------------------------ */
 
 const NOTES: Record<string, string> = {
-  edited: 'Saved. Those are the words on it now.',
+  edited: 'Saved. Those are the words the committee reads now.',
   withdrawn: 'That one is withdrawn. It has left the committee’s list.',
   'task-done': 'Marked done. Your list is one shorter.',
   saved: 'Saved. That is how you appear on the program now.',
@@ -248,7 +248,7 @@ const NOTES: Record<string, string> = {
   // and nothing that is true of only some of them — read the page it comes
   // from (routes/public/edit.ts, inHandPage) before changing a word of it.
   'in-hand': 'The committee has this talk in hand. While they read, the words stay as you sent them.',
-  refused: 'The committee has moved this talk on, so it can no longer be withdrawn here.',
+  refused: 'Withdrawing has closed for this talk. If it must come off, write to the organizers.',
   trouble: 'That did not go through, and nothing has changed. Worth trying once more.',
   // Δ helper — the words live in lib/labels.ts (helper.*, alongside the rest
   // of the feature's copy); these entries only wire them into the one
@@ -390,7 +390,7 @@ function laneOf(view: PortalView, s: PortalSubmission, others: readonly string[]
         ? '<p class="sub" style="margin-top:8px">Your time and room are set. They go up when the ' +
           'rest of the program does.</p>'
         : `<p class="bigwhen" style="color:var(--muted)">${esc(label('placement.none', 'onstage'))}</p>` +
-          '<p class="sub" style="margin-top:4px">We will write the moment they are settled.</p>';
+          '<p class="sub" style="margin-top:4px">We will write the moment your time and room are set.</p>';
       return {
         cls: 'accepted',
         colour: 'var(--go)',
@@ -779,7 +779,7 @@ function profileCard(view: PortalView, onTheProgram: boolean): string {
       name: 'name',
       labelText: 'Your name',
       value: p.name,
-      hint: 'As you would like it printed on the schedule.',
+      hint: 'As it should read on the public program.',
       limit: 120,
       required: true,
     }) +
@@ -797,7 +797,7 @@ function profileCard(view: PortalView, onTheProgram: boolean): string {
       name: 'organisation',
       labelText: 'Where you do it',
       value: p.organisation,
-      hint: 'Shown under your name on the public agenda.',
+      hint: 'Shown under your name on the public program.',
       limit: 120,
       optional: true,
     }) +

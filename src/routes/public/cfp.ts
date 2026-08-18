@@ -660,7 +660,7 @@ function cfpPage(o: {
       id: 'f-name',
       name: 'name',
       labelText: 'Your name',
-      hint: 'As you would like it printed on the schedule.',
+      hint: 'As it should read on the public program.',
       value: values.name,
       required: true,
     }) +
@@ -668,7 +668,7 @@ function cfpPage(o: {
       id: 'f-org',
       name: 'org',
       labelText: 'Organisation and role',
-      hint: 'Shown under your name on the public agenda.',
+      hint: 'Shown under your name on the public program.',
       example: GHOST_ORG,
       value: values.org,
       optional: true,

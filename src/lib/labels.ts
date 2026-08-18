@@ -195,7 +195,7 @@ const LABELS = {
   'helper.blurb': {
     onstage:
       'Someone who takes care of the logistics for you — the deck, confirming travel, sending in ' +
-      'what the committee asks for. They sign in the same way you do, and see only what you owe ' +
+      'what the committee asks for. They sign in with their own account, and see only what you owe ' +
       'here.',
   },
   'helper.empty': { onstage: 'Nobody yet.' },
@@ -203,7 +203,7 @@ const LABELS = {
   'helper.email_label': { onstage: 'Their email' },
   'helper.add_button': { onstage: 'Add' },
   'helper.remove': { onstage: 'Remove' },
-  'helper.added': { onstage: 'Added. They can sign in the same way you do, at the address you gave.' },
+  'helper.added': { onstage: 'Added. They sign in with their own account, at the address you gave.' },
   'helper.removed': { onstage: 'Removed. They no longer have anything to do here.' },
   'helper.no_name': { onstage: 'A name is needed.' },
   'helper.no_email': { onstage: 'An email address is needed.' },

@@ -318,7 +318,7 @@ function standing(r: PileRow, say: Say): string {
     case 'withdrawn':
       return 'Taken back by the speaker. Nothing is owed here.';
     case 'cancelled':
-      return 'Came off the program, and stays on the agenda until you take it off.';
+      return 'Came off the program. The agenda shows it as cancelled until you take it off.';
   }
 }
 
@@ -467,7 +467,7 @@ function pilePage(o: {
     ev.counts.decidedNotTold > 0
       ? '<div class="sec attn"><div>' +
         `<div class="lab">${esc(decidedNotToldPill(ev.counts.decidedNotTold))}</div>` +
-        '<div class="why">Nothing has gone out. Read them before they do.</div></div>' +
+        '<div class="why">Nothing has gone out. Read the letters before they go.</div></div>' +
         `<a class="btn btn-primary go" href="/admin/${esc(ev.slug)}/outbox">Read the letters →</a>` +
         '</div>'
       : '';
@@ -583,7 +583,7 @@ function pilePage(o: {
         'style="flex:1;min-width:190px;resize:vertical"></textarea>' +
         `<span class="sub">Nothing goes out until you send it from the ` +
         `<a class="link" href="/admin/${esc(ev.slug)}/outbox">outbox</a>.</span>` +
-        '<span class="kbdhints"><kbd>x</kbd> choose <kbd>Esc</kbd> let go of them all</span></div>'
+        '<span class="kbdhints"><kbd>x</kbd> choose <kbd>Esc</kbd> clear the selection</span></div>'
       : '';
 
     body =

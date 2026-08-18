@@ -569,7 +569,7 @@ export function buildSeed(): SeedData {
       d.message.push({
         id: msgId(), event_id: AIE, person_id: pid, submission_id: r.id, kind: 'decision',
         decision_version: 1,
-        subject: state === 'waitlisted' ? 'Your talk is close — a room may still open' : 'Not this time',
+        subject: state === 'waitlisted' ? 'Your talk is waitlisted — a place may still open' : 'Not this time',
         body:
           state === 'waitlisted'
             ? 'The committee wants this one if space allows. We will know by the week of the event.'
