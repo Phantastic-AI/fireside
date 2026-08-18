@@ -70,6 +70,10 @@ const LABELS = {
   'call.before': { backstage: 'Opens {date}', onstage: 'Proposals open on {date}' },
   'call.open': { backstage: 'Open · closes in {n} days', onstage: 'You can still submit a talk — closes {date}' },
   'call.closed': { backstage: 'Closed {date}', onstage: 'Proposals closed on {date}' },
+  // A call with no dates was never opened, so it is not closed — saying
+  // "Closed" for a conference that has never taken a proposal is a lie about
+  // its own history, and it hid the one action a new conference needs.
+  'call.none': { backstage: 'No call yet', onstage: 'No call for speakers yet' },
 
   // §1.10 — roles, formats, levels, provenance
   'role.speaker': 'Speaker',

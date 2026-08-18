@@ -160,9 +160,10 @@ function callStateText(ev: AdminEvent, nowMs: number = Date.now()): string {
   if (ev.cfpClosesAt !== null) {
     return label('call.closed', 'backstage').replace('{date}', dayMonthAt(ev.cfpClosesAt, ev.timezone));
   }
-  // No closing instant on record at all — the same sentence, minus the date
-  // clause, rather than a guessed one.
-  return label('call.closed', 'backstage').replace(' {date}', '');
+  // Never opened is not closed. A conference with no dates on record has no
+  // call at all, and saying so is what points its organizer at the one save
+  // that starts everything (operator, 2026-08-17).
+  return label('call.none', 'backstage');
 }
 
 /* ------------------------------------------------------------------ *
@@ -310,7 +311,7 @@ function newEventPage(principal: Principal, error?: string, v: NewEventValues = 
       'The call for speakers',
       `<label style="display:flex;gap:8px;align-items:center;font-size:15px;font-weight:400"><input type="checkbox" name="call_open" value="1"${v['call_open'] ? ' checked' : ''}> Open it now</label>` +
         `<div style="margin-top:10px"><input type="date" name="cfp_closes_on" value="${val('cfp_closes_on')}" ${inputStyle}></div>`,
-      'The date it closes. Speakers can send and edit proposals until then. You can split it into waves — an early call, a late extension — later, in settings.'
+      'Tick it and set the closing date, and speakers can send proposals the moment this conference exists. Leave it and there is no call yet — you open one from Settings when you are ready. You can split it into waves, an early call and a late extension, later.'
     ) +
     field('Decisions go out by', `<input type="date" name="decide_by" value="${val('decide_by')}" ${inputStyle}>`, 'Shown to speakers on the form and in their portal.') +
     field('A line for the call page', `<textarea name="cfp_intro" rows="3" maxlength="1200" ${inputStyle}>${val('cfp_intro')}</textarea>`) +

@@ -521,17 +521,18 @@ function eventSection(ev: EventSettings, said: Said | null, nowMs: number): stri
       name: 'call_opens',
       labelText: 'The call opens',
       value: callDayOf(ev.cfpOpensAt),
-      optional: true,
       placeholder: '2026-08-01',
       anchored: true,
       wrong: saidAt('call_opens', said),
-      hint: 'Written as 2026-08-01. Leave both dates blank and the call is shut.',
+      // Not "optional": these two dates ARE the call. Left blank there is no
+      // call at all, nobody can send a talk, and the conference sat there
+      // saying "closed" about something that had never opened.
+      hint: 'Written as 2026-08-01. Both dates together are the call — leave them blank and there is no call for speakers.',
     }) +
     field({
       name: 'call_closes',
       labelText: 'The call closes',
       value: callDayOf(ev.cfpClosesAt),
-      optional: true,
       placeholder: '2026-08-27',
       anchored: true,
       wrong: saidAt('call_closes', said),
