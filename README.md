@@ -86,8 +86,8 @@ aggregate on the results table, and it is the same number the proposal page
 shows.
 
 **For your agent:** the same doors speak MCP at
-`https://onfireside.com/mcp` — eight public tools, JSON-RPC 2.0,
-no session. A proposal submitted by an agent walks through exactly the same
+`https://onfireside.com/mcp` — eight public tools with no session at all,
+and fourteen more once a connection acts as you. JSON-RPC 2.0. A proposal submitted by an agent walks through exactly the same
 guarded workflow as one typed by hand. Sign in and
 [/agents](https://onfireside.com/agents) prints a connect command
 whose token acts as you: a reviewer can hand their queue to Claude and file

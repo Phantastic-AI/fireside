@@ -217,17 +217,20 @@ function conflictSentence(view: Builder, note: Note, q: Params): string | null {
     const clash = findPlaced(view, q['clash'] ?? undefined);
     const mine = speakersOf(view, q['pick'] ?? q['on'] ?? undefined);
     const shared = clash ? clash.speakers.find((name) => mine.includes(name)) : undefined;
+    // Name the talk they are already in, not just the hour: an organizer
+    // resolving a clash has to go find that session, and the sentence may as
+    // well say which one it is (operator, 2026-08-17).
     if (clash && shared) {
       return `${esc(firstName(shared))} is already speaking at ${esc(
         whenWhere(view, clash.startsAt, clash.roomName)
-      )}.`;
+      )} — “${esc(clash.title)}”.`;
     }
     if (clash) {
       return `Somebody on that talk is already speaking at ${esc(
         whenWhere(view, clash.startsAt, clash.roomName)
-      )}.`;
+      )} — “${esc(clash.title)}”.`;
     }
-    return 'Somebody on that talk is already speaking then.';
+    return 'Somebody on that talk is already speaking at that hour, on another day of the program.';
   }
   return null;
 }
