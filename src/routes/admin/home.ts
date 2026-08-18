@@ -368,6 +368,23 @@ function countsBand(counts: PileCounts): string {
 function attnBand(ev: AdminEvent, counts: PileCounts): string {
   const slug = encodeURIComponent(ev.slug);
 
+  // A conference with no call dates cannot be sent a single talk, and nothing
+  // on this page said so — the one action a brand-new conference needs was
+  // unmarked, and an organizer had to find two undated fields in settings to
+  // start. It goes first, above everything, because until it is done nothing
+  // else on this page can happen (operator, 2026-08-17).
+  if (ev.cfpClosesAt === null && counts.all === 0) {
+    return (
+      '<div class="sec attn">' +
+      '<div class="n">1</div>' +
+      '<div><div class="lab">No call for speakers yet</div>' +
+      '<div class="why">Nobody can send you a talk until the call has an opening and a ' +
+      'closing date. It takes one save.</div></div>' +
+      `<a class="btn btn-primary go" href="/admin/${slug}/settings#the-event">Open the call →</a>` +
+      '</div>'
+    );
+  }
+
   const notTold = counts.decidedNotTold;
   if (notTold > 0) {
     return (
