@@ -74,6 +74,18 @@ const app = new Hono<{ Bindings: Env }>();
 const REDIRECT_HOSTS = new Set(['www.onfireside.com', 'fireside.phantastic.ai']);
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
+  // HTTPS is not optional here, and not only for the padlock: the session
+  // cookie is Secure, so a browser on plain http silently refuses to store
+  // it — sign-in appeared to do nothing at all, because the 302 landed on a
+  // page that could not see the session it had just been given. Anyone who
+  // types the bare domain arrives on http, so this is the first thing the
+  // Worker does. 301, because it is true of every future request too.
+  const proto = c.req.header('x-forwarded-proto') ?? url.protocol.replace(':', '');
+  if (proto === 'http' && url.hostname !== 'localhost' && !url.hostname.endsWith('.local')) {
+    url.protocol = 'https:';
+    if (REDIRECT_HOSTS.has(url.hostname)) url.hostname = 'onfireside.com';
+    return c.redirect(url.toString(), 301);
+  }
   if (REDIRECT_HOSTS.has(url.hostname)) {
     url.hostname = 'onfireside.com';
     return c.redirect(url.toString(), 301);
