@@ -224,18 +224,24 @@ function initialsOf(name: string): string {
 }
 
 /** The prototype's generated portrait. No image request leaves the page. */
+let avatarN = 0;
+
 function avatar(name: string, size: number): string {
   const pair = AVPAL[hashOf(name) % AVPAL.length] ?? AVPAL[0]!;
   const seed = hashOf(`${name}·`);
+  // The same person can appear twice on one page (the speaker block and a
+  // comment thread), and an SVG gradient id must be unique per document —
+  // a shared counter keeps every avatar's paint its own.
+  const uniq = `${seed}-${++avatarN}`;
   const ax = (26 + (seed % 9)) / 40;
   const ay = (8 + ((seed >> 3) % 9)) / 40;
   return (
     `<svg class="av" width="${size}" height="${size}" viewBox="0 0 40 40" role="img" aria-label="${esc(name)}">` +
-    `<defs><radialGradient id="g${seed}" cx="${ax}" cy="${ay}" r="1">` +
+    `<defs><radialGradient id="g${uniq}" cx="${ax}" cy="${ay}" r="1">` +
     '<stop offset="0" stop-color="#fff" stop-opacity=".72"/>' +
     `<stop offset=".55" stop-color="${pair[0]}" stop-opacity="0"/></radialGradient></defs>` +
     `<circle cx="20" cy="20" r="20" fill="${pair[0]}"/>` +
-    `<circle cx="20" cy="20" r="20" fill="url(#g${seed})"/>` +
+    `<circle cx="20" cy="20" r="20" fill="url(#g${uniq})"/>` +
     '<text x="20" y="21" text-anchor="middle" dominant-baseline="central" ' +
     'font-family="Iowan Old Style,Palatino,Georgia,serif" font-size="15" font-weight="600" ' +
     `fill="${pair[1]}">${esc(initialsOf(name))}</text>` +
@@ -652,8 +658,8 @@ function messageRow(m: ProposalMessage, tz: string): string {
       ? `<div style="margin-top:6px"><span class="chip warn">${esc(label('message.blocked', 'backstage'))}</span></div>`
       : '';
   const staging = m.staged
-    ? '<div class="sub" style="margin-top:6px">Nothing has gone out. It leaves with the next send ' +
-      'from the outbox.</div>'
+    ? '<div class="sub" style="margin-top:6px">Written, not sent yet. It goes out with the next ' +
+      'send from the outbox.</div>'
     : '';
   return (
     '<div class="msg">' +
@@ -686,7 +692,7 @@ function lettersSection(p: Proposal, slug: string, tz: string, inPlay: boolean):
 
   return (
     `<div class="sec" id="letters">${head}` +
-    '<p class="sub" style="margin-bottom:8px">Newest first, in the words that go out. ' +
+    '<p class="sub" style="margin-bottom:8px">Newest first, word for word as the speaker reads them. ' +
     `${door}</p>` +
     p.messages.map((m) => messageRow(m, tz)).join('') +
     '</div>'
@@ -903,9 +909,7 @@ function tasksBox(p: Proposal, tz: string, todayKey: string, askable: boolean, s
   if (p.tasks.length === 0) {
     return (
       '<div class="railbox" id="tasks"><h4>To do</h4>' +
-      '<p class="sub">Nothing is being asked of them yet.' +
-      (askable ? ' Ask below and it lands on their portal against this proposal.' : '') +
-      '</p></div>'
+      '<p class="sub">Nothing is asked of the speakers yet.</p></div>'
     );
   }
   const rows = p.tasks
@@ -969,8 +973,8 @@ function askBox(p: Proposal, slug: string, who: ProposalParticipant): string {
   ).join('');
   return (
     '<div class="railbox" id="ask"><h4>Ask for something</h4>' +
-    `<p class="sub" style="margin:0 0 10px">It lands on ${esc(first)}’s portal against this ` +
-    'proposal, with the day it is due. Nothing is emailed.</p>' +
+    `<p class="sub" style="margin:0 0 10px">It shows up in ${esc(first)}’s portal with its ` +
+    'due date. Nothing is emailed.</p>' +
     `<form method="post" action="/admin/${esc(slug)}/submissions/${esc(p.id)}/ask">` +
     '<label class="f" style="margin-bottom:12px"><span class="f-lab">What are you asking for?</span>' +
     '<input type="text" name="title" required maxlength="140" placeholder="Send your slides"></label>' +

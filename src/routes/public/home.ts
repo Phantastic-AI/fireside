@@ -543,8 +543,8 @@ export function homePage(signedIn = false, events: EventCard[] = []): string {
     'organizer’s pile, the letters waiting to go, the sheet the crew carries on the day.</p>' +
     `<div class="mkt-doors">${liveCards(events)}</div>` +
     '<p class="mkt-note">The seeded conferences are demonstrations with invented people, and ' +
-    'everything resets on a schedule — so a conference stood up here, by an organizer or by an ' +
-    'agent walking the call, is real while it lasts and swept with the rest.</p>' +
+    'they rebuild themselves on a schedule. Anything sent into them is swept with the rebuild; ' +
+    'a conference you stand up under your own sign-in is yours and stays.</p>' +
     '</div></section>';
 
   const mechanics =

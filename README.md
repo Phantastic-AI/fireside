@@ -27,7 +27,7 @@ not yet sent) and **DevOps Days Charlotte 2025** (finished, recordings up).
 
 That credential is published on purpose: Naomi is the demonstration
 organizer, and her conference is reset to the same instant of mid-decision
-drama on demand — and automatically, once a day at **13:00 UTC** (06:00
+drama on demand — and automatically, once a day at **09:00 UTC** (2 AM
 Pacific). The rebuild is surgical: the demo conferences and their cast reset
 to pristine, and whatever you did while signed in as the demo cast resets
 with them. Sign up fresh at [/sign-up](https://onfireside.com/sign-up) and
@@ -249,8 +249,8 @@ pre-seeded, so there is no setup:
   inbox.
 - Run the kit (`pnpm run eval`). The areas chain in order against the same
   deployment, the way the kit intends.
-- The demo world **rebuilds to its pristine state every day at 13:00 UTC**
-  (06:00 Pacific). A full run is well under an hour, so start clear of that
+- The demo world **rebuilds to its pristine state every day at 09:00 UTC**
+  (2 AM Pacific). A full run is well under an hour, so start clear of that
   window and it won't reset under you; the kit is resumable if it ever does.
   The rebuild touches only the demo conferences and cast — accounts and
   conferences an evaluator creates for itself survive it.

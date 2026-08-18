@@ -61,10 +61,10 @@
     }
   ],
   "triggers": {
-    // Daily at 6 AM Pacific (13:00 UTC in summer): the demonstration world
+    // Daily at 2 AM Pacific (09:00 UTC in summer): the demonstration world
     // rebuilds itself once a night, not once an hour — a visitor's afternoon
     // of clicking around survives until morning.
-    "crons": ["0 13 * * *"]
+    "crons": ["0 9 * * *"]
   },
   "observability": {
     "enabled": true

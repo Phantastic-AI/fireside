@@ -87,7 +87,7 @@ const STANDING_POWER: Record<EventRole, string> = {
   approver: 'Decides proposals and sends the letters. Changes the event too.',
   editor: 'Changes the event, the questions and the agenda. Does not decide.',
   viewer: 'Reads the proposals and the program. Changes nothing.',
-  reviewer: 'Reads and scores the proposals handed to them, with the names hidden. Sees nothing else here.',
+  reviewer: 'Reads and scores the proposals assigned to them, with the names hidden. Sees nothing else here.',
 };
 
 const word = (standing: string): string => STANDING_WORD[standing] ?? STANDING_WORD['viewer'] ?? '';

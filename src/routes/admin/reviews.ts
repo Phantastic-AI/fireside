@@ -301,20 +301,20 @@ function assignSaid(code: AssignOutcome, gave: number, held: number, more: boole
   switch (code) {
     case 'handed':
       return (
-        `${num(gave)} handed out.` +
-        (held > 0 ? ` ${num(held)} were already held.` : '') +
+        `${num(gave)} assigned.` +
+        (held > 0 ? ` ${num(held)} already had a reviewer.` : '') +
         (more ? ` Only the longest-waiting ${num(HANDOUT_CAP)} went out this time.` : '')
       );
     case 'nobody':
-      return 'Nobody was chosen to read, so nothing was handed out.';
+      return 'Nobody was picked to review, so nothing was assigned.';
     case 'nothing':
-      return 'Every undecided proposal already has the readers you asked for.';
+      return 'Every undecided proposal already has the reviewers you asked for.';
     case 'freed':
-      return `${count(gave, 'proposal', 'proposals')} came back. They are free to hand out again.`;
+      return `${count(gave, 'proposal', 'proposals')} came back. They can be assigned again.`;
     case 'kept':
-      return 'Nothing came back. Every one they hold has been written in, and that work is theirs.';
+      return 'Nothing came back. Everything assigned to them is already written in, and that work stays theirs.';
     case 'moved':
-      return 'The numbers moved while you were looking. Read them again, then hand them out.';
+      return 'The numbers moved while you were looking. Read them again, then assign.';
     case 'trouble':
       return 'That did not go through. Try it once more.';
   }
@@ -434,11 +434,11 @@ function handSaid(code: HandOneOutcome, name: string): string {
     case 'already':
       return `${name} already has that one this round, so nothing was written.`;
     case 'decided':
-      return 'That one has an answer already, so there is nothing to hand out.';
+      return 'That one has an answer already, so there is nothing to assign.';
     case 'nobody':
-      return 'Nobody was chosen, so nothing was handed out.';
+      return 'Nobody was picked, so nothing was assigned.';
     case 'moved':
-      return 'It moved while you were looking. Read it again, then hand it over.';
+      return 'It moved while you were looking. Read it again, then assign it.';
     case 'trouble':
       return 'That did not go through. Try it once more.';
   }
@@ -462,7 +462,7 @@ function nudgeSaid(code: NudgeOutcome, name: string, open: number): string {
     case 'nudged':
       return `${name} has a note about it. ${count(open, 'proposal is', 'proposals are')} still open on their list.`;
     case 'recent':
-      return 'Nudged yesterday — give it a day.';
+      return 'Nudged yesterday. Give it a day.';
     case 'nothing':
       return `Nothing is open on ${name}'s list, so nothing was sent.`;
     case 'nobody':
@@ -776,7 +776,7 @@ function queueRow(
   const over = ev.everything
     ? `<a class="btn btn-quiet" href="${esc(
         queueUrl(ev.slug, { ...seen(v), hand: row.id }) + '#hand'
-      )}">Hand it to a reader</a>`
+      )}">Assign it to a reviewer</a>`
     : '';
 
   const card =
@@ -815,8 +815,8 @@ function queueRow(
     '<div class="card card-pad" style="margin-top:10px;border-left:3px solid var(--danger)">' +
     `<b>Step aside from ${esc(row.title)}?</b>` +
     '<p style="margin:6px 0 0">This cannot be taken back this round. The proposal leaves your ' +
-    'list, nothing you marked on it is kept, and the committee reads it one voice short — so ' +
-    'tell whoever hands the pile out.</p>' +
+    'list, nothing you marked on it is kept, and the committee reads it one voice short. ' +
+    'Tell whoever makes the assignments.</p>' +
     `<form method="post" action="/admin/${encodeURIComponent(ev.slug)}/reviews/step-aside"` +
     ' class="btnrow" style="margin-top:12px">' +
     `<input type="hidden" name="round" value="${ev.round}">` +
@@ -870,7 +870,7 @@ function handCard(
     return framed(
       sentence +
         '<p class="sub" style="margin-top:10px">That proposal is not on this conference, so ' +
-        'there is nothing to hand out.</p>' +
+        'there is nothing to assign.</p>' +
         `<p style="margin:10px 0 0"><a class="link" href="${esc(shut)}">Back to the list</a></p>`
     );
   }
@@ -882,7 +882,7 @@ function handCard(
       sentence +
         title +
         '<p class="sub" style="margin-top:6px">This one has an answer already, so it is off ' +
-        'the committee&#39;s list. Nothing can be handed out on it.</p>' +
+        'the committee&#39;s list. Nothing can be assigned to it.</p>' +
         `<p style="margin:10px 0 0"><a class="link" href="/admin/${encodeURIComponent(ev.slug)}` +
         `/submissions/${encodeURIComponent(target.id)}">See where it stands</a>` +
         `<span class="sep"> · </span><a class="link" href="${esc(shut)}">Back to the list</a></p>`
@@ -983,7 +983,7 @@ const STANDING: Record<string, string> = {
 function progressText(r: TeamReader): string {
   return (
     (r.assigned === 0
-      ? `<span class="sub">Nothing handed to ${r.isYou ? 'you' : 'them'} yet.</span>`
+      ? `<span class="sub">Nothing assigned to ${r.isYou ? 'you' : 'them'} yet.</span>`
       : r.recused > 0
         ? `${esc(num(r.completed))} scored<span class="sep"> · </span>` +
           `${esc(num(r.recused))} stepped aside`
@@ -1337,9 +1337,9 @@ function handOutForm(ev: ReviewEvent, team: TeamReader[], pile: number): string 
     '<span class="opt">untick anyone sitting this round out</span></div>' +
     `<div class="btnrow" style="flex-wrap:wrap">${who}</div>` +
     '<div class="btnrow" style="margin-top:16px;align-items:center">' +
-    '<button class="btn btn-primary" type="submit">Hand them out</button>' +
+    '<button class="btn btn-primary" type="submit">Assign them</button>' +
     `<span class="sub">${esc(count(pile, 'proposal is', 'proposals are'))} still undecided. ` +
-    'Anyone already holding one keeps it.</span>' +
+    'Proposals already assigned stay with their reviewer.</span>' +
     '</div>' +
     '</form>'
   );
@@ -1360,20 +1360,19 @@ function newArrivals(ev: ReviewEvent, standing: RoundStanding): string {
   if (n === 0) return '';
   const said =
     n === 1
-      ? 'One undecided proposal is on nobody’s list this round. It came in after the pile ' +
-        'was handed out, and nothing is assigned without you — so it waits here until you ' +
-        'hand it out.'
-      : `${num(n)} undecided proposals are on nobody’s list this round. They came in after ` +
-        'the pile was handed out, and nothing is assigned without you — so they wait here ' +
-        'until you hand them out.';
+      ? 'One undecided proposal has no reviewer this round. It came in after the last ' +
+        'round of assignments, and nothing is assigned without you, so it waits here.'
+      : `${num(n)} undecided proposals have no reviewer this round. They came in after ` +
+        'the last round of assignments, and nothing is assigned without you, so they ' +
+        'wait here.';
   return (
     '<div class="notebox" style="margin-top:16px">' +
     `<p style="margin:0">${esc(said)}</p>` +
     '<p style="margin:8px 0 0">' +
-    '<a class="link" href="#handout">Hand out again — it only gives out what nobody holds</a>' +
+    '<a class="link" href="#handout">Assign the unassigned</a>' +
     '<span class="sep"> · </span>' +
     `<a class="link" href="/admin/${encodeURIComponent(ev.slug)}/submissions?f=undecided">` +
-    'Open one and hand it to a reader yourself</a></p>' +
+    'Or open one and assign it yourself</a></p>' +
     '</div>'
   );
 }
@@ -1403,8 +1402,8 @@ function whoReadsWhat(
       '<section class="sec" id="team">' +
       heading +
       '<div class="state-out" style="margin-top:14px"><h2>The committee is one person.</h2>' +
-      '<p>Nobody else holds a standing on this program yet, so there is nobody to hand ' +
-      'proposals to. Add readers from settings and they turn up here.</p>' +
+      '<p>Nobody else has a role on this program yet, so there is nobody to assign ' +
+      'proposals to. Add reviewers from settings and they turn up here.</p>' +
       `<a class="btn btn-primary" href="/admin/${encodeURIComponent(ev.slug)}/settings">` +
       'Add someone to the team →</a></div>' +
       roundPanel(ev, standing, history, opening) +
@@ -1416,7 +1415,7 @@ function whoReadsWhat(
     '<section class="sec" id="team">' +
     heading +
     '<div class="tablewrap rteam-table" style="margin-top:14px"><table class="t"><thead><tr>' +
-    '<th>Reader</th><th>Holding</th><th>Progress</th><th>Nudge</th><th>Retract</th>' +
+    '<th>Reviewer</th><th>Assigned</th><th>Progress</th><th>Nudge</th><th>Retract</th>' +
     '</tr></thead><tbody>' +
     team.map((r) => teamRow(r, ev, nowMs)).join('') +
     '</tbody></table></div>' +
@@ -1807,16 +1806,16 @@ function queuePage(
         `what comes in lands here.</p>${door}${results}</div>`
       : q.mine > 0
         ? '<div class="sec state-out"><h2>Everything on your list has been decided.</h2>' +
-          `<p>The ${esc(count(q.mine, 'proposal', 'proposals'))} handed to you in ` +
+          `<p>The ${esc(count(q.mine, 'proposal', 'proposals'))} assigned to you in ` +
           `${esc(thisRound)} have answers now` +
           (q.mineDone > 0
             ? `, and the ${esc(count(q.mineDone, 'review', 'reviews'))} you sent in are ` +
               'part of how they got there'
             : '') +
-          '. When the next batch is handed out, it lands here.</p>' +
+          '. When the next batch is assigned, it lands here.</p>' +
           `${door}</div>`
         : '<div class="sec state-out"><h2>Nothing is assigned to you this round.</h2>' +
-          `<p>Your share of ${esc(thisRound)} lands here the moment the chair hands it out. ` +
+          `<p>Your share of ${esc(thisRound)} lands here the moment the chair assigns it. ` +
           'The rest of the pile is not yours to read, and there is nothing here you are ' +
           `keeping anyone waiting on.</p>${door}</div>`;
 
@@ -1877,7 +1876,7 @@ function queuePage(
   // the committee has no lists — and "Yours to score · 328" would say the
   // opposite one line above it, so on this view the count leaves with it.
   const whose = ev.everything
-    ? `<p class="hint">The whole pile — ${esc(count(q.pile, 'undecided proposal', 'undecided proposals'))}, ${
+    ? `<p class="hint">The whole pile: ${esc(count(q.pile, 'undecided proposal', 'undecided proposals'))}, ${
         q.assigned === 0
           ? 'and nothing is assigned to you personally.'
           : q.assigned === 1
@@ -2566,7 +2565,7 @@ export function registerReviews(app: Hono<{ Bindings: Env }>): void {
       );
     } catch (e) {
       if (e instanceof ScopeError) {
-        return new Response(deniedPage('Nudging a reader is not yours to do.'), {
+        return new Response(deniedPage('Nudging a reviewer is not yours to do.'), {
           status: 403,
           headers: HTML,
         });

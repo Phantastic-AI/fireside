@@ -129,7 +129,8 @@ export function agentsPage(opts: { principal: Principal | null; token: string | 
         `       "params":{"name":"agenda","arguments":{"event":"aie-nyc"}}}'`
     ) +
     '<p class="hint" style="margin-top:10px">The two conferences here are demonstrations with invented people, ' +
-    'and the world resets on a schedule — read freely, and expect your test proposals to be swept.</p>' +
+    'Read freely. The demonstration conferences rebuild on a schedule, so test proposals sent to ' +
+    'them are swept; anything you create under your own sign-in stays.</p>' +
     '</div>' +
 
     '</div></main>' +

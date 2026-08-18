@@ -1579,7 +1579,7 @@ async function myQueue(
   if (q.mine === 0) {
     return instantly(
       [
-        `Nothing has been handed to you for round ${round} yet.`,
+        `Nothing is assigned to you for round ${round} yet.`,
         'When something is, it appears on your reviews page, and your marks stay yours until you send them.',
       ],
       [door]
@@ -1594,7 +1594,7 @@ async function myQueue(
           ? `${count(q.mineDone, 'review')} of yours ${isAre(q.mineDone)} in${q.recused > 0 ? `, and you stepped aside on ${spelled(q.recused)}` : ''}.`
           : // Handed out, then decided before she got to them: an empty list and
             // a finished evening are two different silences.
-            `The ${count(q.mine, 'proposal')} handed to you ${isAre(q.mine)} all decided already.`,
+            `The ${count(q.mine, 'proposal')} assigned to you ${isAre(q.mine)} all decided already.`,
       ],
       [door]
     );
@@ -1603,7 +1603,7 @@ async function myQueue(
   return instantly(
     [
       `${count(left, 'proposal')} ${isAre(left)} left for you to score in round ${round}.`,
-      `Of the ${count(q.mine, 'proposal')} handed to you this round, you have sent ${spelled(q.mineDone)}${q.recused > 0 ? `, and stepped aside on ${spelled(q.recused)}` : ''}.`,
+      `Of the ${count(q.mine, 'proposal')} assigned to you this round, you have sent ${spelled(q.mineDone)} ${q.mineDone === 1 ? 'review' : 'reviews'}${q.recused > 0 ? `, and stepped aside on ${spelled(q.recused)}` : ''}.`,
       q.staged > 0
         ? `Marks are already in ${spelled(q.staged)} of the ones left, waiting to be sent.`
         : null,
