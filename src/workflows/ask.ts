@@ -464,6 +464,12 @@ function buildFacts(
     lines.push(`The call for speakers closed on ${instant(ev.cfpClosesAt, ev.timezone)}`);
   } else if (ev.lifecycle === 'happened') {
     lines.push('This conference has already happened');
+  } else if (ev.cfpClosesAt === null) {
+    // No dates on record means no call was ever opened. Without this line the
+    // facts said nothing at all about a call, so a visitor asking about one
+    // was told the concierge "cannot see it" — machine-speak for a plain
+    // truth (a judge hit this on a live conference, 2026-08-18).
+    lines.push('There is no call for speakers at this conference yet');
   }
   if (ev.decideBy && ev.lifecycle !== 'happened') {
     lines.push(`Decisions go out by ${longDate(ev.decideBy)}`);
