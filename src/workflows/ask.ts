@@ -251,13 +251,14 @@ export function plainDoors(ev: EventHome, published: boolean): Door[] {
   return [pick('d1'), pick('d2')].filter((d): d is Door => !!d);
 }
 
-/** The three backstage ones, named once so the facts an organizer is given and
+/** The four backstage ones, named once so the facts an organizer is given and
  *  the instant answer they press for cannot point at two different screens. */
 function backstageDoors(ev: EventHome): Door[] {
   return [
     { id: 'd7', href: `/admin/${ev.slug}/submissions`, label: 'The proposals' },
     { id: 'd8', href: `/admin/${ev.slug}/outbox`, label: 'The letters waiting to go' },
     { id: 'd9', href: `/admin/${ev.slug}/agenda`, label: 'The agenda you are building' },
+    { id: 'd10', href: `/admin/${ev.slug}/settings`, label: 'Settings' },
   ];
 }
 
@@ -306,7 +307,25 @@ async function organizerFacts(
       `The call ${ev.lifecycle === 'open' ? 'closes' : 'closed'} ` +
         `${instant(ev.cfpClosesAt, ev.timezone)}`
     );
+  } else {
+    lines.push('There is no call for speakers yet — no opening or closing date is set [d10]');
   }
+  // An organizer asking how to DO something was told "you cannot see that",
+  // because everything the concierge knows is THE FACTS and no fact ever
+  // described operating the product. The cure is not a cleverer model or a
+  // wider prompt — either would let it invent product behaviour — but the
+  // same treatment every other fact gets: authored once, here, flowing
+  // through the standing gate that already decides who may read it.
+  lines.push(
+    '',
+    'HOW THIS CONFERENCE IS RUN — true of Fireside itself, for answering "how do I…"',
+    'Open or change the call for speakers: Settings, under The event, by setting the two call dates [d10]',
+    'Add a reviewer or another organizer: Settings, under The team [d10]',
+    'Change what the call asks for: Settings, under The questions and The scorecard [d10]',
+    'Decide a proposal: open it from the proposals and choose accept, waitlist or decline [d7]',
+    'Tell the speakers what was decided: the outbox, where every letter waits until released [d8]',
+    'Place a talk in a room and a time, and publish the program: the agenda [d9]'
+  );
   return { lines, doors };
 }
 
